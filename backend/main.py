@@ -21,12 +21,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ââ Startup ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# Ã¢ÂÂÃ¢ÂÂ Startup Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 @app.on_event("startup")
 async def startup():
     await init_db()
 
-# ââ Models âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# Ã¢ÂÂÃ¢ÂÂ Models Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 class ScanRequest(BaseModel):
     keywords: List[str]
     max_per_keyword: int = 100
@@ -48,22 +48,22 @@ class SettingsUpdate(BaseModel):
     anthropic_key: Optional[str] = None
     exchange_rate: Optional[float] = None
 
-# ââ Settings âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# Ã¢ÂÂÃ¢ÂÂ Settings Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 @app.get("/api/settings")
 async def get_settings():
     return await db.get_settings()
 
 @app.patch("/api/settings")
 async def update_settings(body: SettingsUpdate):
-    await db.update_settings(body.dict(exclude_none=True))
+    await db.update_settings(body.model_dump(exclude_none=True))
     return {"ok": True}
 
-# ââ Stats âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# Ã¢ÂÂÃ¢ÂÂ Stats Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 @app.get("/api/stats")
 async def get_stats():
     return await db.get_stats()
 
-# ââ Products âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# Ã¢ÂÂÃ¢ÂÂ Products Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 @app.get("/api/products")
 async def get_products(stage: str = "pending", limit: int = 50, offset: int = 0):
     products = await db.get_products(stage=stage, limit=limit, offset=offset)
@@ -91,7 +91,7 @@ async def approve_products(body: ApproveRequest, bg: BackgroundTasks):
     bg.add_task(post_approved_products, body.product_ids)
     return {"ok": True, "queued": len(body.product_ids)}
 
-# ââ Scan pipeline âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# Ã¢ÂÂÃ¢ÂÂ Scan pipeline Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 @app.post("/api/scan")
 async def start_scan(body: ScanRequest, bg: BackgroundTasks):
     job_id = await db.create_job(keywords=body.keywords)
@@ -109,7 +109,7 @@ async def get_job(job_id: int):
         raise HTTPException(404)
     return job
 
-# ââ Pipeline logic ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# Ã¢ÂÂÃ¢ÂÂ Pipeline logic Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 async def run_pipeline(job_id: int, keywords: list, max_per_keyword: int):
     settings = await db.get_settings()
     await db.update_job(job_id, status="scraping", progress=5)
@@ -172,7 +172,7 @@ def basic_filter(products: list, settings: dict) -> list:
         if p.get("rating", 0) < settings.get("min_rating", 4.5):
             continue
         # Skip wholesale/factory spam titles
-        spam_keywords = ["æ¹å", "å·¥åç´é", "ä»£å", "åå®¶ç´ä¾"]
+        spam_keywords = ["Ã¦ÂÂ¹Ã¥ÂÂ", "Ã¥Â·Â¥Ã¥ÂÂÃ§ÂÂ´Ã©ÂÂ", "Ã¤Â»Â£Ã¥ÂÂ", "Ã¥ÂÂÃ¥Â®Â¶Ã§ÂÂ´Ã¤Â¾Â"]
         if any(kw in p.get("title", "") for kw in spam_keywords):
             continue
         # Skip if no images
@@ -237,7 +237,7 @@ Store niche: "{niche}"
 Product data:
 - Translated title: {product.get('title_translated', product.get('title', 'Unknown'))}
 - Category: {product.get('category', 'Unknown')}
-- Price: â¬{product.get('cost_eur', '?')} cost â â¬{product.get('sell_price_eur', '?')} sell ({product.get('margin_pct', '?')}% margin)
+- Price: Ã¢ÂÂ¬{product.get('cost_eur', '?')} cost Ã¢ÂÂ Ã¢ÂÂ¬{product.get('sell_price_eur', '?')} sell ({product.get('margin_pct', '?')}% margin)
 - Orders: {product.get('orders', 0)}
 - Rating: {product.get('rating', 0)}/5
 - Images available: {len(product.get('images', []))}
@@ -354,19 +354,19 @@ def _mock_products(keywords: list) -> list:
     """Returns realistic mock data when no Apify token is configured."""
     mock = []
     samples = [
-        {"title": "æ çº¿èçè³æº5.0éåªè¶é¿ç»­èª", "title_translated": "Wireless Bluetooth Earphones 5.0 Noise Cancel Long Battery", "price_cny": 28, "orders": 4521, "rating": 4.7, "category": "Electronics"},
-        {"title": "ç£å¸ææºæ¯æ¶æ¡é¢æäººæ¯ææ¶", "title_translated": "Magnetic Phone Stand Desktop Lazy Holder", "price_cny": 12, "orders": 8234, "rating": 4.8, "category": "Phone Accessories"},
-        {"title": "ç®çº¦é¶ç·é©¬åæ¯åå¡æ¯åå¬å®¤", "title_translated": "Minimalist Ceramic Mug Coffee Cup Office", "price_cny": 18, "orders": 3102, "rating": 4.9, "category": "Home"},
-        {"title": "LEDæ°å´ç¯USBæ¡é¢å°å¤ç¯", "title_translated": "LED Ambient Light USB Desktop Night Light", "price_cny": 22, "orders": 6780, "rating": 4.6, "category": "Home Decor"},
-        {"title": "ç®è´¨ç¬è®°æ¬æè´¦æ¥è®°æ¬", "title_translated": "Leather Notebook Journal Diary", "price_cny": 35, "orders": 2890, "rating": 4.8, "category": "Stationery"},
-        {"title": "å¤åè½æ¶çº³çæ¡é¢æ´ç", "title_translated": "Multi-function Storage Box Desktop Organizer", "price_cny": 25, "orders": 5430, "rating": 4.7, "category": "Home"},
-        {"title": "ç¡è¶ææºå£³é²æä¿æ¤å¥", "title_translated": "Silicone Phone Case Anti-drop Protective Cover", "price_cny": 8, "orders": 12000, "rating": 4.5, "category": "Phone Cases"},
-        {"title": "ç¼ç»ææåæç¹åå¥³", "title_translated": "Woven Tote Bag Shoulder Bag Women", "price_cny": 45, "orders": 1890, "rating": 4.8, "category": "Bags"},
-        {"title": "é¦è°è¡çç¤¼çå¥è£", "title_translated": "Aromatherapy Candle Gift Box Set", "price_cny": 38, "orders": 3210, "rating": 4.9, "category": "Home Fragrance"},
-        {"title": "insé£å¹²è±ç¸æ¡è£é¥°ç»", "title_translated": "Instagram Style Dried Flower Photo Frame Wall Art", "price_cny": 42, "orders": 2100, "rating": 4.7, "category": "Home Decor"},
-        {"title": "æå æ¶çº³è¢æè¡åè£è¢", "title_translated": "Foldable Storage Bag Travel Organizer", "price_cny": 15, "orders": 7650, "rating": 4.6, "category": "Travel"},
-        {"title": "æ¹åå·¥åç´éææºéä»¶ä½ä»·", "title_translated": "Wholesale Factory Direct Phone Accessories Cheap", "price_cny": 3, "orders": 50, "rating": 3.8, "category": "Spam"},
-        {"title": "æ¨è´¨æ¡é¢æä»¶åæè£é¥°å", "title_translated": "Wooden Desktop Ornament Creative Decoration", "price_cny": 29, "orders": 4320, "rating": 4.8, "category": "Home Decor"},
+        {"title": "Ã¦ÂÂ Ã§ÂºÂ¿Ã¨ÂÂÃ§ÂÂÃ¨ÂÂ³Ã¦ÂÂº5.0Ã©ÂÂÃ¥ÂÂªÃ¨Â¶ÂÃ©ÂÂ¿Ã§Â»Â­Ã¨ÂÂª", "title_translated": "Wireless Bluetooth Earphones 5.0 Noise Cancel Long Battery", "price_cny": 28, "orders": 4521, "rating": 4.7, "category": "Electronics"},
+        {"title": "Ã§Â£ÂÃ¥ÂÂ¸Ã¦ÂÂÃ¦ÂÂºÃ¦ÂÂ¯Ã¦ÂÂ¶Ã¦Â¡ÂÃ©ÂÂ¢Ã¦ÂÂÃ¤ÂºÂºÃ¦ÂÂ¯Ã¦ÂÂÃ¦ÂÂ¶", "title_translated": "Magnetic Phone Stand Desktop Lazy Holder", "price_cny": 12, "orders": 8234, "rating": 4.8, "category": "Phone Accessories"},
+        {"title": "Ã§Â®ÂÃ§ÂºÂ¦Ã©ÂÂ¶Ã§ÂÂ·Ã©Â©Â¬Ã¥ÂÂÃ¦ÂÂ¯Ã¥ÂÂÃ¥ÂÂ¡Ã¦ÂÂ¯Ã¥ÂÂÃ¥ÂÂ¬Ã¥Â®Â¤", "title_translated": "Minimalist Ceramic Mug Coffee Cup Office", "price_cny": 18, "orders": 3102, "rating": 4.9, "category": "Home"},
+        {"title": "LEDÃ¦Â°ÂÃ¥ÂÂ´Ã§ÂÂ¯USBÃ¦Â¡ÂÃ©ÂÂ¢Ã¥Â°ÂÃ¥Â¤ÂÃ§ÂÂ¯", "title_translated": "LED Ambient Light USB Desktop Night Light", "price_cny": 22, "orders": 6780, "rating": 4.6, "category": "Home Decor"},
+        {"title": "Ã§ÂÂ®Ã¨Â´Â¨Ã§Â¬ÂÃ¨Â®Â°Ã¦ÂÂ¬Ã¦ÂÂÃ¨Â´Â¦Ã¦ÂÂ¥Ã¨Â®Â°Ã¦ÂÂ¬", "title_translated": "Leather Notebook Journal Diary", "price_cny": 35, "orders": 2890, "rating": 4.8, "category": "Stationery"},
+        {"title": "Ã¥Â¤ÂÃ¥ÂÂÃ¨ÂÂ½Ã¦ÂÂ¶Ã§ÂºÂ³Ã§ÂÂÃ¦Â¡ÂÃ©ÂÂ¢Ã¦ÂÂ´Ã§ÂÂ", "title_translated": "Multi-function Storage Box Desktop Organizer", "price_cny": 25, "orders": 5430, "rating": 4.7, "category": "Home"},
+        {"title": "Ã§Â¡ÂÃ¨ÂÂ¶Ã¦ÂÂÃ¦ÂÂºÃ¥Â£Â³Ã©ÂÂ²Ã¦ÂÂÃ¤Â¿ÂÃ¦ÂÂ¤Ã¥Â¥Â", "title_translated": "Silicone Phone Case Anti-drop Protective Cover", "price_cny": 8, "orders": 12000, "rating": 4.5, "category": "Phone Cases"},
+        {"title": "Ã§Â¼ÂÃ§Â»ÂÃ¦ÂÂÃ¦ÂÂÃ¥ÂÂÃ¦ÂÂÃ§ÂÂ¹Ã¥ÂÂÃ¥Â¥Â³", "title_translated": "Woven Tote Bag Shoulder Bag Women", "price_cny": 45, "orders": 1890, "rating": 4.8, "category": "Bags"},
+        {"title": "Ã©Â¦ÂÃ¨ÂÂ°Ã¨ÂÂ¡Ã§ÂÂÃ§Â¤Â¼Ã§ÂÂÃ¥Â¥ÂÃ¨Â£Â", "title_translated": "Aromatherapy Candle Gift Box Set", "price_cny": 38, "orders": 3210, "rating": 4.9, "category": "Home Fragrance"},
+        {"title": "insÃ©Â£ÂÃ¥Â¹Â²Ã¨ÂÂ±Ã§ÂÂ¸Ã¦Â¡ÂÃ¨Â£ÂÃ©Â¥Â°Ã§ÂÂ»", "title_translated": "Instagram Style Dried Flower Photo Frame Wall Art", "price_cny": 42, "orders": 2100, "rating": 4.7, "category": "Home Decor"},
+        {"title": "Ã¦ÂÂÃ¥ÂÂ Ã¦ÂÂ¶Ã§ÂºÂ³Ã¨Â¢ÂÃ¦ÂÂÃ¨Â¡ÂÃ¥ÂÂÃ¨Â£ÂÃ¨Â¢Â", "title_translated": "Foldable Storage Bag Travel Organizer", "price_cny": 15, "orders": 7650, "rating": 4.6, "category": "Travel"},
+        {"title": "Ã¦ÂÂ¹Ã¥ÂÂÃ¥Â·Â¥Ã¥ÂÂÃ§ÂÂ´Ã©ÂÂÃ¦ÂÂÃ¦ÂÂºÃ©ÂÂÃ¤Â»Â¶Ã¤Â½ÂÃ¤Â»Â·", "title_translated": "Wholesale Factory Direct Phone Accessories Cheap", "price_cny": 3, "orders": 50, "rating": 3.8, "category": "Spam"},
+        {"title": "Ã¦ÂÂ¨Ã¨Â´Â¨Ã¦Â¡ÂÃ©ÂÂ¢Ã¦ÂÂÃ¤Â»Â¶Ã¥ÂÂÃ¦ÂÂÃ¨Â£ÂÃ©Â¥Â°Ã¥ÂÂ", "title_translated": "Wooden Desktop Ornament Creative Decoration", "price_cny": 29, "orders": 4320, "rating": 4.8, "category": "Home Decor"},
     ]
     import random
     for kw in keywords:
@@ -384,7 +384,7 @@ def _mock_products(keywords: list) -> list:
 
 
 async def post_approved_products(product_ids: list[int]):
-    """Placeholder â integrate with instagrapi or Buffer API here."""
+    """Placeholder Ã¢ÂÂ integrate with instagrapi or Buffer API here."""
     for pid in product_ids:
         await asyncio.sleep(1)
         await db.set_stage(pid, "posted")
