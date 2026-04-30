@@ -1,391 +1,958 @@
-from fastapi import FastAPI, BackgroundTasks, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
-from typing import Optional
-import asyncio
-import json
-import os
-import httpx
-import hashlib
-import re
-from datetime import datetime
-from database import db, init_db
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Dropship OS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0a0f;
+  --surface:#111118;
+  --surface2:#18181f;
+  --surface3:#1e1e28;
+  --border:#2a2a38;
+  --border2:#353545;
+  --accent:#7c6cfa;
+  --accent2:#a594ff;
+  --green:#3dd68c;
+  --red:#f56565;
+  --amber:#f6ad55;
+  --blue:#60a5fa;
+  --text:#e8e8f0;
+  --text2:#9090a8;
+  --text3:#5a5a70;
+  --font-display:'Syne',sans-serif;
+  --font-body:'DM Sans',sans-serif;
+  --font-mono:'DM Mono',monospace;
+  --r:10px;
+}
+body{background:var(--bg);color:var(--text);font-family:var(--font-body);font-size:14px;min-height:100vh;overflow-x:hidden}
+#app{display:flex;min-height:100vh}
 
-app = FastAPI(title="Dropship Backoffice")
+/* Sidebar */
+#sidebar{width:220px;flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:0}
+.sidebar-logo{padding:24px 20px 20px;border-bottom:1px solid var(--border)}
+.logo-mark{font-family:var(--font-display);font-size:18px;font-weight:800;letter-spacing:-0.5px;color:var(--text)}
+.logo-mark span{color:var(--accent)}
+.logo-sub{font-size:10px;color:var(--text3);font-family:var(--font-mono);margin-top:2px;letter-spacing:1px;text-transform:uppercase}
+.nav{padding:16px 12px;flex:1}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;cursor:pointer;color:var(--text2);font-size:13px;font-weight:400;transition:all .15s;margin-bottom:2px;border:none;background:none;width:100%;text-align:left}
+.nav-item:hover{background:var(--surface2);color:var(--text)}
+.nav-item.active{background:rgba(124,108,250,.12);color:var(--accent2);font-weight:500}
+.nav-icon{width:16px;height:16px;opacity:.7;flex-shrink:0}
+.nav-item.active .nav-icon{opacity:1}
+.sidebar-bottom{padding:16px 12px;border-top:1px solid var(--border)}
+.status-dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);flex-shrink:0}
+.status-dot.idle{background:var(--text3);box-shadow:none}
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+/* Main */
+#main{flex:1;overflow-y:auto;display:flex;flex-direction:column}
+.topbar{padding:18px 28px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--surface);position:sticky;top:0;z-index:10}
+.page-title{font-family:var(--font-display);font-size:16px;font-weight:700;color:var(--text)}
+.page-title span{color:var(--text3);font-weight:400;font-size:13px;margin-left:8px;font-family:var(--font-body)}
+.content{padding:24px 28px;flex:1}
 
-# ââ Startup ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
-@app.on_event("startup")
-async def startup():
-    await init_db()
+/* Cards */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:20px}
+.card-sm{background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:16px}
 
-# ââ Models âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
-class ScanRequest(BaseModel):
-    keywords: list[str]
-    max_per_keyword: int = 100
+/* Stats grid */
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:24px}
+.stat-card{background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:16px}
+.stat-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;font-family:var(--font-mono);margin-bottom:8px}
+.stat-value{font-family:var(--font-display);font-size:28px;font-weight:800;line-height:1;color:var(--text)}
+.stat-value.green{color:var(--green)}
+.stat-value.accent{color:var(--accent2)}
+.stat-value.amber{color:var(--amber)}
 
-class ApproveRequest(BaseModel):
-    product_ids: list[int]
+/* Buttons */
+.btn{display:inline-flex;align-items:center;gap:7px;padding:8px 16px;border-radius:8px;border:1px solid var(--border2);background:var(--surface2);color:var(--text);font-size:13px;font-family:var(--font-body);cursor:pointer;transition:all .15s;font-weight:500}
+.btn:hover{background:var(--surface3);border-color:var(--accent);color:var(--accent2)}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn-primary:hover{background:var(--accent2);border-color:var(--accent2);color:#fff}
+.btn-danger{background:rgba(245,101,101,.1);border-color:rgba(245,101,101,.3);color:var(--red)}
+.btn-danger:hover{background:rgba(245,101,101,.2)}
+.btn-green{background:rgba(61,214,140,.1);border-color:rgba(61,214,140,.3);color:var(--green)}
+.btn-green:hover{background:rgba(61,214,140,.2)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-sm{padding:5px 11px;font-size:12px}
 
-class SettingsUpdate(BaseModel):
-    niche: Optional[str] = None
-    min_margin: Optional[float] = None
-    min_score: Optional[float] = None
-    min_orders: Optional[int] = None
-    min_rating: Optional[float] = None
-    sell_markup_low: Optional[float] = None
-    sell_markup_mid: Optional[float] = None
-    sell_markup_high: Optional[float] = None
-    instagram_username: Optional[str] = None
-    apify_token: Optional[str] = None
-    anthropic_key: Optional[str] = None
-    exchange_rate: Optional[float] = None
+/* Badges */
+.badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:20px;font-size:11px;font-family:var(--font-mono);font-weight:500}
+.badge-green{background:rgba(61,214,140,.1);color:var(--green);border:1px solid rgba(61,214,140,.2)}
+.badge-amber{background:rgba(246,173,85,.1);color:var(--amber);border:1px solid rgba(246,173,85,.2)}
+.badge-red{background:rgba(245,101,101,.1);color:var(--red);border:1px solid rgba(245,101,101,.2)}
+.badge-blue{background:rgba(96,165,250,.1);color:var(--blue);border:1px solid rgba(96,165,250,.2)}
+.badge-purple{background:rgba(124,108,250,.1);color:var(--accent2);border:1px solid rgba(124,108,250,.2)}
 
-# ââ Settings âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
-@app.get("/api/settings")
-async def get_settings():
-    return await db.get_settings()
+/* Score ring */
+.score-ring{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-size:15px;font-weight:800;flex-shrink:0}
+.score-high{background:rgba(61,214,140,.12);color:var(--green);border:2px solid rgba(61,214,140,.3)}
+.score-mid{background:rgba(246,173,85,.12);color:var(--amber);border:2px solid rgba(246,173,85,.3)}
+.score-low{background:rgba(245,101,101,.12);color:var(--red);border:2px solid rgba(245,101,101,.3)}
 
-@app.patch("/api/settings")
-async def update_settings(body: SettingsUpdate):
-    await db.update_settings(body.dict(exclude_none=True))
-    return {"ok": True}
+/* Product grid */
+.product-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
+.product-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;cursor:pointer;transition:all .2s;position:relative}
+.product-card:hover{border-color:var(--accent);transform:translateY(-1px)}
+.product-card.selected{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),inset 0 0 0 1px rgba(124,108,250,.1)}
+.product-img{width:100%;aspect-ratio:1;object-fit:cover;background:var(--surface2)}
+.product-img-placeholder{width:100%;aspect-ratio:1;background:var(--surface2);display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:32px}
+.product-body{padding:14px}
+.product-name{font-family:var(--font-display);font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px;line-height:1.3}
+.product-source{font-size:11px;color:var(--text3);font-family:var(--font-mono);margin-bottom:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.product-metrics{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.metric{font-size:11px;color:var(--text2);font-family:var(--font-mono)}
+.metric strong{color:var(--text);font-weight:500}
+.select-check{position:absolute;top:10px;right:10px;width:22px;height:22px;border-radius:6px;border:2px solid var(--border2);background:var(--surface);display:flex;align-items:center;justify-content:center;transition:all .15s}
+.selected .select-check{background:var(--accent);border-color:var(--accent)}
+.checkmark{color:#fff;font-size:12px;display:none}
+.selected .checkmark{display:block}
 
-# ââ Stats âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
-@app.get("/api/stats")
-async def get_stats():
-    return await db.get_stats()
+/* Progress bar */
+.progress-bar{height:4px;background:var(--surface3);border-radius:2px;overflow:hidden;margin-top:6px}
+.progress-fill{height:100%;background:var(--accent);border-radius:2px;transition:width .4s}
 
-# ââ Products âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
-@app.get("/api/products")
-async def get_products(stage: str = "pending", limit: int = 50, offset: int = 0):
-    products = await db.get_products(stage=stage, limit=limit, offset=offset)
-    total = await db.count_products(stage=stage)
-    return {"products": products, "total": total}
+/* Table */
+.table{width:100%;border-collapse:collapse}
+.table th{text-align:left;padding:10px 14px;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.7px;font-family:var(--font-mono);border-bottom:1px solid var(--border)}
+.table td{padding:12px 14px;border-bottom:1px solid var(--border);font-size:13px;vertical-align:middle}
+.table tr:last-child td{border-bottom:none}
+.table tr:hover td{background:rgba(255,255,255,.02)}
 
-@app.get("/api/products/{product_id}")
-async def get_product(product_id: int):
-    p = await db.get_product(product_id)
-    if not p:
-        raise HTTPException(404, "Not found")
-    return p
+/* Scan panel */
+.keyword-tag{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:var(--font-mono)}
+.keyword-tag button{background:none;border:none;color:var(--text3);cursor:pointer;padding:0;line-height:1;font-size:14px}
+.keyword-tag button:hover{color:var(--red)}
 
-@app.post("/api/products/{product_id}/reject")
-async def reject_product(product_id: int):
-    await db.set_stage(product_id, "rejected")
-    return {"ok": True}
+/* Input */
+input[type=text],input[type=number],input[type=password],select,textarea{
+  background:var(--surface2);border:1px solid var(--border);border-radius:8px;
+  color:var(--text);font-family:var(--font-body);font-size:13px;padding:8px 12px;
+  outline:none;transition:border-color .15s;width:100%
+}
+input:focus,select:focus,textarea:focus{border-color:var(--accent)}
+label{font-size:12px;color:var(--text3);margin-bottom:5px;display:block;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:.5px}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+.form-group{margin-bottom:14px}
 
-@app.post("/api/approve")
-async def approve_products(body: ApproveRequest, bg: BackgroundTasks):
-    if len(body.product_ids) > 10:
-        raise HTTPException(400, "Max 10 products at once")
-    for pid in body.product_ids:
-        await db.set_stage(pid, "approved")
-    bg.add_task(post_approved_products, body.product_ids)
-    return {"ok": True, "queued": len(body.product_ids)}
+/* Detail panel */
+.detail-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100;display:flex;align-items:flex-start;justify-content:flex-end}
+.detail-panel{width:480px;height:100vh;background:var(--surface);border-left:1px solid var(--border);overflow-y:auto;padding:24px;animation:slideIn .2s ease}
+@keyframes slideIn{from{transform:translateX(40px);opacity:0}to{transform:translateX(0);opacity:1}}
+.detail-img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:var(--r);margin-bottom:16px;background:var(--surface2)}
+.mini-metric{padding:10px 14px;background:var(--surface2);border-radius:8px;border:1px solid var(--border)}
+.mini-metric-label{font-size:10px;color:var(--text3);font-family:var(--font-mono);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px}
+.mini-metric-val{font-family:var(--font-display);font-size:18px;font-weight:700}
 
-# ââ Scan pipeline âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
-@app.post("/api/scan")
-async def start_scan(body: ScanRequest, bg: BackgroundTasks):
-    job_id = await db.create_job(keywords=body.keywords)
-    bg.add_task(run_pipeline, job_id, body.keywords, body.max_per_keyword)
-    return {"job_id": job_id, "status": "started"}
+/* Job log */
+.job-row{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border)}
+.job-status{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.job-status.done{background:var(--green)}
+.job-status.running,.job-status.scraping,.job-status.filtering,.job-status.ai_review,.job-status.calculating,.job-status.deduping,.job-status.saving{background:var(--amber);animation:pulse 1s infinite}
+.job-status.queued{background:var(--text3)}
+.job-status.error{background:var(--red)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 
-@app.get("/api/jobs")
-async def get_jobs(limit: int = 10):
-    return await db.get_jobs(limit)
+/* Selection bar */
+.selection-bar{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--surface);border:1px solid var(--accent);border-radius:40px;padding:12px 20px;display:flex;align-items:center;gap:16px;box-shadow:0 8px 32px rgba(124,108,250,.2);z-index:50;animation:rise .2s ease}
+@keyframes rise{from{transform:translateX(-50%) translateY(10px);opacity:0}to{transform:translateX(-50%) translateY(0);opacity:1}}
 
-@app.get("/api/jobs/{job_id}")
-async def get_job(job_id: int):
-    job = await db.get_job(job_id)
-    if not job:
-        raise HTTPException(404)
-    return job
+/* Empty state */
+.empty{text-align:center;padding:60px 20px;color:var(--text3)}
+.empty-icon{font-size:40px;margin-bottom:12px;opacity:.4}
+.empty h3{font-family:var(--font-display);font-size:16px;color:var(--text2);margin-bottom:6px}
 
-# ââ Pipeline logic ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
-async def run_pipeline(job_id: int, keywords: list[str], max_per_keyword: int):
-    settings = await db.get_settings()
-    await db.update_job(job_id, status="scraping", progress=5)
+/* Toast */
+.toast{position:fixed;top:20px;right:20px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 18px;font-size:13px;z-index:200;animation:fadeUp .2s ease;box-shadow:0 4px 20px rgba(0,0,0,.4)}
+.toast.success{border-color:rgba(61,214,140,.4);color:var(--green)}
+.toast.error{border-color:rgba(245,101,101,.4);color:var(--red)}
+@keyframes fadeUp{from{transform:translateY(-8px);opacity:0}to{transform:translateY(0);opacity:1}}
 
-    # 1. SCRAPE
-    raw_products = await scrape_products(settings, keywords, max_per_keyword)
-    await db.update_job(job_id, status="scraping", progress=20,
-                        scraped=len(raw_products))
+/* Tabs */
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:20px}
+.tab{padding:8px 16px;border-radius:8px 8px 0 0;cursor:pointer;font-size:13px;color:var(--text3);border-bottom:2px solid transparent;margin-bottom:-1px;transition:all .15s}
+.tab:hover{color:var(--text2)}
+.tab.active{color:var(--accent2);border-bottom-color:var(--accent)}
 
-    # 2. BASIC FILTER (fast, no AI)
-    filtered = basic_filter(raw_products, settings)
-    await db.update_job(job_id, status="filtering", progress=40,
-                        after_basic=len(filtered))
+/* Pipeline steps in scan */
+.pipeline-step{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:8px;background:var(--surface2);margin-bottom:6px}
+.step-num{width:24px;height:24px;border-radius:6px;background:var(--surface3);display:flex;align-items:center;justify-content:center;font-size:11px;font-family:var(--font-mono);color:var(--text3);flex-shrink:0}
+.step-num.done{background:rgba(61,214,140,.15);color:var(--green)}
+.step-num.active{background:rgba(124,108,250,.2);color:var(--accent2)}
 
-    # 3. PROFIT FILTER
-    profitable = [p for p in filtered if profit_filter(p, settings)]
-    await db.update_job(job_id, status="calculating", progress=55,
-                        after_profit=len(profitable))
+/* Scrollbar */
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+</style>
+</head>
+<body>
+<div id="app">
+  <nav id="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-mark">Drop<span>OS</span></div>
+      <div class="logo-sub">Backoffice v1.0</div>
+    </div>
+    <div class="nav" id="nav"></div>
+    <div class="sidebar-bottom">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="status-dot idle" id="status-dot"></div>
+        <span style="font-size:12px;color:var(--text3)" id="status-label">Idle</span>
+      </div>
+    </div>
+  </nav>
+  <div id="main">
+    <div class="topbar">
+      <div>
+        <span class="page-title" id="page-title">Dashboard</span>
+        <span id="page-sub"></span>
+      </div>
+      <div style="display:flex;gap:8px" id="topbar-actions"></div>
+    </div>
+    <div class="content" id="content"></div>
+  </div>
+</div>
+<div id="toast-container"></div>
 
-    # 4. DEDUP
-    deduped = dedup(profitable)
-    await db.update_job(job_id, status="deduping", progress=60,
-                        after_dedup=len(deduped))
+<script>
+const API = 'http://localhost:8000/api';
+let currentPage = 'dashboard';
+let selectedProducts = new Set();
+let detailProduct = null;
+let activeJobPoll = null;
+let stats = {};
 
-    # 5. AI REVIEW (batched to save API calls)
-    passed = []
-    total = len(deduped)
-    for i, product in enumerate(deduped):
-        reviewed = await ai_review(product, settings)
-        if reviewed and reviewed.get("score", 0) >= settings.get("min_score", 7.0):
-            product.update(reviewed)
-            passed.append(product)
-        progress = 60 + int((i / max(total, 1)) * 35)
-        if i % 5 == 0:
-            await db.update_job(job_id, status="ai_review", progress=progress,
-                                after_ai=len(passed))
+// ── Navigation ────────────────────────────────────────────────────────────
+const pages = [
+  {id:'dashboard', label:'Dashboard', icon:'◈'},
+  {id:'scan',      label:'Scan products', icon:'⟳'},
+  {id:'pending',   label:'Approval queue', icon:'◻'},
+  {id:'posted',    label:'Posted', icon:'◉'},
+  {id:'settings',  label:'Settings', icon:'◎'},
+];
 
-    await db.update_job(job_id, status="saving", progress=96,
-                        after_ai=len(passed))
+function buildNav() {
+  const nav = document.getElementById('nav');
+  nav.innerHTML = pages.map(p => `
+    <button class="nav-item ${p.id===currentPage?'active':''}" onclick="navigate('${p.id}')">
+      <span class="nav-icon" style="font-size:14px">${p.icon}</span>
+      ${p.label}
+    </button>
+  `).join('');
+}
 
-    # 6. SAVE to DB as "pending"
-    for product in passed:
-        await db.insert_product(product, job_id)
+function navigate(page) {
+  currentPage = page;
+  selectedProducts.clear();
+  buildNav();
+  renderPage();
+}
 
-    await db.update_job(job_id, status="done", progress=100,
-                        after_ai=len(passed))
+function setTitle(title, sub='') {
+  document.getElementById('page-title').textContent = title;
+  document.getElementById('page-sub').textContent = sub;
+}
 
+// ── Toast ─────────────────────────────────────────────────────────────────
+function toast(msg, type='success', duration=3000) {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), duration);
+}
 
-def basic_filter(products: list, settings: dict) -> list:
-    out = []
-    seen_titles = set()
-    for p in products:
-        # Must have title and price
-        if not p.get("title") or not p.get("price_cny"):
-            continue
-        # Min orders
-        if p.get("orders", 0) < settings.get("min_orders", 100):
-            continue
-        # Min rating
-        if p.get("rating", 0) < settings.get("min_rating", 4.5):
-            continue
-        # Skip wholesale/factory spam titles
-        spam_keywords = ["æ¹å", "å·¥åç´é", "ä»£å", "åå®¶ç´ä¾"]
-        if any(kw in p.get("title", "") for kw in spam_keywords):
-            continue
-        # Skip if no images
-        if not p.get("images"):
-            continue
-        # Dedup by title hash
-        title_hash = hashlib.md5(p["title"][:30].encode()).hexdigest()
-        if title_hash in seen_titles:
-            continue
-        seen_titles.add(title_hash)
-        out.append(p)
-    return out
+// ── API helpers ───────────────────────────────────────────────────────────
+async function api(path, method='GET', body=null) {
+  const opts = {method, headers:{'Content-Type':'application/json'}};
+  if (body) opts.body = JSON.stringify(body);
+  try {
+    const r = await fetch(API+path, opts);
+    if (!r.ok) throw new Error(await r.text());
+    return r.json();
+  } catch(e) {
+    toast(e.message || 'API error', 'error');
+    throw e;
+  }
+}
 
+// ── Page: Dashboard ───────────────────────────────────────────────────────
+async function renderDashboard() {
+  setTitle('Dashboard');
+  document.getElementById('topbar-actions').innerHTML = '';
+  const content = document.getElementById('content');
+  content.innerHTML = `<div style="color:var(--text3);font-size:13px">Loading...</div>`;
 
-def profit_filter(product: dict, settings: dict) -> bool:
-    price_cny = float(product.get("price_cny", 0))
-    exchange_rate = float(settings.get("exchange_rate", 0.13))
-    shipping_cny = 15.0  # average shipping cost
+  const [s, jobs] = await Promise.all([
+    api('/stats').catch(()=>({pending:0,approved:0,posted:0,rejected:0,total_jobs:0,posted_7d:0,avg_margin:0})),
+    api('/jobs?limit=5').catch(()=>[])
+  ]);
+  stats = s;
 
-    cost_eur = (price_cny + shipping_cny) * exchange_rate
+  content.innerHTML = `
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">Awaiting review</div>
+        <div class="stat-value accent">${s.pending}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Posted this week</div>
+        <div class="stat-value green">${s.posted_7d}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Avg margin</div>
+        <div class="stat-value">${s.avg_margin}%</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Total posted</div>
+        <div class="stat-value amber">${s.posted}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Scan jobs</div>
+        <div class="stat-value">${s.total_jobs}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Rejected</div>
+        <div class="stat-value">${s.rejected}</div>
+      </div>
+    </div>
 
-    # Markup tiers
-    if cost_eur < 5:
-        markup = settings.get("sell_markup_low", 3.5)
-    elif cost_eur < 15:
-        markup = settings.get("sell_markup_mid", 2.8)
-    else:
-        markup = settings.get("sell_markup_high", 2.2)
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="card">
+        <div style="font-family:var(--font-display);font-size:14px;font-weight:700;margin-bottom:14px">Recent scan jobs</div>
+        ${jobs.length === 0 ? `<div class="empty"><div class="empty-icon">○</div><h3>No scans yet</h3><p>Start a scan to find products</p></div>` :
+          jobs.map(j => `
+            <div class="job-row">
+              <div class="job-status ${j.status}"></div>
+              <div style="flex:1">
+                <div style="font-size:12px;font-weight:500">${(j.keywords||j.keywords_json||[]).join(', ') || '—'}</div>
+                <div style="font-size:11px;color:var(--text3);font-family:var(--font-mono)">${j.status} · found ${j.after_ai||0}</div>
+              </div>
+              ${j.status !== 'done' && j.status !== 'queued' ? `
+                <div style="font-size:11px;color:var(--text3)">${j.progress||0}%</div>
+              ` : ''}
+            </div>
+          `).join('')
+        }
+        <div style="margin-top:14px">
+          <button class="btn btn-sm" onclick="navigate('scan')">New scan ↗</button>
+        </div>
+      </div>
 
-    sell_price = cost_eur * markup
-    margin = ((sell_price - cost_eur) / sell_price) * 100
+      <div class="card">
+        <div style="font-family:var(--font-display);font-size:14px;font-weight:700;margin-bottom:14px">Pipeline overview</div>
+        ${[
+          {label:'Scraped raw', val: jobs[0]?.scraped||0, color:'var(--text2)'},
+          {label:'After basic filter', val: jobs[0]?.after_basic||0, color:'var(--blue)'},
+          {label:'Margin ≥ 60%', val: jobs[0]?.after_profit||0, color:'var(--amber)'},
+          {label:'After dedup', val: jobs[0]?.after_dedup||0, color:'var(--accent2)'},
+          {label:'AI score ≥ threshold', val: jobs[0]?.after_ai||0, color:'var(--green)'},
+        ].map(row => `
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+            <span style="font-size:12px;color:var(--text2)">${row.label}</span>
+            <span style="font-family:var(--font-mono);font-size:13px;color:${row.color};font-weight:500">${row.val}</span>
+          </div>
+        `).join('')}
+        <div style="margin-top:14px">
+          <button class="btn btn-sm btn-green" onclick="navigate('pending')">Review queue ↗</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
 
-    product["cost_eur"] = round(cost_eur, 2)
-    product["sell_price_eur"] = round(sell_price, 2)
-    product["margin_pct"] = round(margin, 1)
+// ── Page: Scan ────────────────────────────────────────────────────────────
+let scanKeywords = ['aesthetic home decor', 'minimalist accessories', 'desk setup'];
+let activeJob = null;
 
-    return margin >= settings.get("min_margin", 60.0)
+async function renderScan() {
+  setTitle('Scan products');
+  document.getElementById('topbar-actions').innerHTML = '';
 
+  renderScanContent();
 
-def dedup(products: list) -> list:
-    seen = set()
-    out = []
-    for p in products:
-        # Hash first image URL to catch duplicate listings
-        img = (p.get("images") or [""])[0]
-        key = hashlib.md5(img.encode()).hexdigest() if img else None
-        if key and key in seen:
-            continue
-        if key:
-            seen.add(key)
-        out.append(p)
-    return out
+  // Poll for active job
+  if (activeJobPoll) clearInterval(activeJobPoll);
+  if (activeJob) {
+    activeJobPoll = setInterval(pollActiveJob, 2000);
+  }
+}
 
+function renderScanContent() {
+  const content = document.getElementById('content');
+  content.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+      <div>
+        <div class="card" style="margin-bottom:16px">
+          <div style="font-family:var(--font-display);font-size:14px;font-weight:700;margin-bottom:16px">Keywords to search</div>
+          <div id="keyword-tags" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+            ${scanKeywords.map((kw,i) => `
+              <div class="keyword-tag">
+                ${kw}
+                <button onclick="removeKeyword(${i})">×</button>
+              </div>
+            `).join('')}
+          </div>
+          <div style="display:flex;gap:8px">
+            <input type="text" id="kw-input" placeholder="Add keyword…" style="flex:1" onkeydown="if(event.key==='Enter')addKeyword()"/>
+            <button class="btn btn-sm" onclick="addKeyword()">Add</button>
+          </div>
+        </div>
 
-async def ai_review(product: dict, settings: dict) -> Optional[dict]:
-    api_key = settings.get("anthropic_key", "")
-    niche = settings.get("niche", "aesthetic lifestyle products")
+        <div class="card">
+          <div style="font-family:var(--font-display);font-size:14px;font-weight:700;margin-bottom:16px">Scan settings</div>
+          <div class="form-group">
+            <label>Max products per keyword</label>
+            <input type="number" id="max-per-kw" value="100" min="10" max="500"/>
+          </div>
+          <button class="btn btn-primary" style="width:100%" onclick="startScan()" ${activeJob?'disabled':''}>
+            ${activeJob ? '⟳ Scanning…' : '⟳ Start scan'}
+          </button>
+        </div>
+      </div>
 
-    prompt = f"""You are reviewing a product for an Instagram dropshipping store.
-Store niche: "{niche}"
+      <div class="card">
+        <div style="font-family:var(--font-display);font-size:14px;font-weight:700;margin-bottom:16px">
+          Pipeline status
+          ${activeJob ? '<span class="badge badge-amber" style="margin-left:8px">Running</span>' : ''}
+        </div>
+        ${activeJob ? renderJobProgress(activeJob) : `
+          <div class="empty" style="padding:30px 0">
+            <div class="empty-icon">○</div>
+            <h3>No active scan</h3>
+            <p style="font-size:12px">Start a scan to see progress</p>
+          </div>
+        `}
 
-Product data:
-- Translated title: {product.get('title_translated', product.get('title', 'Unknown'))}
-- Category: {product.get('category', 'Unknown')}
-- Price: â¬{product.get('cost_eur', '?')} cost â â¬{product.get('sell_price_eur', '?')} sell ({product.get('margin_pct', '?')}% margin)
-- Orders: {product.get('orders', 0)}
-- Rating: {product.get('rating', 0)}/5
-- Images available: {len(product.get('images', []))}
+        <div style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">
+          <div style="font-size:12px;color:var(--text3);margin-bottom:10px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:.5px">Pipeline steps</div>
+          ${[
+            ['1','Scrape 1688/Taobao via Apify'],
+            ['2','Basic filter (orders, rating, spam)'],
+            ['3','Profit calculation (margin ≥ 60%)'],
+            ['4','Deduplication (image hash)'],
+            ['5','AI review (score + name + caption)'],
+            ['6','Save to approval queue'],
+          ].map(([n,label]) => {
+            const prog = activeJob?.progress || 0;
+            const thresholds = [0,20,40,55,60,96];
+            const isDone = prog >= thresholds[parseInt(n)];
+            const isActive = prog >= thresholds[parseInt(n)-1] && !isDone;
+            return `
+              <div class="pipeline-step">
+                <div class="step-num ${isDone?'done':isActive?'active':''}">${isDone?'✓':n}</div>
+                <span style="font-size:12px;color:${isDone?'var(--green)':isActive?'var(--accent2)':'var(--text3)'}">${label}</span>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+}
 
-Score this product from 1-10 on:
-1. Niche fit (does it match the store theme?)
-2. Instagram visual appeal (would it look good in a post?)
-3. Trend potential (is this something people want now?)
-4. Competition level (avoid oversaturated products)
+function renderJobProgress(job) {
+  if (!job) return '';
+  const prog = job.progress || 0;
+  return `
+    <div style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+        <span style="font-size:12px;color:var(--text2)">${job.status}</span>
+        <span style="font-size:12px;font-family:var(--font-mono);color:var(--accent2)">${prog}%</span>
+      </div>
+      <div class="progress-bar"><div class="progress-fill" style="width:${prog}%"></div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      ${[
+        ['Scraped', job.scraped||0],
+        ['After basic', job.after_basic||0],
+        ['Profitable', job.after_profit||0],
+        ['After dedup', job.after_dedup||0],
+        ['AI passed', job.after_ai||0],
+      ].map(([l,v]) => `
+        <div class="mini-metric">
+          <div class="mini-metric-label">${l}</div>
+          <div class="mini-metric-val" style="font-size:20px;color:var(--text)">${v}</div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
 
-Also generate:
-- A punchy English product name (3-5 words, no brand names)
-- An Instagram caption (2-3 sentences, aspirational, fits the niche)
-- 15 relevant hashtags
+async function pollActiveJob() {
+  if (!activeJob) { clearInterval(activeJobPoll); return; }
+  try {
+    const job = await api(`/jobs/${activeJob.id}`);
+    activeJob = job;
+    // Update just the progress section
+    const statusDot = document.getElementById('status-dot');
+    const statusLabel = document.getElementById('status-label');
+    if (job.status === 'done') {
+      clearInterval(activeJobPoll);
+      activeJob = null;
+      if (statusDot) { statusDot.className = 'status-dot idle'; statusLabel.textContent = 'Idle'; }
+      toast(`Scan done! ${job.after_ai} products in queue`, 'success');
+      renderScanContent();
+    } else {
+      if (statusDot) { statusDot.className = 'status-dot'; statusLabel.textContent = job.status; }
+      renderScanContent();
+    }
+  } catch(e) {}
+}
 
-Return ONLY valid JSON, no markdown:
-{{
-  "score": <number 1-10>,
-  "niche_fit": <1-10>,
-  "visual_appeal": <1-10>,
-  "trend_score": <1-10>,
-  "rejection_reason": "<if score < 7, why>",
-  "product_name": "<punchy name>",
-  "caption": "<instagram caption>",
-  "hashtags": ["tag1", "tag2", ...]
-}}"""
+function addKeyword() {
+  const inp = document.getElementById('kw-input');
+  if (!inp || !inp.value.trim()) return;
+  scanKeywords.push(inp.value.trim());
+  inp.value = '';
+  renderScanContent();
+}
 
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": "claude-haiku-4-5-20251001",  # cheap + fast for bulk review
-                    "max_tokens": 600,
-                    "messages": [{"role": "user", "content": prompt}]
-                }
-            )
-            if resp.status_code != 200:
-                return None
-            text = resp.json()["content"][0]["text"]
-            # Strip any accidental markdown fences
-            text = re.sub(r"```json|```", "", text).strip()
-            return json.loads(text)
-    except Exception:
-        return None
+function removeKeyword(i) {
+  scanKeywords.splice(i, 1);
+  renderScanContent();
+}
 
+async function startScan() {
+  if (!scanKeywords.length) { toast('Add at least one keyword', 'error'); return; }
+  const maxPerKw = parseInt(document.getElementById('max-per-kw')?.value || 100);
+  const job = await api('/scan', 'POST', {keywords: scanKeywords, max_per_keyword: maxPerKw});
+  activeJob = {id: job.job_id, status:'queued', progress:0};
+  document.getElementById('status-dot').className = 'status-dot';
+  document.getElementById('status-label').textContent = 'Scanning';
+  if (activeJobPoll) clearInterval(activeJobPoll);
+  activeJobPoll = setInterval(pollActiveJob, 2000);
+  toast('Scan started!', 'success');
+  renderScanContent();
+}
 
-async def scrape_products(settings: dict, keywords: list, max_per_keyword: int) -> list:
-    token = settings.get("apify_token", "")
-    if not token:
-        # Return mock data for testing without Apify token
-        return _mock_products(keywords)
+// ── Page: Pending / Approval ──────────────────────────────────────────────
+let pendingProducts = [];
+let pendingTotal = 0;
 
-    all_products = []
-    async with httpx.AsyncClient(timeout=60) as client:
-        for keyword in keywords:
-            try:
-                # Start Apify run
-                resp = await client.post(
-                    "https://api.apify.com/v2/acts/apify~1688-scraper/runs",
-                    params={"token": token},
-                    json={"keywords": [keyword], "maxResults": max_per_keyword}
-                )
-                if resp.status_code != 201:
-                    continue
-                run_id = resp.json()["data"]["id"]
+async function renderPending() {
+  setTitle('Approval queue', `${stats.pending||'?'} products waiting`);
+  document.getElementById('topbar-actions').innerHTML = `
+    <button class="btn btn-sm" onclick="refreshPending()">↻ Refresh</button>
+  `;
 
-                # Poll until done (max 5 min)
-                for _ in range(60):
-                    await asyncio.sleep(5)
-                    status_resp = await client.get(
-                        f"https://api.apify.com/v2/actor-runs/{run_id}",
-                        params={"token": token}
-                    )
-                    status = status_resp.json()["data"]["status"]
-                    if status == "SUCCEEDED":
-                        break
-                    if status in ("FAILED", "ABORTED"):
-                        break
+  const data = await api('/products?stage=pending&limit=50').catch(()=>({products:[],total:0}));
+  pendingProducts = data.products;
+  pendingTotal = data.total;
 
-                # Fetch results
-                items_resp = await client.get(
-                    f"https://api.apify.com/v2/actor-runs/{run_id}/dataset/items",
-                    params={"token": token, "limit": max_per_keyword}
-                )
-                items = items_resp.json()
+  renderProductGrid();
+}
 
-                for item in items:
-                    all_products.append({
-                        "source": "1688",
-                        "source_id": str(item.get("offerId", "")),
-                        "title": item.get("title", ""),
-                        "title_translated": item.get("titleEnglish", item.get("title", "")),
-                        "price_cny": float(item.get("priceMin", item.get("price", 0)) or 0),
-                        "orders": int(item.get("tradeCount", 0) or 0),
-                        "rating": float(item.get("repurchaseRate", 4.5) or 4.5),
-                        "images": item.get("images", []),
-                        "url": item.get("productUrl", ""),
-                        "category": item.get("category", ""),
-                        "keyword": keyword,
-                    })
-            except Exception:
-                continue
+function renderProductGrid() {
+  const content = document.getElementById('content');
 
-    return all_products
+  if (pendingProducts.length === 0) {
+    content.innerHTML = `
+      <div class="empty" style="margin-top:60px">
+        <div class="empty-icon">◻</div>
+        <h3>Queue is empty</h3>
+        <p style="margin-top:6px">Run a scan to find new products</p>
+        <button class="btn" style="margin-top:16px" onclick="navigate('scan')">Start scan →</button>
+      </div>
+    `;
+    return;
+  }
 
+  content.innerHTML = `
+    <div style="margin-bottom:16px;display:flex;align-items:center;gap:12px">
+      <span style="font-size:13px;color:var(--text2)">${pendingTotal} products · select up to 10 to post</span>
+      <button class="btn btn-sm" onclick="selectAll()">Select all visible</button>
+      <button class="btn btn-sm" onclick="clearSelection()">Clear</button>
+    </div>
+    <div class="product-grid" id="product-grid">
+      ${pendingProducts.map(p => renderProductCard(p)).join('')}
+    </div>
+  `;
 
-def _mock_products(keywords: list) -> list:
-    """Returns realistic mock data when no Apify token is configured."""
-    mock = []
-    samples = [
-        {"title": "æ çº¿èçè³æº5.0éåªè¶é¿ç»­èª", "title_translated": "Wireless Bluetooth Earphones 5.0 Noise Cancel Long Battery", "price_cny": 28, "orders": 4521, "rating": 4.7, "category": "Electronics"},
-        {"title": "ç£å¸ææºæ¯æ¶æ¡é¢æäººæ¯ææ¶", "title_translated": "Magnetic Phone Stand Desktop Lazy Holder", "price_cny": 12, "orders": 8234, "rating": 4.8, "category": "Phone Accessories"},
-        {"title": "ç®çº¦é¶ç·é©¬åæ¯åå¡æ¯åå¬å®¤", "title_translated": "Minimalist Ceramic Mug Coffee Cup Office", "price_cny": 18, "orders": 3102, "rating": 4.9, "category": "Home"},
-        {"title": "LEDæ°å´ç¯USBæ¡é¢å°å¤ç¯", "title_translated": "LED Ambient Light USB Desktop Night Light", "price_cny": 22, "orders": 6780, "rating": 4.6, "category": "Home Decor"},
-        {"title": "ç®è´¨ç¬è®°æ¬æè´¦æ¥è®°æ¬", "title_translated": "Leather Notebook Journal Diary", "price_cny": 35, "orders": 2890, "rating": 4.8, "category": "Stationery"},
-        {"title": "å¤åè½æ¶çº³çæ¡é¢æ´ç", "title_translated": "Multi-function Storage Box Desktop Organizer", "price_cny": 25, "orders": 5430, "rating": 4.7, "category": "Home"},
-        {"title": "ç¡è¶ææºå£³é²æä¿æ¤å¥", "title_translated": "Silicone Phone Case Anti-drop Protective Cover", "price_cny": 8, "orders": 12000, "rating": 4.5, "category": "Phone Cases"},
-        {"title": "ç¼ç»ææåæç¹åå¥³", "title_translated": "Woven Tote Bag Shoulder Bag Women", "price_cny": 45, "orders": 1890, "rating": 4.8, "category": "Bags"},
-        {"title": "é¦è°è¡çç¤¼çå¥è£", "title_translated": "Aromatherapy Candle Gift Box Set", "price_cny": 38, "orders": 3210, "rating": 4.9, "category": "Home Fragrance"},
-        {"title": "insé£å¹²è±ç¸æ¡è£é¥°ç»", "title_translated": "Instagram Style Dried Flower Photo Frame Wall Art", "price_cny": 42, "orders": 2100, "rating": 4.7, "category": "Home Decor"},
-        {"title": "æå æ¶çº³è¢æè¡åè£è¢", "title_translated": "Foldable Storage Bag Travel Organizer", "price_cny": 15, "orders": 7650, "rating": 4.6, "category": "Travel"},
-        {"title": "æ¹åå·¥åç´éææºéä»¶ä½ä»·", "title_translated": "Wholesale Factory Direct Phone Accessories Cheap", "price_cny": 3, "orders": 50, "rating": 3.8, "category": "Spam"},
-        {"title": "æ¨è´¨æ¡é¢æä»¶åæè£é¥°å", "title_translated": "Wooden Desktop Ornament Creative Decoration", "price_cny": 29, "orders": 4320, "rating": 4.8, "category": "Home Decor"},
-    ]
-    import random
-    for kw in keywords:
-        for s in random.sample(samples, min(len(samples), 8)):
-            p = dict(s)
-            p.update({
-                "source": "1688_mock",
-                "source_id": hashlib.md5(f"{kw}{s['title']}".encode()).hexdigest()[:12],
-                "images": [f"https://picsum.photos/seed/{hashlib.md5(s['title'].encode()).hexdigest()[:6]}/600/600"],
-                "url": "https://1688.com",
-                "keyword": kw,
-            })
-            mock.append(p)
-    return mock
+  updateSelectionBar();
+}
 
+function renderProductCard(p) {
+  const selected = selectedProducts.has(p.id);
+  const images = p.images || [];
+  const img = images[0] || '';
+  const score = p.score || 0;
+  const scoreClass = score >= 8 ? 'score-high' : score >= 7 ? 'score-mid' : 'score-low';
 
-async def post_approved_products(product_ids: list[int]):
-    """Placeholder â integrate with instagrapi or Buffer API here."""
-    for pid in product_ids:
-        await asyncio.sleep(1)
-        await db.set_stage(pid, "posted")
-        await db.log_post(pid)
+  return `
+    <div class="product-card ${selected?'selected':''}" id="card-${p.id}" onclick="toggleSelect(${p.id})">
+      <div class="select-check"><span class="checkmark">✓</span></div>
+      ${img
+        ? `<img class="product-img" src="${img}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
+        : ''}
+      <div class="product-img-placeholder" style="${img?'display:none':''}">◈</div>
+      <div class="product-body">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:8px">
+          <div class="product-name">${p.product_name || p.title_translated || p.title || 'Unknown'}</div>
+          <div class="score-ring ${scoreClass}">${score.toFixed(1)}</div>
+        </div>
+        <div class="product-source">${p.title_translated || p.title || ''}</div>
+        <div class="product-metrics">
+          <span class="metric">€<strong>${p.cost_eur||'?'}</strong> cost</span>
+          <span style="color:var(--text3)">→</span>
+          <span class="metric">€<strong>${p.sell_price_eur||'?'}</strong> sell</span>
+          <span class="badge badge-green" style="margin-left:auto">${p.margin_pct||0}%</span>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+          <span class="badge badge-blue">★ ${p.rating||0}</span>
+          <span class="badge badge-purple">${(p.orders||0).toLocaleString()} orders</span>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:10px">
+          <button class="btn btn-sm" style="flex:1" onclick="event.stopPropagation();showDetail(${p.id})">Details</button>
+          <button class="btn btn-sm btn-danger" onclick="event.stopPropagation();rejectProduct(${p.id})">Reject</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function toggleSelect(id) {
+  if (selectedProducts.has(id)) {
+    selectedProducts.delete(id);
+  } else {
+    if (selectedProducts.size >= 10) { toast('Max 10 products at once', 'error'); return; }
+    selectedProducts.add(id);
+  }
+  const card = document.getElementById(`card-${id}`);
+  if (card) card.className = `product-card ${selectedProducts.has(id)?'selected':''}`;
+  updateSelectionBar();
+}
+
+function selectAll() {
+  pendingProducts.slice(0,10).forEach(p => selectedProducts.add(p.id));
+  renderProductGrid();
+}
+
+function clearSelection() {
+  selectedProducts.clear();
+  renderProductGrid();
+}
+
+function updateSelectionBar() {
+  let bar = document.getElementById('selection-bar');
+  if (selectedProducts.size === 0) {
+    if (bar) bar.remove();
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'selection-bar';
+    bar.className = 'selection-bar';
+    document.body.appendChild(bar);
+  }
+  bar.innerHTML = `
+    <span style="font-family:var(--font-mono);font-size:13px;color:var(--accent2)">${selectedProducts.size} selected</span>
+    <span style="color:var(--text3);font-size:12px">${10-selectedProducts.size} more possible</span>
+    <button class="btn btn-green" onclick="approveSelected()">Post ${selectedProducts.size} products →</button>
+    <button class="btn" onclick="clearSelection()">Cancel</button>
+  `;
+}
+
+async function approveSelected() {
+  if (!selectedProducts.size) return;
+  const ids = [...selectedProducts];
+  try {
+    await api('/approve', 'POST', {product_ids: ids});
+    toast(`${ids.length} products approved for posting!`, 'success');
+    selectedProducts.clear();
+    renderPending();
+  } catch(e) {}
+}
+
+async function rejectProduct(id) {
+  await api(`/products/${id}/reject`, 'POST');
+  pendingProducts = pendingProducts.filter(p => p.id !== id);
+  selectedProducts.delete(id);
+  renderProductGrid();
+}
+
+async function refreshPending() {
+  await renderPending();
+}
+
+// ── Product Detail ────────────────────────────────────────────────────────
+async function showDetail(id) {
+  const p = await api(`/products/${id}`);
+  const overlay = document.createElement('div');
+  overlay.className = 'detail-overlay';
+  overlay.id = 'detail-overlay';
+  overlay.onclick = (e) => { if(e.target===overlay) closeDetail(); };
+
+  const images = p.images || [];
+  const hashtags = p.hashtags || [];
+
+  overlay.innerHTML = `
+    <div class="detail-panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <div style="font-family:var(--font-display);font-size:16px;font-weight:700">Product detail</div>
+        <button class="btn btn-sm" onclick="closeDetail()">✕</button>
+      </div>
+
+      ${images[0] ? `<img class="detail-img" src="${images[0]}" />` : ''}
+
+      <div style="font-family:var(--font-display);font-size:18px;font-weight:800;margin-bottom:4px">${p.product_name||'—'}</div>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:16px;font-family:var(--font-mono)">${p.title_translated||p.title||''}</div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px">
+        <div class="mini-metric">
+          <div class="mini-metric-label">AI Score</div>
+          <div class="mini-metric-val" style="color:var(--accent2)">${(p.score||0).toFixed(1)}</div>
+        </div>
+        <div class="mini-metric">
+          <div class="mini-metric-label">Margin</div>
+          <div class="mini-metric-val" style="color:var(--green)">${p.margin_pct||0}%</div>
+        </div>
+        <div class="mini-metric">
+          <div class="mini-metric-label">Orders</div>
+          <div class="mini-metric-val">${(p.orders||0).toLocaleString()}</div>
+        </div>
+        <div class="mini-metric">
+          <div class="mini-metric-label">Cost</div>
+          <div class="mini-metric-val" style="font-size:16px">€${p.cost_eur||0}</div>
+        </div>
+        <div class="mini-metric">
+          <div class="mini-metric-label">Sell price</div>
+          <div class="mini-metric-val" style="font-size:16px;color:var(--green)">€${p.sell_price_eur||0}</div>
+        </div>
+        <div class="mini-metric">
+          <div class="mini-metric-label">Rating</div>
+          <div class="mini-metric-val" style="font-size:16px">★${p.rating||0}</div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px">
+        <div class="mini-metric">
+          <div class="mini-metric-label">Niche fit</div>
+          <div class="mini-metric-val" style="font-size:18px">${p.niche_fit||0}/10</div>
+        </div>
+        <div class="mini-metric">
+          <div class="mini-metric-label">Visual</div>
+          <div class="mini-metric-val" style="font-size:18px">${p.visual_appeal||0}/10</div>
+        </div>
+        <div class="mini-metric">
+          <div class="mini-metric-label">Trend</div>
+          <div class="mini-metric-val" style="font-size:18px">${p.trend_score||0}/10</div>
+        </div>
+      </div>
+
+      ${p.caption ? `
+        <div class="card-sm" style="margin-bottom:12px">
+          <div style="font-size:11px;color:var(--text3);font-family:var(--font-mono);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">Instagram caption</div>
+          <p style="font-size:13px;color:var(--text2);line-height:1.6">${p.caption}</p>
+        </div>
+      ` : ''}
+
+      ${hashtags.length ? `
+        <div class="card-sm" style="margin-bottom:16px">
+          <div style="font-size:11px;color:var(--text3);font-family:var(--font-mono);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Hashtags</div>
+          <div style="display:flex;flex-wrap:wrap;gap:5px">
+            ${hashtags.map(h => `<span class="badge badge-purple">#${h.replace('#','')}</span>`).join('')}
+          </div>
+        </div>
+      ` : ''}
+
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-green" style="flex:1" onclick="quickApprove(${p.id})">Approve & post</button>
+        <button class="btn btn-danger" onclick="rejectProduct(${p.id});closeDetail()">Reject</button>
+      </div>
+
+      ${p.url ? `<a href="${p.url}" style="display:block;text-align:center;color:var(--text3);font-size:12px;margin-top:12px;text-decoration:none" target="_blank">View on source ↗</a>` : ''}
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+}
+
+function closeDetail() {
+  const el = document.getElementById('detail-overlay');
+  if (el) el.remove();
+}
+
+async function quickApprove(id) {
+  await api('/approve', 'POST', {product_ids: [id]});
+  toast('Product approved!', 'success');
+  closeDetail();
+  pendingProducts = pendingProducts.filter(p => p.id !== id);
+  renderProductGrid();
+}
+
+// ── Page: Posted ──────────────────────────────────────────────────────────
+async function renderPosted() {
+  setTitle('Posted products');
+  document.getElementById('topbar-actions').innerHTML = '';
+  const data = await api('/products?stage=posted&limit=50').catch(()=>({products:[],total:0}));
+  const products = data.products;
+
+  const content = document.getElementById('content');
+  if (!products.length) {
+    content.innerHTML = `<div class="empty" style="margin-top:60px"><div class="empty-icon">◉</div><h3>Nothing posted yet</h3><p>Approve products from the queue</p></div>`;
+    return;
+  }
+
+  content.innerHTML = `
+    <div style="margin-bottom:16px;font-size:13px;color:var(--text2)">${data.total} products posted</div>
+    <table class="table">
+      <thead><tr>
+        <th>Product</th><th>Score</th><th>Cost</th><th>Sell</th><th>Margin</th><th>Orders</th>
+      </tr></thead>
+      <tbody>
+        ${products.map(p => `
+          <tr>
+            <td>
+              <div style="font-weight:500">${p.product_name||p.title_translated||'—'}</div>
+              <div style="font-size:11px;color:var(--text3);font-family:var(--font-mono)">${p.keyword||''}</div>
+            </td>
+            <td><span class="badge badge-purple">${(p.score||0).toFixed(1)}</span></td>
+            <td style="font-family:var(--font-mono)">€${p.cost_eur||0}</td>
+            <td style="font-family:var(--font-mono);color:var(--green)">€${p.sell_price_eur||0}</td>
+            <td><span class="badge badge-green">${p.margin_pct||0}%</span></td>
+            <td style="font-family:var(--font-mono)">${(p.orders||0).toLocaleString()}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// ── Page: Settings ────────────────────────────────────────────────────────
+let settingsData = {};
+
+async function renderSettings() {
+  setTitle('Settings');
+  document.getElementById('topbar-actions').innerHTML = `
+    <button class="btn btn-primary" onclick="saveSettings()">Save settings</button>
+  `;
+
+  settingsData = await api('/settings').catch(()=>({}));
+  const s = settingsData;
+
+  document.getElementById('content').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;max-width:800px">
+
+      <div class="card">
+        <div style="font-family:var(--font-display);font-size:14px;font-weight:700;margin-bottom:16px">Store & Niche</div>
+        <div class="form-group">
+          <label>Store niche description</label>
+          <textarea id="s-niche" rows="3" style="resize:vertical">${s.niche||''}</textarea>
+        </div>
+        <div class="form-group">
+          <label>Instagram username</label>
+          <input type="text" id="s-instagram" value="${s.instagram_username||''}" placeholder="@yourstore"/>
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="font-family:var(--font-display);font-size:14px;font-weight:700;margin-bottom:16px">Filter thresholds</div>
+        <div class="form-row">
+          <div>
+            <label>Min margin (%)</label>
+            <input type="number" id="s-margin" value="${s.min_margin||60}" step="5" min="0" max="95"/>
+          </div>
+          <div>
+            <label>Min AI score</label>
+            <input type="number" id="s-score" value="${s.min_score||7}" step="0.5" min="1" max="10"/>
+          </div>
+        </div>
+        <div class="form-row">
+          <div>
+            <label>Min orders</label>
+            <input type="number" id="s-orders" value="${s.min_orders||100}" step="50"/>
+          </div>
+          <div>
+            <label>Min rating</label>
+            <input type="number" id="s-rating" value="${s.min_rating||4.5}" step="0.1" min="1" max="5"/>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="font-family:var(--font-display);font-size:14px;font-weight:700;margin-bottom:16px">Pricing & markup</div>
+        <div class="form-group">
+          <label>CNY → EUR exchange rate</label>
+          <input type="number" id="s-exchange" value="${s.exchange_rate||0.13}" step="0.001"/>
+        </div>
+        <div class="form-group">
+          <label>Markup: cost under €5 (×)</label>
+          <input type="number" id="s-markup-low" value="${s.sell_markup_low||3.5}" step="0.1"/>
+        </div>
+        <div class="form-group">
+          <label>Markup: cost €5–€15 (×)</label>
+          <input type="number" id="s-markup-mid" value="${s.sell_markup_mid||2.8}" step="0.1"/>
+        </div>
+        <div class="form-group">
+          <label>Markup: cost over €15 (×)</label>
+          <input type="number" id="s-markup-high" value="${s.sell_markup_high||2.2}" step="0.1"/>
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="font-family:var(--font-display);font-size:14px;font-weight:700;margin-bottom:16px">API keys</div>
+        <div class="form-group">
+          <label>Apify API token</label>
+          <input type="password" id="s-apify" value="${s.apify_token||''}" placeholder="apify_api_..."/>
+        </div>
+        <div class="form-group">
+          <label>Anthropic API key</label>
+          <input type="password" id="s-anthropic" value="${s.anthropic_key||''}" placeholder="sk-ant-..."/>
+        </div>
+        <div style="margin-top:8px;padding:10px 12px;background:var(--surface2);border-radius:8px;border:1px solid var(--border)">
+          <div style="font-size:11px;color:var(--text3);margin-bottom:4px">Without API keys:</div>
+          <div style="font-size:12px;color:var(--text2)">System runs on mock data so you can test the full UI. Add keys when ready to go live.</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function saveSettings() {
+  const data = {
+    niche: document.getElementById('s-niche')?.value,
+    instagram_username: document.getElementById('s-instagram')?.value,
+    min_margin: parseFloat(document.getElementById('s-margin')?.value||60),
+    min_score: parseFloat(document.getElementById('s-score')?.value||7),
+    min_orders: parseInt(document.getElementById('s-orders')?.value||100),
+    min_rating: parseFloat(document.getElementById('s-rating')?.value||4.5),
+    exchange_rate: parseFloat(document.getElementById('s-exchange')?.value||0.13),
+    sell_markup_low: parseFloat(document.getElementById('s-markup-low')?.value||3.5),
+    sell_markup_mid: parseFloat(document.getElementById('s-markup-mid')?.value||2.8),
+    sell_markup_high: parseFloat(document.getElementById('s-markup-high')?.value||2.2),
+    apify_token: document.getElementById('s-apify')?.value||'',
+    anthropic_key: document.getElementById('s-anthropic')?.value||'',
+  };
+  await api('/settings', 'PATCH', data);
+  toast('Settings saved', 'success');
+}
+
+// ── Router ────────────────────────────────────────────────────────────────
+async function renderPage() {
+  const map = {
+    dashboard: renderDashboard,
+    scan: renderScan,
+    pending: renderPending,
+    posted: renderPosted,
+    settings: renderSettings,
+  };
+  const fn = map[currentPage];
+  if (fn) await fn();
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────
+buildNav();
+renderPage();
+
+// Refresh stats periodically
+setInterval(async () => {
+  stats = await api('/stats').catch(()=>stats);
+}, 15000);
+</script>
+</body>
+</html>
