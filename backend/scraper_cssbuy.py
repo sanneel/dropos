@@ -119,50 +119,51 @@ async def _login(page, username: str, password: str, captcha_key: str) -> None:
     await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=20000)
     await asyncio.sleep(1.5)
 
+    # Pre-fill credentials in both cases
     await page.fill(_SEL_USERNAME, username)
     await page.fill(_SEL_PASSWORD, password)
 
-    # Solve image captcha
-    captcha_img = await page.query_selector(_SEL_CAPTCHA_IMG)
-    if captcha_img:
-        log.info("CSSBuy: image captcha detected")
-        solution = await _solve_image_captcha(page, captcha_img, captcha_key)
-        if solution:
-            await page.fill(_SEL_CAPTCHA_IN, solution)
-            log.info("CSSBuy: image captcha filled: '%s'", solution)
-        else:
-            log.warning("CSSBuy: no image captcha solution — waiting 90s for manual solve")
-            await asyncio.sleep(90)
+    if captcha_key:
+        # Auto mode: solve both captchas then click submit
+        captcha_img = await page.query_selector(_SEL_CAPTCHA_IMG)
+        if captcha_img:
+            log.info("CSSBuy: solving image captcha via 2captcha...")
+            solution = await _solve_image_captcha(page, captcha_img, captcha_key)
+            if solution:
+                await page.fill(_SEL_CAPTCHA_IN, solution)
+                log.info("CSSBuy: image captcha filled: '%s'", solution)
 
-    # Solve reCAPTCHA if present
-    recaptcha_el = await page.query_selector(_SEL_RECAPTCHA)
-    if recaptcha_el:
-        log.info("CSSBuy: reCAPTCHA detected")
-        token = await _solve_recaptcha(captcha_key)
-        if token:
-            # Inject the token into the hidden textarea
-            await page.evaluate(
-                "document.querySelector('#g-recaptcha-response,textarea[name=g-recaptcha-response]').value = arguments[0]",
-                token,
-            )
-            log.info("CSSBuy: reCAPTCHA token injected")
-        else:
-            log.warning("CSSBuy: no reCAPTCHA solution — waiting 90s for manual solve")
-            await asyncio.sleep(90)
+        recaptcha_el = await page.query_selector(_SEL_RECAPTCHA)
+        if recaptcha_el:
+            log.info("CSSBuy: solving reCAPTCHA via 2captcha...")
+            token = await _solve_recaptcha(captcha_key)
+            if token:
+                await page.evaluate(
+                    "document.querySelector('#g-recaptcha-response,textarea[name=g-recaptcha-response]').value = arguments[0]",
+                    token,
+                )
+                log.info("CSSBuy: reCAPTCHA token injected")
 
-    # Click the submit button (p#login — handled by JS event listener)
-    await page.click(_SEL_SUBMIT)
+        await page.click(_SEL_SUBMIT)
+        timeout_ms = 25000
+    else:
+        # Manual mode: browser is visible, credentials are pre-filled.
+        # Just wait for the user to solve captcha and click Login themselves.
+        log.info(
+            "CSSBuy: browser window is open with credentials pre-filled. "
+            "Please solve the captcha and click Login. Waiting up to 5 minutes..."
+        )
+        timeout_ms = 300000  # 5 minutes
 
     try:
         await page.wait_for_function(
             "!window.location.href.includes('/login')",
-            timeout=25000,
+            timeout=timeout_ms,
         )
     except Exception:
         raise RuntimeError(
             f"CSSBuy login failed — still on {page.url}. "
-            "Check credentials. Set captcha_2captcha_key in settings for auto-solve, "
-            "or leave headless=False to solve manually."
+            "Add captcha_2captcha_key in Settings for auto-solve."
         )
 
 
