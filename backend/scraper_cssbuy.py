@@ -199,56 +199,61 @@ async def _solve_recaptcha(captcha_key: str) -> Optional[str]:
 # ── Search ─────────────────────────────────────────────────────────────────────
 
 async def _search(page, keyword: str, max_results: int) -> list:
-    """Navigate to search results and parse HTML product cards."""
-    captured_json: list = []
+    """Navigate to search results and parse HTML product cards.
 
-    async def handle_response(response):
-        ct = response.headers.get("content-type", "")
-        if "json" not in ct:
-            return
-        url = response.url
-        if not any(x in url for x in ("search", "product", "item", "goods", "list", "api")):
-            return
-        try:
-            data = await response.json()
-            captured_json.append({"url": url, "data": data})
-        except Exception:
-            pass
+    Real URL verified from live site: /productlist?keyWork={keyword}
+    Card selector verified: .itemlist .item
+    """
+    # Real search URL (verified from live site inspection)
+    search_url = f"{BASE_URL}/productlist?keyWork={quote(keyword)}"
+    await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
+    await asyncio.sleep(3)
 
-    page.on("response", handle_response)
+    # Dismiss "Search Terms" modal if it appears
+    try:
+        accept_btn = await page.wait_for_selector("button:has-text('Accept'), .btn-confirm, [class*='confirm']", timeout=4000)
+        if accept_btn:
+            await accept_btn.click()
+            log.info("CSSBuy: dismissed search terms modal")
+            await asyncio.sleep(1.5)
+    except Exception:
+        pass  # modal didn't appear
 
-    search_url = f"{BASE_URL}/search?keyword={quote(keyword)}&source=taobao"
-    await page.goto(search_url, wait_until="networkidle", timeout=30000)
-    await asyncio.sleep(2)
+    # Wait for Vue to replace skeleton placeholders with real product images
+    try:
+        await page.wait_for_function(
+            "document.querySelectorAll('.itemlist .item img').length > 0",
+            timeout=20000,
+        )
+        log.info("CSSBuy: product images appeared — data loaded")
+    except Exception:
+        log.warning("CSSBuy: timed out waiting for products to load on '%s'", keyword)
 
-    # Scroll to trigger lazy loading
+    await asyncio.sleep(1)
+
+    # Scroll to trigger more lazy-loaded items
     for _ in range(3):
         await page.evaluate("window.scrollBy(0, window.innerHeight)")
         await asyncio.sleep(0.8)
 
-    page.remove_listener("response", handle_response)
+    log.info("CSSBuy search landed on: %s", page.url)
 
-    # Try XHR products first
-    products = _extract_from_json(captured_json, keyword)
-
-    # Try window.__INITIAL_STATE__ or similar embedded data
-    if not products:
-        products = await _extract_from_window(page, keyword)
-
-    # Fallback: parse HTML cards
-    if not products:
-        log.info("CSSBuy: trying HTML parse for '%s'", keyword)
-        products = await _parse_html(page, keyword)
+    products = await _parse_html(page, keyword)
 
     if not products:
-        log.warning(
-            "CSSBuy: 0 products for '%s'. XHR responses: %s",
-            keyword,
-            [c["url"] for c in captured_json],
-        )
+        debug_dir = Path(__file__).parent
+        try:
+            await page.screenshot(path=str(debug_dir / "cssbuy_search_debug.png"), full_page=True)
+            html = await page.content()
+            (debug_dir / "cssbuy_search_debug.html").write_text(html[:50000], encoding="utf-8")
+            log.warning("CSSBuy: 0 products for '%s'. Debug screenshot + HTML saved.", keyword)
+        except Exception as e:
+            log.warning("CSSBuy: 0 products for '%s', debug save failed: %s", keyword, e)
 
     return products[:max_results]
 
+
+# ── Unused XHR helpers kept for reference ─────────────────────────────────────
 
 async def _extract_from_window(page, keyword: str) -> list:
     """Check window globals for embedded product data (common in Vue/React SSR sites)."""
@@ -376,55 +381,57 @@ def _normalize(item: dict, keyword: str, source_url: str) -> Optional[dict]:
 # ── HTML fallback ──────────────────────────────────────────────────────────────
 
 async def _parse_html(page, keyword: str) -> list:
-    """Parse product cards from server-rendered search HTML."""
-    products = []
-    selectors = [
-        ".goods-item", ".product-item", ".item-wrap", ".search-item",
-        "[class*='goods-list'] li", "[class*='item-list'] li",
-        ".pitem", ".gitem", "ul.list > li", ".result-item",
-    ]
+    """Parse product cards from /productlist page.
 
-    cards = []
-    for sel in selectors:
-        found = await page.query_selector_all(sel)
-        if found:
-            log.info("CSSBuy HTML: selector '%s' found %d cards", sel, len(found))
-            cards = found
-            break
+    Verified card structure (from live site inspection):
+      .itemlist .item
+        img.taobaoicon  — platform icon, skip
+        img             — product image
+        p               — title
+        span            — price as "¥CNY($USD)"
+    """
+    products = []
+    cards = await page.query_selector_all(".itemlist .item")
+    log.info("CSSBuy HTML: found %d cards", len(cards))
 
     for card in cards:
         try:
-            title_el = await card.query_selector("[class*='title'],[class*='name'],[class*='tit']")
-            price_el = await card.query_selector("[class*='price'],[class*='Price']")
-            img_el   = await card.query_selector("img")
-            link_el  = await card.query_selector("a")
+            imgs   = await card.query_selector_all("img")
+            title_el = await card.query_selector("p")
+            price_el = await card.query_selector("span")
+
+            # Second img is the product image (first is the platform icon)
+            product_img = imgs[1] if len(imgs) >= 2 else (imgs[0] if imgs else None)
+            img_src = await product_img.get_attribute("src") if product_img else ""
+            if not img_src and product_img:
+                img_src = await product_img.get_attribute("data-src") or ""
 
             title = (await title_el.inner_text()).strip() if title_el else ""
-            price_txt = (await price_el.inner_text()).strip() if price_el else "0"
-            img_src = await img_el.get_attribute("src") if img_el else ""
-            if not img_src and img_el:
-                img_src = await img_el.get_attribute("data-src") or ""
-            link_href = await link_el.get_attribute("href") if link_el else ""
+            price_txt = (await price_el.inner_text()).strip() if price_el else ""
 
-            price_cny = float(re.sub(r"[^\d.]", "", price_txt) or 0)
+            # Price format: "¥10.98($1.61)" — extract CNY value
+            cny_match = re.search(r"[¥￥]([\d.]+)", price_txt)
+            price_cny = float(cny_match.group(1)) if cny_match else 0.0
             if not price_cny:
                 continue
 
-            if img_src and not img_src.startswith("http"):
-                img_src = "https:" + img_src if img_src.startswith("//") else BASE_URL + img_src
-            if link_href and not link_href.startswith("http"):
-                link_href = BASE_URL + link_href
+            if img_src and img_src.startswith("//"):
+                img_src = "https:" + img_src
+
+            # Use image filename as stable product ID
+            img_id = re.search(r"/([^/]+)\.\w+$", img_src or "")
+            source_id = "cssbuy_" + (img_id.group(1) if img_id else hashlib.md5(f"{title}{price_cny}".encode()).hexdigest()[:12])
 
             products.append({
                 "source": "cssbuy",
-                "source_id": "cssbuy_" + hashlib.md5(f"{title}{price_cny}".encode()).hexdigest()[:10],
+                "source_id": source_id,
                 "title": title,
                 "title_translated": title,
                 "price_cny": price_cny,
                 "orders": 0,
                 "rating": 4.5,
                 "images": [img_src] if img_src else [],
-                "url": link_href or BASE_URL,
+                "url": f"{BASE_URL}/productlist?keyWork={quote(keyword)}",
                 "category": "",
                 "keyword": keyword,
                 "merchant": "",
