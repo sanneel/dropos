@@ -4,8 +4,9 @@ import sys
 from contextlib import asynccontextmanager
 from typing import List, Optional
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -68,7 +69,7 @@ async def root():
 class ScanRequest(BaseModel):
     keywords: List[str]
     max_per_keyword: int = 50
-    source: str = "1688"
+    source: str = "taobao"
 
 
 class ApproveRequest(BaseModel):
@@ -103,9 +104,17 @@ class SettingsUpdate(BaseModel):
     sell_markup_high: Optional[float] = None
     exchange_rate: Optional[float] = None
     instagram_username: Optional[str] = None
+    instagram_access_token: Optional[str] = None
+    instagram_user_id: Optional[str] = None
+    instagram_auto_reply_enabled: Optional[bool] = None
+    instagram_reply_rules: Optional[list] = None
+    instagram_dm_reply_enabled: Optional[bool] = None
+    instagram_dm_rules: Optional[list] = None
+    instagram_webhook_token: Optional[str] = None
     apify_token: Optional[str] = None
     anthropic_key: Optional[str] = None
     gemini_key: Optional[str] = None
+    groq_key: Optional[str] = None
     scan_keywords: Optional[List[str]] = None
     google_sheets_id: Optional[str] = None
     google_sheets_credentials: Optional[str] = None
@@ -178,7 +187,9 @@ async def approve_products(body: ApproveRequest):
     if len(body.product_ids) > 50:
         raise HTTPException(400, "Max 50 products at once")
     for pid in body.product_ids:
-        await db.set_stage(pid, "approved")
+        p = await db.get_product(pid)
+        if p and p.get("stage") == "pending":
+            await db.set_stage(pid, "approved")
     return {"ok": True, "approved": len(body.product_ids)}
 
 
@@ -267,6 +278,15 @@ async def get_job(job_id: int):
     return job
 
 
+@app.get("/api/jobs/{job_id}/pipeline")
+async def get_job_pipeline(job_id: int):
+    job = await db.get_job(job_id)
+    if not job:
+        raise HTTPException(404)
+    stages = await db.get_pipeline(job_id)
+    return {"job": job, "stages": stages}
+
+
 # ── Scheduler ──────────────────────────────────────────────────────────────────
 
 @app.get("/api/scheduler/status")
@@ -283,8 +303,84 @@ async def scheduler_trigger(bg: BackgroundTasks):
     if not keywords:
         keywords = ["aesthetic home decor"]
     job_id = await db.create_job(keywords=keywords)
-    bg.add_task(_run_scan, job_id, keywords, 50)
+    scan_src = str(settings.get("cssbuy_source", "1688"))
+    bg.add_task(_run_scan, job_id, keywords, 50, scan_src)
     return {"ok": True, "job_id": job_id, "keywords": keywords}
+
+
+# ── Instagram ─────────────────────────────────────────────────────────────────
+
+@app.get("/api/instagram/accounts")
+async def instagram_accounts():
+    """
+    Resolve the Instagram Business Account ID from the stored Page Access Token.
+    Calls GET /me/accounts to list Facebook Pages, then fetches the linked
+    Instagram Business Account ID for each page.
+    """
+    import httpx as _httpx
+    settings = await db.get_settings()
+    token = str(settings.get("instagram_access_token") or "").strip()
+    if not token:
+        raise HTTPException(400, "instagram_access_token not configured")
+
+    graph = "https://graph.facebook.com/v21.0"
+    try:
+        async with _httpx.AsyncClient(timeout=15) as client:
+            # 1. List all Facebook Pages the token has access to
+            r = await client.get(f"{graph}/me/accounts", params={"access_token": token})
+            body = r.json()
+            if "error" in body:
+                raise HTTPException(400, body["error"].get("message", str(body["error"])))
+
+            pages = body.get("data", [])
+            results = []
+            for page in pages:
+                page_id = page.get("id")
+                page_name = page.get("name", "")
+                # 2. Fetch the linked Instagram Business Account for each page
+                r2 = await client.get(
+                    f"{graph}/{page_id}",
+                    params={"fields": "instagram_business_account", "access_token": token},
+                )
+                b2 = r2.json()
+                ig = b2.get("instagram_business_account")
+                results.append({
+                    "page_id":   page_id,
+                    "page_name": page_name,
+                    "instagram_business_account_id": ig.get("id") if ig else None,
+                })
+        return {"accounts": results}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+@app.get("/api/instagram/webhook")
+async def ig_webhook_verify(
+    hub_mode: str = Query(None, alias="hub.mode"),
+    hub_verify_token: str = Query(None, alias="hub.verify_token"),
+    hub_challenge: str = Query(None, alias="hub.challenge"),
+):
+    """Meta webhook verification handshake."""
+    settings = await db.get_settings()
+    verify_token = str(settings.get("instagram_webhook_token") or "dropos_webhook_secret")
+    if hub_mode == "subscribe" and hub_verify_token == verify_token:
+        return PlainTextResponse(hub_challenge)
+    raise HTTPException(403, "Webhook verification failed — check your verify token")
+
+
+@app.post("/api/instagram/webhook")
+async def ig_webhook_receive(request: Request, bg: BackgroundTasks):
+    """Receive Instagram comment events from Meta and process in background."""
+    body = await request.json()
+    bg.add_task(_process_ig_webhook, body)
+    return {"ok": True}
+
+
+@app.get("/api/instagram/reply-log")
+async def ig_reply_log():
+    return await db.get_comment_reply_log(limit=100)
 
 
 # ── Google Sheets ──────────────────────────────────────────────────────────────
@@ -311,12 +407,86 @@ async def _run_scan(job_id: int, keywords: list, max_per_keyword: int, source: s
         await db.update_job(job_id, status="error")
 
 
+async def _process_ig_webhook(body: dict) -> None:
+    if body.get("object") != "instagram":
+        return
+
+    settings  = await db.get_settings()
+    ig_uid    = str(settings.get("instagram_user_id") or "")
+    comment_on = bool(settings.get("instagram_auto_reply_enabled"))
+    dm_on      = bool(settings.get("instagram_dm_reply_enabled"))
+
+    if not comment_on and not dm_on:
+        return
+
+    comment_rules = settings.get("instagram_reply_rules") or []
+    dm_rules      = settings.get("instagram_dm_rules")    or []
+
+    for entry in body.get("entry", []):
+
+        # ── Comment events (in "changes") ──────────────────────────────────────
+        if comment_on:
+            for change in entry.get("changes", []):
+                if change.get("field") != "comments":
+                    continue
+                value      = change.get("value", {})
+                comment_id = value.get("id")
+                text       = value.get("text", "")
+                from_id    = str((value.get("from") or {}).get("id", ""))
+
+                if not comment_id or from_id == ig_uid:
+                    continue
+                if await db.has_replied_to_comment(comment_id):
+                    continue
+
+                reply = instagram.match_reply_rule(text, comment_rules)
+                if not reply:
+                    continue
+
+                success = await instagram.reply_to_comment(comment_id, reply, settings)
+                if success:
+                    await db.log_comment_reply(comment_id, reply[:80], "comment")
+                    log.info("Auto-replied to comment %s: %.50s", comment_id, reply)
+
+        # ── DM events (in "messaging") ─────────────────────────────────────────
+        if dm_on:
+            for msg_event in entry.get("messaging", []):
+                sender_id = str((msg_event.get("sender") or {}).get("id", ""))
+                message   = msg_event.get("message", {})
+                msg_id    = message.get("mid", "")
+                text      = message.get("text", "")
+
+                if not sender_id or not msg_id or not text:
+                    continue
+                if sender_id == ig_uid:
+                    continue  # don't reply to our own messages
+                if message.get("is_echo"):
+                    continue  # echoes of our own sent messages
+                if await db.has_replied_to_comment(msg_id):
+                    continue  # already replied
+
+                reply = instagram.match_reply_rule(text, dm_rules)
+                if not reply:
+                    continue
+
+                success = await instagram.reply_to_dm(sender_id, reply, settings)
+                if success:
+                    await db.log_comment_reply(msg_id, reply[:80], "dm")
+                    log.info("Auto-replied to DM from %s: %.50s", sender_id, reply)
+
+
 async def _post_and_export(products: list) -> None:
     if not products:
         return
     try:
-        results = await instagram.post_batch(products)
-        log.info("Instagram posted %d products", len(results))
+        settings = await db.get_settings()
+        results = await instagram.post_batch(products, settings)
+        posted  = sum(1 for r in results if r.status == "posted")
+        mocked  = sum(1 for r in results if r.status == "mock")
+        errors  = [r for r in results if r.status == "error"]
+        log.info("Instagram: posted=%d mock=%d errors=%d", posted, mocked, len(errors))
+        for r in errors:
+            log.warning("Instagram error product=%s: %s", r.product_id, r.error)
         sheets.export(products)
     except Exception as e:
         log.error("Post/export error: %s", e)

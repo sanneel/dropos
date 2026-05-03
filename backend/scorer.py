@@ -14,14 +14,23 @@ ScoreLabel = Literal["LOW", "MEDIUM", "HIGH"]
 def compute_score(product: dict) -> int:
     points = 0
 
-    # Demand: orders (0–40); 0 means "unknown/not tracked" — treat as neutral
+    # Demand: orders (0–40)
+    # Taobao always returns 0 (not available from API) — give 0, not neutral credit
+    # 1688 with 0 orders is already blocked in basic_filter, so 0 here means unknown source
     orders = int(product.get("orders", 0))
-    if orders == 0:       points += 20  # unknown — give neutral credit
+    source = product.get("source_platform", "")
+
+    if source == "taobao":
+        pass                        # no order data available — contribute nothing
+    elif orders == 0:
+        pass                        # unknown, but not Taobao — also contribute nothing
     elif orders >= 10_000: points += 40
     elif orders >= 5_000:  points += 32
-    elif orders >= 2_000:  points += 22
-    elif orders >= 500:    points += 14
-    else:                  points += 6
+    elif orders >= 2_000:  points += 24
+    elif orders >= 500:    points += 16
+    elif orders >= 100:    points += 10
+    elif orders >= 50:     points += 6
+    elif orders >= 20:     points += 3
 
     # Quality: rating (0–20)
     rating = float(product.get("rating", 0))

@@ -1,0 +1,836 @@
+INFO:     Started server process [25276]
+INFO:     Waiting for application startup.
+2026-05-03 13:52:05,010 INFO Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-05-03 13:52:05,010 INFO Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-05-03 13:52:05,011 INFO Added job "_run_scheduled_scan" to job store "default"
+2026-05-03 13:52:05,011 INFO Added job "_run_scheduled_scan" to job store "default"
+2026-05-03 13:52:05,011 INFO Scheduler started
+2026-05-03 13:52:05,011 INFO Scheduler started — jobs: ['evening_scan', 'morning_scan']
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:61225 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49914 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51209 - "OPTIONS /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "GET /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51209 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51209 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "OPTIONS /api/jobs?limit=5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51209 - "GET /api/jobs?limit=5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "OPTIONS /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "GET /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "OPTIONS /api/scheduler/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "GET /api/scheduler/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "OPTIONS /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "PATCH /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "OPTIONS /api/instagram/accounts HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51209 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+2026-05-03 13:52:12,709 INFO HTTP Request: GET https://graph.facebook.com/v21.0/me/accounts?access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+INFO:     127.0.0.1:51209 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+2026-05-03 13:52:13,161 INFO HTTP Request: GET https://graph.facebook.com/v21.0/1186602721194980?fields=instagram_business_account&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+INFO:     127.0.0.1:61225 - "GET /api/instagram/accounts HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54054 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54054 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "OPTIONS /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "PATCH /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "OPTIONS /api/scheduler/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "GET /api/scheduler/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "OPTIONS /api/products?stage=pending&limit=50&offset=0&sort=score HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "GET /api/products?stage=pending&limit=50&offset=0&sort=score HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "OPTIONS /api/products/15/approve HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "POST /api/products/15/approve HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "OPTIONS /api/products?stage=approved&limit=50&offset=0&sort=score HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "GET /api/products?stage=approved&limit=50&offset=0&sort=score HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "OPTIONS /api/products/15/post HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "POST /api/products/15/post HTTP/1.1" 200 OK
+2026-05-03 13:52:28,672 INFO Instagram: creating media container for product 15
+INFO:     127.0.0.1:61225 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61225 - "GET /api/stats HTTP/1.1" 200 OK
+2026-05-03 13:52:32,606 INFO HTTP Request: POST https://graph.facebook.com/v21.0/17841422381534951/media?image_url=https%3A%2F%2Fcbu01.alicdn.com%2Fimg%2Fibank%2FO1CN01g4nt731aP4OPFbHY7_%21%212217186003321-0-cib.jpg&caption=The+gift+that+says+%27I+was+thinking+of+you%27+without+saying+a+word.+Perfect+for+your+favourite+person.+%F0%9F%8C%B9%0A%0A%23aesthetic+%23lifestyle+%23trending+%23couplegoals+%23relationshipgoals+%23giftforhim+%23giftforher+%23anniversarygift+%23valentinesday+%23couplelife+%23lovegift&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:52:32,606 INFO Instagram: publishing container 18105911899746052
+INFO:     127.0.0.1:49912 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49912 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49912 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49912 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60893 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58851 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58851 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60893 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58444 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58444 - "GET /api/stats HTTP/1.1" 200 OK
+2026-05-03 13:52:39,741 INFO HTTP Request: POST https://graph.facebook.com/v21.0/17841422381534951/media_publish?creation_id=18105911899746052&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:52:40,046 INFO HTTP Request: GET https://graph.facebook.com/v21.0/17988276881967570?fields=shortcode&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:52:40,046 INFO Instagram posted: product=15 name='Flash Led Light String Three-Speed' \u2192 https://www.instagram.com/p/DX4I9OijTEG/
+2026-05-03 13:52:40,046 INFO Instagram: posted=1 mock=0 errors=0
+2026-05-03 13:52:40,046 INFO Google Sheets mock export: 1 products
+2026-05-03 13:52:40,046 INFO   [SHEETS] Flash Led Light String Three-Speed | €15.27 | 64.3% margin | stage=approved
+INFO:     127.0.0.1:55850 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55850 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55850 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55850 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50109 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50109 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53908 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53908 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53908 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53908 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/products?stage=pending&limit=50&offset=0&sort=score HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "GET /api/products?stage=pending&limit=50&offset=0&sort=score HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64479 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64479 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/products?stage=rejected&limit=100&sort=created HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "GET /api/products?stage=rejected&limit=100&sort=created HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/products/9/reconsider HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "POST /api/products/9/reconsider HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/products/8/reconsider HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "POST /api/products/8/reconsider HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/products/7/reconsider HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "POST /api/products/7/reconsider HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/products/6/reconsider HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "POST /api/products/6/reconsider HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/products/5/reconsider HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "POST /api/products/5/reconsider HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/products/3/reconsider HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "POST /api/products/3/reconsider HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/products/2/reconsider HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "POST /api/products/2/reconsider HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/products/1/reconsider HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "POST /api/products/1/reconsider HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/products/10/reconsider HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "POST /api/products/10/reconsider HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/products/11/reconsider HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "POST /api/products/11/reconsider HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/products/16/reconsider HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "POST /api/products/16/reconsider HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/products?stage=pending&limit=50&offset=0&sort=score HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "GET /api/products?stage=pending&limit=50&offset=0&sort=score HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/products/2/approve HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "POST /api/products/2/approve HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/products?stage=approved&limit=50&offset=0&sort=score HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "GET /api/products?stage=approved&limit=50&offset=0&sort=score HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/products/2/post HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "POST /api/products/2/post HTTP/1.1" 200 OK
+2026-05-03 13:53:32,736 INFO Instagram: creating media container for product 2
+INFO:     127.0.0.1:61963 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "GET /api/stats HTTP/1.1" 200 OK
+2026-05-03 13:53:37,642 INFO HTTP Request: POST https://graph.facebook.com/v21.0/17841422381534951/media?image_url=https%3A%2F%2Fcbu01.alicdn.com%2Fimg%2Fibank%2FO1CN01vYoJHP1Txgyq1cylJ_%21%212213021282449-0-cib.jpg&caption=Sending+you+a+little+piece+of+forever+love.+These+delicate+rose+bouquets+are+the+perfect+way+to+show+you+care%2C+no+matter+the+occasion.+I+love+you+more+each+day%21%0A%0A%23couplegoals+%23romanticgifts+%23giftideas+%23anniversarygift+%23valentinesday+%23lovegifts+%23couples+%23relationshipgoals+%23giftsforher+%23giftsforhim+%23specialgifts+%23thoughtfulgifts+%23foreverlove+%23sweetgifts+%23couple&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:53:37,642 INFO Instagram: publishing container 18105912112746052
+INFO:     127.0.0.1:61963 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55866 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55866 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55866 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55866 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61963 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64945 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64945 - "GET /api/stats HTTP/1.1" 200 OK
+2026-05-03 13:53:40,935 INFO HTTP Request: POST https://graph.facebook.com/v21.0/17841422381534951/media_publish?creation_id=18105912112746052&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:53:41,208 INFO HTTP Request: GET https://graph.facebook.com/v21.0/17969873064046806?fields=shortcode&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:53:41,209 INFO Instagram posted: product=2 name='Miniature Rose Bouquets' \u2192 https://www.instagram.com/p/DX4JFCRD3Sd/
+2026-05-03 13:53:41,209 INFO Instagram: posted=1 mock=0 errors=0
+2026-05-03 13:53:41,209 INFO Google Sheets mock export: 1 products
+2026-05-03 13:53:41,209 INFO   [SHEETS] Miniature Rose Bouquets | €17.58 | 64.3% margin | stage=approved
+INFO:     127.0.0.1:56513 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56513 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56513 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56513 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49325 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49325 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54539 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54539 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54539 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54539 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55821 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55821 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63133 - "OPTIONS /api/products?stage=pending&limit=50&offset=0&sort=score HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63133 - "GET /api/products?stage=pending&limit=50&offset=0&sort=score HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63133 - "OPTIONS /api/approve HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63133 - "POST /api/approve HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63133 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63133 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63133 - "OPTIONS /api/products?stage=pending&limit=50&offset=0&sort=score HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63133 - "GET /api/products?stage=pending&limit=50&offset=0&sort=score HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63133 - "OPTIONS /api/products?stage=approved&limit=50&offset=0&sort=score HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63133 - "GET /api/products?stage=approved&limit=50&offset=0&sort=score HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63133 - "OPTIONS /api/products?stage=pending&limit=50&offset=0&sort=score HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63133 - "GET /api/products?stage=pending&limit=50&offset=0&sort=score HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63133 - "OPTIONS /api/products/8/approve HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63133 - "POST /api/products/8/approve HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63133 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63133 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63133 - "OPTIONS /api/products?stage=approved&limit=50&offset=0&sort=score HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63133 - "GET /api/products?stage=approved&limit=50&offset=0&sort=score HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63133 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63133 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63133 - "OPTIONS /api/post HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63133 - "POST /api/post HTTP/1.1" 200 OK
+2026-05-03 13:54:29,201 INFO Instagram: creating media container for product 3
+INFO:     127.0.0.1:63133 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63133 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63133 - "OPTIONS /api/products?stage=approved&limit=50&offset=0&sort=score HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63133 - "GET /api/products?stage=approved&limit=50&offset=0&sort=score HTTP/1.1" 200 OK
+2026-05-03 13:54:33,335 INFO HTTP Request: POST https://graph.facebook.com/v21.0/17841422381534951/media?image_url=https%3A%2F%2Fcbu01.alicdn.com%2Fimg%2Fibank%2FO1CN01Axa6ii1uYUuAg8HNh_%21%213161576049-0-cib.jpg&caption=Creating+a+romantic+ambiance+for+us+with+this+beautiful+aromatherapy+candle.+It%27s+the+perfect+way+to+unwind+and+connect+after+a+long+day.+I+love+these+little+moments+with+you.%0A%0A%23couplegoals+%23romanticgifts+%23giftideas+%23anniversarygift+%23couples+%23love+%23relationshipgoals+%23giftsforher+%23giftsforhim+%23datenight+%23homedecor+%23selfcare+%23aromatherapy+%23candles+%23sentimentalgifts&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:54:33,336 INFO Instagram: publishing container 18105912361746052
+2026-05-03 13:54:36,512 INFO HTTP Request: POST https://graph.facebook.com/v21.0/17841422381534951/media_publish?creation_id=18105912361746052&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:54:36,830 INFO HTTP Request: GET https://graph.facebook.com/v21.0/18152257099467187?fields=shortcode&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:54:36,831 INFO Instagram posted: product=3 name='Poetry Aromatherapy Candle Gift' \u2192 https://www.instagram.com/p/DX4JL87Fv7W/
+2026-05-03 13:54:36,831 INFO Instagram: waiting 30s before next post…
+INFO:     127.0.0.1:57234 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57234 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57234 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57234 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57234 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57234 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57234 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57234 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57234 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57234 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50022 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50022 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61581 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61581 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50725 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50725 - "GET /api/stats HTTP/1.1" 200 OK
+2026-05-03 13:55:07,018 INFO Instagram: creating media container for product 1
+INFO:     127.0.0.1:51553 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51553 - "GET /api/stats HTTP/1.1" 200 OK
+2026-05-03 13:55:10,349 INFO HTTP Request: POST https://graph.facebook.com/v21.0/17841422381534951/media?image_url=https%3A%2F%2Fcbu01.alicdn.com%2Fimg%2Fibank%2FO1CN01NC0RKX2EWTPcMJ7wD_%21%212218381918752-0-cib.jpg&caption=Creating+a+cozy+and+romantic+atmosphere+for+us.+This+candle+is+the+perfect+way+to+unwind+and+connect+after+a+long+day.%0A%0A%23couplegoals+%23romanticgifts+%23giftideas+%23couples+%23relationshipgoals+%23anniversarygift+%23valentinesdaygift+%23giftsforher+%23giftsforhim+%23datenight+%23homefragrance+%23aromatherapy+%23moodlighting+%23cozyvibes+%23love&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:55:10,350 INFO Instagram: publishing container 18105912541746052
+2026-05-03 13:55:13,810 INFO HTTP Request: POST https://graph.facebook.com/v21.0/17841422381534951/media_publish?creation_id=18105912541746052&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:55:14,117 INFO HTTP Request: GET https://graph.facebook.com/v21.0/18105463253314612?fields=shortcode&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:55:14,118 INFO Instagram posted: product=1 name='Romantic Scented Candle' \u2192 https://www.instagram.com/p/DX4JQgul1Vp/
+2026-05-03 13:55:14,118 INFO Instagram: waiting 30s before next post…
+INFO:     127.0.0.1:53074 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53074 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63361 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63361 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54991 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59668 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59668 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54991 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59668 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59668 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54991 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59668 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54991 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59668 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63994 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63994 - "GET /api/stats HTTP/1.1" 200 OK
+2026-05-03 13:55:44,316 INFO Instagram: creating media container for product 6
+2026-05-03 13:55:49,796 INFO HTTP Request: POST https://graph.facebook.com/v21.0/17841422381534951/media?image_url=https%3A%2F%2Fcbu01.alicdn.com%2Fimg%2Fibank%2FO1CN01scE9xa26rWm4jnkZx_%21%212219495417715-0-cib.jpg&caption=The+sweetest+little+bouquet+to+remind+you+how+much+you%27re+loved.+This+is+the+perfect+way+to+say+%27I+love+you%27+and+brighten+your+partner%27s+day.%0A%0A%23couplegoals+%23romanticgifts+%23giftideas+%23couples+%23love+%23anniversarygift+%23girlfriendgift+%23boyfriendgift+%23valentinesdaygift+%23giftsforher+%23giftsforhim+%23relationshipgoals+%23couple+%23specialgift+%23thoughtfulgift&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:55:49,797 INFO Instagram: publishing container 18105912766746052
+2026-05-03 13:55:53,073 INFO HTTP Request: POST https://graph.facebook.com/v21.0/17841422381534951/media_publish?creation_id=18105912766746052&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:55:53,485 INFO HTTP Request: GET https://graph.facebook.com/v21.0/18128442205580856?fields=shortcode&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:55:53,486 INFO Instagram posted: product=6 name='Bunny Ear Flower Bouquet' \u2192 https://www.instagram.com/p/DX4JVI4HPfo/
+2026-05-03 13:55:53,486 INFO Instagram: waiting 30s before next post…
+INFO:     127.0.0.1:50736 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50736 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50509 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50509 - "GET /api/stats HTTP/1.1" 200 OK
+2026-05-03 13:56:23,669 INFO Instagram: creating media container for product 10
+2026-05-03 13:56:28,233 INFO HTTP Request: POST https://graph.facebook.com/v21.0/17841422381534951/media?image_url=https%3A%2F%2Fcbu01.alicdn.com%2Fimg%2Fibank%2FO1CN01GwkNHj1ZaETjI4zYH_%21%212217984693210-0-cib.jpg&caption=Creating+our+own+magical+aurora+borealis+right+in+our+room.+Perfect+for+cozy+nights+and+romantic+vibes%2C+making+every+moment+feel+special.+I+love+creating+these+dreamy+moments+with+you.%0A%0A%23couplegoals+%23romanticgifts+%23giftideas+%23couples+%23relationshipgoals+%23datenight+%23bedroomdecor+%23moodlighting+%23auroraborealis+%23stargazing+%23cozyvibes+%23anniversarygift+%23giftsforher+%23giftsforhim+%23love&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:56:28,234 INFO Instagram: publishing container 18105912997746052
+INFO:     127.0.0.1:60358 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60358 - "GET /api/stats HTTP/1.1" 200 OK
+2026-05-03 13:56:31,988 INFO HTTP Request: POST https://graph.facebook.com/v21.0/17841422381534951/media_publish?creation_id=18105912997746052&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:56:32,423 INFO HTTP Request: GET https://graph.facebook.com/v21.0/17964447225099594?fields=shortcode&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:56:32,425 INFO Instagram posted: product=10 name='Romantic Aurora Projector Lamp' \u2192 https://www.instagram.com/p/DX4JZ8RDnE4/
+2026-05-03 13:56:32,425 INFO Instagram: waiting 30s before next post…
+INFO:     127.0.0.1:60212 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60212 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60212 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60212 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60212 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60212 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60212 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60212 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60212 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60212 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65288 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65288 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49959 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49959 - "GET /api/stats HTTP/1.1" 200 OK
+2026-05-03 13:57:02,608 INFO Instagram: creating media container for product 5
+2026-05-03 13:57:06,087 INFO HTTP Request: POST https://graph.facebook.com/v21.0/17841422381534951/media?image_url=https%3A%2F%2Fcbu01.alicdn.com%2Fimg%2Fibank%2FO1CN01306eT51eEJBTdfsLh_%21%214239503839-0-cib.jpg&caption=Sending+you+a+little+bloom+to+brighten+your+day%2C+my+love.+May+this+%27eternity+blossom%27+remind+you+how+much+you+mean+to+me%2C+always.%0A%0A%23couplegoals+%23romanticgifts+%23giftideas+%23anniversarygift+%23valentinesdaygift+%23justbecause+%23love+%23couples+%23relationshipgoals+%23giftsforher+%23giftsforhim+%23sweetgifts+%23driedflowers+%23eternalflowers+%23meaningfulgifts&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:57:06,088 INFO Instagram: publishing container 18105913054746052
+2026-05-03 13:57:10,026 INFO HTTP Request: POST https://graph.facebook.com/v21.0/17841422381534951/media_publish?creation_id=18105913054746052&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:57:10,300 INFO HTTP Request: GET https://graph.facebook.com/v21.0/18081547103572978?fields=shortcode&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:57:10,301 INFO Instagram posted: product=5 name='Mini Dried Flower Card' \u2192 https://www.instagram.com/p/DX4JerFF8-G/
+2026-05-03 13:57:10,301 INFO Instagram: waiting 30s before next post…
+INFO:     127.0.0.1:62511 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62511 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55497 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55497 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61037 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63396 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61037 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57966 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63396 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63396 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57966 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63396 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57966 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63396 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53627 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53627 - "GET /api/stats HTTP/1.1" 200 OK
+2026-05-03 13:57:40,498 INFO Instagram: creating media container for product 7
+2026-05-03 13:57:43,706 INFO HTTP Request: POST https://graph.facebook.com/v21.0/17841422381534951/media?image_url=https%3A%2F%2Fcbu01.alicdn.com%2Fimg%2Fibank%2FO1CN01smOfJm1hVf8ZqIqy2_%21%212211410404283-0-cib.jpg&caption=Creating+a+cozy+and+romantic+atmosphere+with+these+adorable+apple-shaped+candles.+Perfect+for+adding+a+touch+of+sweetness+to+our+home+and+reminding+me+of+you.%0A%0A%23couplesgifts+%23romanticgifts+%23giftsforher+%23giftsforhim+%23anniversarygift+%23valentinesdaygift+%23couplegoals+%23relationshipgoals+%23homedecor+%23scentedcandles+%23giftideas+%23love+%23couple+%23romantic+%23gifts&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:57:43,707 INFO Instagram: publishing container 18105913147746052
+2026-05-03 13:57:47,252 INFO HTTP Request: POST https://graph.facebook.com/v21.0/17841422381534951/media_publish?creation_id=18105913147746052&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:57:47,566 INFO HTTP Request: GET https://graph.facebook.com/v21.0/18389688295081119?fields=shortcode&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:57:47,567 INFO Instagram posted: product=7 name='Apple Scented Candles' \u2192 https://www.instagram.com/p/DX4JjRlDtb1/
+2026-05-03 13:57:47,568 INFO Instagram: waiting 30s before next post…
+INFO:     127.0.0.1:59561 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59561 - "GET /api/stats HTTP/1.1" 200 OK
+2026-05-03 13:58:17,765 INFO Instagram: creating media container for product 9
+INFO:     127.0.0.1:53166 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53166 - "GET /api/stats HTTP/1.1" 200 OK
+2026-05-03 13:58:22,478 INFO HTTP Request: POST https://graph.facebook.com/v21.0/17841422381534951/media?image_url=https%3A%2F%2Fcbu01.alicdn.com%2Fimg%2Fibank%2FO1CN01gofrgv1g19Qxlxo8p_%21%212216804834081-0-cib.jpg&caption=Creating+the+perfect+romantic+ambiance+for+us.+This+creamy+vanilla+candle+fills+our+space+with+warmth+and+love%2C+making+every+moment+together+even+more+special.%0A%0A%23couplegoals+%23romanticgifts+%23giftideas+%23couples+%23love+%23anniversarygift+%23valentinesdaygift+%23relationshipgoals+%23giftsforher+%23giftsforhim+%23homedecor+%23scentedcandles+%23cozyvibes+%23datenight+%23couple&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:58:22,478 INFO Instagram: publishing container 18105913333746052
+2026-05-03 13:58:25,785 INFO HTTP Request: POST https://graph.facebook.com/v21.0/17841422381534951/media_publish?creation_id=18105913333746052&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:58:26,093 INFO HTTP Request: GET https://graph.facebook.com/v21.0/17885040393540378?fields=shortcode&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:58:26,094 INFO Instagram posted: product=9 name='Creamy Vanilla Scented Candle' \u2192 https://www.instagram.com/p/DX4Jn24GHnm/
+2026-05-03 13:58:26,094 INFO Instagram: waiting 30s before next post…
+INFO:     127.0.0.1:56521 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56521 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53571 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53571 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53571 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53571 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53571 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53571 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53571 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53571 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53571 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53571 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54609 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54609 - "GET /api/stats HTTP/1.1" 200 OK
+2026-05-03 13:58:56,289 INFO Instagram: creating media container for product 11
+INFO:     127.0.0.1:60180 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60180 - "GET /api/stats HTTP/1.1" 200 OK
+2026-05-03 13:59:02,109 INFO HTTP Request: POST https://graph.facebook.com/v21.0/17841422381534951/media?image_url=https%3A%2F%2Fcbu01.alicdn.com%2Fimg%2Fibank%2FO1CN01mVsBKV1pEjORRfE1V_%21%212213883475329-0-cib.jpg&caption=Light+up+your+love+with+these+unique+humanoid+candles.+Perfect+for+a+romantic+evening+or+a+special+anniversary+gift%2C+they+add+a+touch+of+artistry+to+any+space.%0A%0A%23couplegoals+%23romanticgifts+%23anniversarygift+%23couples+%23love+%23giftideas+%23relationshipgoals+%23valentinesdaygift+%23homedecor+%23candles+%23uniquegifts+%23couplesgifts+%23romanticdecor+%23giftsforhim+%23giftsforher&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:59:02,110 INFO Instagram: publishing container 18105913441746052
+2026-05-03 13:59:05,488 INFO HTTP Request: POST https://graph.facebook.com/v21.0/17841422381534951/media_publish?creation_id=18105913441746052&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:59:05,797 INFO HTTP Request: GET https://graph.facebook.com/v21.0/18044810975547225?fields=shortcode&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:59:05,798 INFO Instagram posted: product=11 name='Humanoid Couple Candles' \u2192 https://www.instagram.com/p/DX4Jsj9jxU6/
+2026-05-03 13:59:05,798 INFO Instagram: waiting 30s before next post…
+INFO:     127.0.0.1:52832 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52832 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51932 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51932 - "GET /api/stats HTTP/1.1" 200 OK
+2026-05-03 13:59:35,989 INFO Instagram: creating media container for product 16
+INFO:     127.0.0.1:51932 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56937 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54099 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54186 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52769 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54186 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52769 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54186 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52769 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54186 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57742 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57742 - "GET /api/stats HTTP/1.1" 200 OK
+2026-05-03 13:59:41,047 INFO HTTP Request: POST https://graph.facebook.com/v21.0/17841422381534951/media?image_url=https%3A%2F%2Fcbu01.alicdn.com%2Fimg%2Fibank%2FO1CN013uX8dx1iCia7wOs6q_%21%212216746964377-0-cib.jpg&caption=Love+isn%27t+just+a+feeling%2C+it%27s+the+little+moments+you+create+together.+Make+this+one+count.+%E2%9C%A8%0A%0A%23aesthetic+%23lifestyle+%23trending+%23couplegoals+%23relationshipgoals+%23giftforhim+%23giftforher+%23anniversarygift+%23valentinesday+%23couplelife+%23lovegift&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:59:41,048 INFO Instagram: publishing container 18105913741746052
+2026-05-03 13:59:47,676 INFO HTTP Request: POST https://graph.facebook.com/v21.0/17841422381534951/media_publish?creation_id=18105913741746052&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:59:48,120 INFO HTTP Request: GET https://graph.facebook.com/v21.0/17886708567531878?fields=shortcode&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 13:59:48,121 INFO Instagram posted: product=16 name='Cute Pacha Dog Mini Coin' \u2192 https://www.instagram.com/p/DX4JxWlG0WF/
+2026-05-03 13:59:48,121 INFO Instagram: waiting 30s before next post…
+INFO:     127.0.0.1:49672 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49672 - "GET /api/stats HTTP/1.1" 200 OK
+2026-05-03 14:00:18,320 INFO Instagram: creating media container for product 17
+INFO:     127.0.0.1:54294 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54294 - "GET /api/stats HTTP/1.1" 200 OK
+2026-05-03 14:00:21,905 INFO HTTP Request: POST https://graph.facebook.com/v21.0/17841422381534951/media?image_url=https%3A%2F%2Fcbu01.alicdn.com%2Fimg%2Fibank%2FO1CN01AdObOb1gZUx3R8p68_%21%212206844814156-0-cib.jpg&caption=It%27s+the+little+things+that+mean+the+most.+Surprise+your+person+with+something+they%27ll+never+forget.+%F0%9F%8E%81%0A%0A%23aesthetic+%23lifestyle+%23trending+%23couplegoals+%23relationshipgoals+%23giftforhim+%23giftforher+%23anniversarygift+%23valentinesday+%23couplelife+%23lovegift&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 14:00:21,905 INFO Instagram: publishing container 18105914062746052
+2026-05-03 14:00:30,071 INFO HTTP Request: POST https://graph.facebook.com/v21.0/17841422381534951/media_publish?creation_id=18105914062746052&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 14:00:30,378 INFO HTTP Request: GET https://graph.facebook.com/v21.0/17943890547079628?fields=shortcode&access_token=EAAW5hBBEsZCUBRYMAPoCMuHdCwWm2MoWXtcZBKLC1LYc4FytIOgrFFtYKzMdUXXLxQjvx6lDD2PLpTfFowMcBFOPr3RixhbcpaNuromxIVoHZAWFwUe02hZBgKP0oyePBry1liFSm8G40OAI463ZBqd3eBZC1olE6GFZBZChjZCpIMYvaQtpPiqygAjrWEQPQGlBi "HTTP/1.1 200 OK"
+2026-05-03 14:00:30,380 INFO Instagram posted: product=17 name="520 Valentine's Day Led Warm" \u2192 https://www.instagram.com/p/DX4J2jiDmbx/
+2026-05-03 14:00:30,380 INFO Instagram: posted=10 mock=0 errors=0
+2026-05-03 14:00:30,380 INFO Google Sheets mock export: 10 products
+2026-05-03 14:00:30,380 INFO   [SHEETS] Poetry Aromatherapy Candle Gift | €15.62 | 64.3% margin | stage=approved
+2026-05-03 14:00:30,380 INFO   [SHEETS] Romantic Scented Candle | €19.14 | 64.3% margin | stage=approved
+2026-05-03 14:00:30,380 INFO   [SHEETS] Bunny Ear Flower Bouquet | €29.45 | 64.3% margin | stage=approved
+2026-05-03 14:00:30,380 INFO   [SHEETS] Romantic Aurora Projector Lamp | €34.4 | 64.3% margin | stage=approved
+2026-05-03 14:00:30,380 INFO   [SHEETS] Mini Dried Flower Card | €16.8 | 64.3% margin | stage=approved
+2026-05-03 14:00:30,380 INFO   [SHEETS] Apple Scented Candles | €21.55 | 64.3% margin | stage=approved
+2026-05-03 14:00:30,380 INFO   [SHEETS] Creamy Vanilla Scented Candle | €32.42 | 64.3% margin | stage=approved
+2026-05-03 14:00:30,380 INFO   [SHEETS] Humanoid Couple Candles | €20.95 | 64.3% margin | stage=approved
+2026-05-03 14:00:30,381 INFO   [SHEETS] Cute Pacha Dog Mini Coin | €16.61 | 64.3% margin | stage=approved
+2026-05-03 14:00:30,381 INFO   [SHEETS] 520 Valentine's Day Led Warm | €15.35 | 64.3% margin | stage=approved
+INFO:     127.0.0.1:58158 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58158 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58158 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59370 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59370 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58158 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59370 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59370 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58158 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59370 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58158 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59370 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52801 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52801 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55076 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55076 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58734 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58734 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60711 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60711 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60711 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57103 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60711 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57103 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60711 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57103 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60711 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57103 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60711 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57103 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59685 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59685 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55598 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55598 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59140 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59140 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60334 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60334 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60334 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64363 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64363 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60334 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62531 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60334 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62531 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60334 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62531 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60334 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60771 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60771 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58917 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58917 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52385 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52385 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50466 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50466 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50466 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58374 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50466 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58374 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50466 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50466 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58374 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50466 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58374 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50466 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58636 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58636 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59642 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59642 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58208 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58208 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56769 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51271 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52455 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56769 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51271 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52455 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51271 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52455 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51271 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52455 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51271 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52455 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59937 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59937 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49245 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49245 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58893 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58893 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58430 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63494 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55257 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55404 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53789 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58130 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53789 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58130 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53789 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58130 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53789 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58130 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54878 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54878 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59498 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59498 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61882 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61882 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60894 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62465 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50862 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57084 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60884 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49672 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49672 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50862 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49672 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50862 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49672 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50862 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58572 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58572 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55890 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55890 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53905 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53905 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51382 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51382 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51382 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51382 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51382 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51183 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58257 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57860 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58257 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57860 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58257 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57860 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49323 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49323 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53901 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53901 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62907 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62907 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52065 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59912 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59912 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52065 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59912 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52065 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52065 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59912 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52065 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59912 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52065 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59912 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62750 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62750 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52787 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52787 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56353 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56353 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65441 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56075 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64229 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56075 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65441 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54283 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54283 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64229 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54283 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64229 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54283 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64229 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52147 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52147 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52835 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52835 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65329 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65329 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60795 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55535 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51076 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57282 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53768 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50788 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50788 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57282 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50788 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57282 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50788 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57282 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58150 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58150 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50333 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50333 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62776 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62776 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54695 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50514 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52027 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53379 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63856 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53809 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53809 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53379 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53809 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53379 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53809 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53379 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51995 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51995 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60941 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60941 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56556 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56556 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59709 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56793 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51466 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54341 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63296 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57503 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57503 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56793 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57503 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56793 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57503 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56793 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61444 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61444 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56496 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56496 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63570 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63570 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51020 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55585 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57947 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49881 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51864 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54671 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49881 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57947 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49881 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57947 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49881 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57947 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64817 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64817 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50061 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50061 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52423 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52423 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61682 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52681 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54771 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56728 - "OPTIONS /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49322 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62652 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62652 - "GET /api/jobs/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61682 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62652 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61682 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62652 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61682 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51205 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51205 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58370 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58370 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56360 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56360 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53635 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53635 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51024 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51024 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60616 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60616 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54228 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54228 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54198 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54198 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65275 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65275 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59761 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59761 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65323 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65323 - "OPTIONS /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65323 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65323 - "GET /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65323 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65323 - "OPTIONS /api/jobs?limit=5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65323 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65323 - "GET /api/jobs?limit=5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58341 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50070 - "OPTIONS /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58341 - "GET /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50070 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50070 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58341 - "OPTIONS /api/jobs?limit=5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50070 - "GET /api/jobs?limit=5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58341 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53397 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58639 - "OPTIONS /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53397 - "GET /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58639 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58639 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53397 - "OPTIONS /api/jobs?limit=5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58639 - "GET /api/jobs?limit=5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53397 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54532 - "OPTIONS /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54532 - "GET /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54532 - "OPTIONS /api/scheduler/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54532 - "GET /api/scheduler/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63221 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63221 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65505 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53859 - "OPTIONS /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53859 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53859 - "GET /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53859 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53859 - "OPTIONS /api/jobs?limit=5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53859 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53859 - "GET /api/jobs?limit=5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61159 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61159 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65107 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65107 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57389 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57389 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63708 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63708 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63933 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63933 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53627 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54526 - "OPTIONS /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53627 - "GET /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54526 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54526 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54526 - "OPTIONS /api/jobs?limit=5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54526 - "GET /api/jobs?limit=5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53627 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63262 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63262 - "OPTIONS /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63262 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63262 - "GET /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63262 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63262 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63262 - "OPTIONS /api/jobs?limit=5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63262 - "GET /api/jobs?limit=5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58908 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53401 - "OPTIONS /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58908 - "GET /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53401 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53401 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53401 - "OPTIONS /api/jobs?limit=5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53401 - "GET /api/jobs?limit=5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58908 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59970 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59970 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52080 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52080 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53349 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53349 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64121 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64121 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56348 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56348 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51438 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51438 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63602 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63602 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64046 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64046 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61917 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61917 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53445 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53445 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55429 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55429 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63926 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63926 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57950 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57950 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49187 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49187 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58689 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58689 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54086 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54086 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50518 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50518 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60337 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60337 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52694 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52694 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52059 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52059 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60313 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60313 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60350 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60350 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57031 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57031 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59444 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59444 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60370 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60370 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57415 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57415 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53721 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53721 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63477 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63477 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49231 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49231 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62629 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62629 - "GET /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58834 - "OPTIONS /api/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58834 - "GET /api/stats HTTP/1.1" 200 OK

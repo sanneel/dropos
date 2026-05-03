@@ -86,11 +86,8 @@ async def scrape(
                 log.info("CSSBuy: session valid")
 
             products: list = []
-            modal_done = False
             for keyword in keywords:
-                kw = await _search_keyword(page, keyword, max_per_keyword, source, modal_done)
-                if kw:
-                    modal_done = True
+                kw = await _search_keyword(page, keyword, max_per_keyword, source)
                 products.extend(kw)
 
             return products
@@ -109,7 +106,7 @@ async def scrape(
 # ── Per-keyword search ─────────────────────────────────────────────────────────
 
 async def _search_keyword(
-    page, keyword: str, max_results: int, source: Source, modal_done: bool
+    page, keyword: str, max_results: int, source: Source
 ) -> list:
     """
     1. Register a sync response listener (page loads normally, no interception lag).
@@ -132,21 +129,20 @@ async def _search_keyword(
         status = response.status
         if "getCrossKeywordSearch" in url and status == 200:
             resp_1688.append(response)
-            print(f"[CSSBUY] captured 1688 XHR #{len(resp_1688)}", flush=True)
+            log.debug("CSSBuy 1688: captured XHR #%d", len(resp_1688))
         elif "taoBaoGoodsByKeyWord" in url and status == 200:
             resp_taobao.append(response)
-            print(f"[CSSBUY] captured taobao XHR #{len(resp_taobao)}", flush=True)
+            log.debug("CSSBuy Taobao: captured XHR #%d", len(resp_taobao))
 
     page.on("response", on_response)
 
     try:
         # ── Navigate ──────────────────────────────────────────────────────────
-        print(f"[CSSBUY] navigating keyword={keyword!r}", flush=True)
+        log.info("CSSBuy: searching keyword=%r", keyword)
         await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
-        print(f"[CSSBUY] goto done url={page.url}", flush=True)
+        log.debug("CSSBuy: page loaded url=%s", page.url)
 
-        if not modal_done:
-            await _dismiss_modal(page)
+        await _dismiss_modal(page)
 
         # ── 1688: scroll pages until max_results ──────────────────────────────
         if want_1688:
@@ -164,6 +160,15 @@ async def _search_keyword(
                         break
                     await asyncio.sleep(0.5)
 
+            # Still nothing — a popup may be blocking the page
+            if not resp_1688:
+                log.warning("CSSBuy: no 1688 XHR for %r — checking for popup", keyword)
+                await _dismiss_modal(page)
+                for _ in range(16):
+                    if resp_1688:
+                        break
+                    await asyncio.sleep(0.5)
+
             if not resp_1688:
                 log.warning("CSSBuy 1688: no XHR for '%s'", keyword)
             else:
@@ -173,8 +178,7 @@ async def _search_keyword(
         if want_taobao:
             if not want_1688:
                 await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
-                if not modal_done:
-                    await _dismiss_modal(page)
+                await _dismiss_modal(page)
 
             try:
                 await page.evaluate("""
@@ -186,15 +190,23 @@ async def _search_keyword(
                         );
                     })()
                 """)
-                print("[CSSBUY] Taobao tab clicked", flush=True)
+                log.debug("CSSBuy: Taobao tab clicked")
             except Exception as exc:
-                print(f"[CSSBUY] Taobao click error: {exc}", flush=True)
+                log.warning("CSSBuy: Taobao tab click error: %s", exc)
 
             # Wait for initial Taobao XHR
             for _ in range(20):
                 if resp_taobao:
                     break
                 await asyncio.sleep(0.5)
+
+            if not resp_taobao:
+                log.warning("CSSBuy: no Taobao XHR for %r — checking for popup", keyword)
+                await _dismiss_modal(page)
+                for _ in range(16):
+                    if resp_taobao:
+                        break
+                    await asyncio.sleep(0.5)
 
             if resp_taobao:
                 await _scroll_until_enough(page, resp_taobao, max_results)
@@ -213,7 +225,7 @@ async def _search_keyword(
             except Exception:
                 pass
         all_items = _merge_raw_items(captured)
-        print(f"[CSSBUY] 1688 responses={len(captured)} items={len(all_items)}", flush=True)
+        log.info("CSSBuy 1688 responses=%d items=%d", len(captured), len(all_items))
         for item in all_items[:max_results]:
             p = _normalize_1688(item, keyword)
             if p:
@@ -228,7 +240,7 @@ async def _search_keyword(
             except Exception:
                 pass
         all_items_tb = _merge_raw_items(captured_tb)
-        print(f"[CSSBUY] taobao responses={len(captured_tb)} items={len(all_items_tb)}", flush=True)
+        log.info("CSSBuy Taobao responses=%d items=%d", len(captured_tb), len(all_items_tb))
         tb: list = []
         for item in all_items_tb[:max_results]:
             p = _normalize_taobao(item, keyword)
@@ -255,7 +267,7 @@ async def _scroll_until_enough(page, resp_list: list, max_results: int) -> None:
     while scrolls < max_scrolls:
         prev = len(resp_list)
         await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        print(f"[CSSBUY] scroll #{scrolls + 1}, waiting for XHR…", flush=True)
+        log.debug("CSSBuy: scroll #%d waiting for XHR", scrolls + 1)
 
         # Wait up to 8 s for the next XHR
         for _ in range(16):
@@ -267,14 +279,13 @@ async def _scroll_until_enough(page, resp_list: list, max_results: int) -> None:
 
         if len(resp_list) > prev:
             # Got a new batch — pause for it to render, then continue
-            stale = 0
             recovered = False
-            print(f"[CSSBUY] XHR #{len(resp_list)} captured", flush=True)
+            log.debug("CSSBuy: XHR #%d received", len(resp_list))
             await asyncio.sleep(2)
         else:
             # Nothing came — try scrolling back to top to reset lazy-loader
             if not recovered:
-                print("[CSSBUY] stale — scrolling to top to reset lazy-loader", flush=True)
+                log.debug("CSSBuy: stale scroll — resetting to top")
                 await page.evaluate("window.scrollTo(0, 0)")
                 await asyncio.sleep(2)
                 recovered = True
@@ -282,7 +293,7 @@ async def _scroll_until_enough(page, resp_list: list, max_results: int) -> None:
                 scrolls -= 1
             else:
                 # Already tried recovery — truly end of results
-                print("[CSSBUY] stale after recovery — stopping", flush=True)
+                log.debug("CSSBuy: stale after recovery — stopping")
                 break
 
 
@@ -331,10 +342,6 @@ def _normalize_1688(item: dict, keyword: str) -> Optional[dict]:
         hashlib.md5(f"{title}{price_cny}".encode()).hexdigest()[:10]
     )
     sold = int(item.get("sold") or item.get("soldCount") or item.get("monthSold") or item.get("totalSold") or 0)
-    # Debug: dump all keys containing "sold" from the first few items
-    sold_keys = {k: v for k, v in item.items() if "sold" in k.lower() or "sale" in k.lower() or "order" in k.lower()}
-    if sold_keys or sold == 0:
-        print(f"[CSSBUY-SOLD] offer={item.get('offerId','')} sold={sold} raw_keys={sold_keys}", flush=True)
 
     return {
         "source": "cssbuy",
