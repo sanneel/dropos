@@ -29,6 +29,10 @@ class PipelineScheduler:
 
     async def _loop(self):
         while self.running:
+            interval = int(get_config("SCRAPE_INTERVAL", 3600))
+            await asyncio.sleep(max(interval, 60))
+            if not self.running:
+                break
             try:
                 settings = merge_env_with_settings(await db.get_settings())
                 raw = get_config("SCAN_KEYWORDS", settings.get("scan_keywords", DEFAULT_KEYWORDS))
@@ -44,8 +48,6 @@ class PipelineScheduler:
                     )
                     self._last_run = f"skipped active_job={active.get('id')}"
                     self._last_error = None
-                    interval = int(get_config("SCRAPE_INTERVAL", 3600))
-                    await asyncio.sleep(max(interval, 60))
                     continue
                 summary = await run_pipeline(keywords=keywords, max_per_keyword=50, settings=settings)
                 self._last_run = f"job={summary.get('job_id')} passed_ai={summary.get('passed_ai')}"
@@ -55,8 +57,6 @@ class PipelineScheduler:
                 self._last_error = str(exc)
                 log.exception("Scheduled pipeline failed")
 
-            interval = int(get_config("SCRAPE_INTERVAL", 3600))
-            await asyncio.sleep(max(interval, 60))
 
     def start(self):
         if self.running:

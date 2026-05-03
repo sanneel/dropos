@@ -97,6 +97,7 @@ def sanitize_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     sanitized = {}
     for key, value in (settings or {}).items():
         if key in SENSITIVE_KEYS:
+            sanitized[f"{key}_set"] = bool(value)
             continue
         sanitized[key] = value
     return sanitized
