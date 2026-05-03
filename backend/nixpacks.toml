@@ -3,7 +3,27 @@ nixPkgs = [
   "python311",
   "python311Packages.pip",
   "python311Packages.setuptools",
-  "python311Packages.wheel"
+  "python311Packages.wheel",
+  "glib",
+  "nss",
+  "nspr",
+  "atk",
+  "at-spi2-atk",
+  "cups",
+  "dbus",
+  "expat",
+  "libdrm",
+  "mesa",
+  "alsa-lib",
+  "pango",
+  "cairo",
+  "xorg.libX11",
+  "xorg.libXcomposite",
+  "xorg.libXdamage",
+  "xorg.libXext",
+  "xorg.libXfixes",
+  "xorg.libXrandr",
+  "xorg.libxcb"
 ]
 
 [phases.install]
