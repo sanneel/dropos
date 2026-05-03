@@ -541,6 +541,8 @@ async def init_db():
         "cssbuy_password": "",
         "cssbuy_source": "1688",
         "captcha_2captcha_key": "",
+        "ingest_api_token": "",
+        "local_scraping_only": False,
         "gemini_model": "gemini-2.5-flash-lite",
         "target_audience": "couples and people buying gifts for partners, ages 18-35",
         "sell_price_min": 15,

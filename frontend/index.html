@@ -757,11 +757,16 @@ async function renderDashboard() {
 async function renderScan() {
   setTitle('Scan');
   document.getElementById('topbar-actions').innerHTML = '';
+  try {
+    settingsData = await api('/settings');
+    scanSource = String(settingsData.cssbuy_source || scanSource || '1688');
+  } catch (e) {}
   renderScanContent();
   if (activeJob && !activeJobPoll) activeJobPoll = setInterval(pollActiveJob, 2000);
 }
 
 function renderScanContent() {
+  const localOnly = !!settingsData.local_scraping_only;
   document.getElementById('content').innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
       <div>
@@ -792,9 +797,14 @@ function renderScanContent() {
             <label>Max products per keyword</label>
             <input type="number" id="max-per-kw" value="100" min="10" max="500"/>
           </div>
-          <button id="scan-btn" class="btn btn-primary" style="width:100%" onclick="startScan()" ${activeJob ? 'disabled' : ''}>
-            ${activeJob ? 'Scanning…' : 'Start scan'}
+          <button id="scan-btn" class="btn btn-primary" style="width:100%" onclick="startScan()" ${activeJob || localOnly ? 'disabled' : ''}>
+            ${localOnly ? 'Local upload enabled' : activeJob ? 'Scanning…' : 'Start scan'}
           </button>
+          ${localOnly ? `<div class="card-sm" style="margin-top:12px">
+            <div style="font-size:11px;color:var(--t3);line-height:1.6">
+              Website scraping is disabled. Run <code>python backend/local_scrape_upload.py</code> on your PC to scrape locally and upload results here.
+            </div>
+          </div>` : ''}
         </div>
       </div>
 
@@ -806,13 +816,13 @@ function renderScanContent() {
         ${activeJob ? renderJobProgress(activeJob) : `
           <div class="empty" style="padding:32px 0">
             <span class="empty-icon">○</span>
-            <h3>No active scan</h3>
-            <p>Start a scan to see pipeline progress</p>
+            <h3>No active job</h3>
+            <p>${localOnly ? 'Local uploads will appear here while processing' : 'Start a scan to see pipeline progress'}</p>
           </div>`}
         <div style="margin-top:18px;border-top:1px solid var(--b1);padding-top:14px">
           <div style="font-size:10px;color:var(--t3);font-family:var(--ff-m);text-transform:uppercase;letter-spacing:.7px;margin-bottom:10px">Pipeline steps</div>
           ${[
-            ['1','Scrape 1688 + Taobao → raw store'],
+            ['1', localOnly ? 'Local scrape upload → raw store' : 'Scrape 1688 + Taobao → raw store'],
             ['2','Basic filter — spam, orders, rating'],
             ['3','Profit calc — margin threshold'],
             ['4','Deduplication — image hash'],
@@ -1700,6 +1710,17 @@ async function renderSettings() {
 
       <div class="card">
         <div class="card-title">CSSBuy scraper</div>
+        <label style="display:flex;align-items:center;gap:8px;margin-bottom:14px;font-size:12px;color:var(--t2)">
+          <input type="checkbox" id="s-local-only" ${s.local_scraping_only ? 'checked' : ''}/>
+          Store data here, scrape locally only
+        </label>
+        <div class="form-group">
+          <label>Ingest API token</label>
+          <input type="password" id="s-ingest-token" value="" placeholder="${s.ingest_api_token_set ? 'Configured - leave blank to keep current token' : 'Create a private upload token'}"/>
+          <div style="font-size:11px;margin-top:5px;color:${s.ingest_api_token_set ? 'var(--green)' : 'var(--t3)'}">
+            ${s.ingest_api_token_set ? 'Configured' : 'Required for local uploads'}
+          </div>
+        </div>
         <div style="font-size:11px;color:var(--t3);margin-bottom:10px;line-height:1.6">
           Logs into cssbuy.com with Playwright and intercepts search results.
           Session is saved after first login — captcha rarely appears again.
@@ -1934,6 +1955,7 @@ async function saveSettings() {
     google_sheets_id:          g('s-sheets-id')?.value    || '',
     cssbuy_username:      g('s-cssbuy-user')?.value    || '',
     cssbuy_source:        g('s-cssbuy-source')?.value  || '1688',
+    local_scraping_only:  g('s-local-only')?.checked ?? false,
   };
   includeIfNonEmpty(data, 'instagram_access_token', g('s-ig-token')?.value);
   includeIfNonEmpty(data, 'instagram_webhook_token', g('s-webhook-token')?.value);
@@ -1944,6 +1966,7 @@ async function saveSettings() {
   includeIfNonEmpty(data, 'google_sheets_credentials', g('s-sheets-creds')?.value);
   includeIfNonEmpty(data, 'cssbuy_password', g('s-cssbuy-pass')?.value);
   includeIfNonEmpty(data, 'captcha_2captcha_key', g('s-captcha-key')?.value);
+  includeIfNonEmpty(data, 'ingest_api_token', g('s-ingest-token')?.value);
   try {
     await api('/settings', 'PATCH', data);
     toast('Settings saved', 'success');

@@ -88,6 +88,18 @@ async def run_pipeline(
 
     log.info("Job %d scraped %d products (source=%s)", job_id, len(raw_all), scan_source)
 
+    return await process_scraped_products(job_id, raw_all, settings)
+
+
+async def process_scraped_products(job_id: int, raw_all: list, settings: Optional[dict] = None) -> dict:
+    """
+    Process products that were scraped outside this server.
+    Used by the hosted ingestion endpoint so Playwright/CSSBuy can run locally.
+    """
+    if settings is None:
+        settings = await db.get_settings()
+    settings = merge_env_with_settings(settings)
+
     # ── 2. Store raw data ──────────────────────────────────────────────────────
     for p in raw_all:
         await db.insert_raw(p, job_id)

@@ -1,10 +1,11 @@
 import logging
 import os
 import sys
+import hmac
 from contextlib import asynccontextmanager
 from typing import List, Optional
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
@@ -14,7 +15,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from config.runtime import get_config, merge_env_with_settings, sanitize_settings
 from database import db, init_db
-from runner import run_pipeline
+from runner import process_scraped_products, run_pipeline
 from scheduler import create_scheduler, get_scheduler_status
 import instagram
 import sheets
@@ -48,6 +49,7 @@ _SENSITIVE_SETTING_FIELDS = {
     "cssbuy_password",
     "captcha_2captcha_key",
     "google_sheets_credentials",
+    "ingest_api_token",
 }
 
 
@@ -67,11 +69,15 @@ async def lifespan(app: FastAPI):
     if merged_settings.get("google_sheets_id"):
         ok = sheets.verify_writable()
         log.info("Google Sheets writable: %s", ok)
-    _scheduler = create_scheduler()
-    _scheduler.start()
-    log.info("Scheduler started — jobs: %s", [j.get("id") for j in _scheduler.get_jobs()])
+    if merged_settings.get("local_scraping_only"):
+        log.info("Scheduler disabled: local scraping only mode is enabled")
+    else:
+        _scheduler = create_scheduler()
+        _scheduler.start()
+        log.info("Scheduler started — jobs: %s", [j.get("id") for j in _scheduler.get_jobs()])
     yield
-    _scheduler.shutdown(wait=False)
+    if _scheduler:
+        _scheduler.shutdown(wait=False)
     await db.close()
 
 
@@ -120,6 +126,12 @@ class ScanRequest(BaseModel):
     keywords: List[str]
     max_per_keyword: int = 50
     source: str = "taobao"
+
+
+class IngestProductsRequest(BaseModel):
+    products: List[dict]
+    keywords: List[str] = []
+    source: Optional[str] = None
 
 
 class ApproveRequest(BaseModel):
@@ -174,6 +186,8 @@ class SettingsUpdate(BaseModel):
     cssbuy_password: Optional[str] = None
     cssbuy_source: Optional[str] = None
     captcha_2captcha_key: Optional[str] = None
+    ingest_api_token: Optional[str] = None
+    local_scraping_only: Optional[bool] = None
     gemini_model: Optional[str] = None
     target_audience: Optional[str] = None
     sell_price_min: Optional[float] = None
@@ -322,6 +336,15 @@ async def update_note(product_id: int, body: NoteUpdate):
 
 @app.post("/api/scan")
 async def start_scan(body: ScanRequest, bg: BackgroundTasks):
+    settings = merge_env_with_settings(await db.get_settings())
+    if settings.get("local_scraping_only"):
+        raise HTTPException(
+            409,
+            {
+                "message": "Server-side scraping is disabled. Run backend/local_scrape_upload.py on your local machine instead.",
+                "local_scraping_only": True,
+            },
+        )
     active = await db.get_active_job()
     if active:
         raise HTTPException(
@@ -336,6 +359,36 @@ async def start_scan(body: ScanRequest, bg: BackgroundTasks):
     job_id = await db.create_job(keywords=body.keywords)
     bg.add_task(_run_scan, job_id, body.keywords, body.max_per_keyword, body.source)
     return {"job_id": job_id, "status": "started"}
+
+
+@app.post("/api/ingest/products")
+async def ingest_products(
+    body: IngestProductsRequest,
+    bg: BackgroundTasks,
+    authorization: Optional[str] = Header(default=None),
+    x_ingest_token: Optional[str] = Header(default=None),
+):
+    await _verify_ingest_token(authorization, x_ingest_token)
+    if not body.products:
+        raise HTTPException(400, "No products supplied")
+    if len(body.products) > 2000:
+        raise HTTPException(400, "Max 2000 products per upload")
+    active = await db.get_active_job()
+    if active:
+        raise HTTPException(
+            409,
+            {
+                "message": f"Job #{active['id']} is already running",
+                "job_id": active["id"],
+                "status": active.get("status", ""),
+            },
+        )
+    keywords = body.keywords or sorted({p.get("keyword", "") for p in body.products if p.get("keyword")})
+    if body.source and keywords:
+        keywords = [f"{kw} ({body.source})" for kw in keywords]
+    job_id = await db.create_job(keywords=keywords or ["local upload"])
+    bg.add_task(_run_ingest, job_id, body.products)
+    return {"job_id": job_id, "status": "uploaded", "products": len(body.products)}
 
 
 @app.get("/api/jobs")
@@ -409,6 +462,15 @@ async def scheduler_status():
 @app.post("/api/scheduler/trigger")
 async def scheduler_trigger(bg: BackgroundTasks):
     """Manually fire a scheduled scan now (uses stored scan_keywords)."""
+    settings = merge_env_with_settings(await db.get_settings())
+    if settings.get("local_scraping_only"):
+        raise HTTPException(
+            409,
+            {
+                "message": "Scheduled server-side scraping is disabled. Run backend/local_scrape_upload.py locally.",
+                "local_scraping_only": True,
+            },
+        )
     active = await db.get_active_job()
     if active:
         raise HTTPException(
@@ -420,7 +482,6 @@ async def scheduler_trigger(bg: BackgroundTasks):
                 "status": active.get("status", ""),
             },
         )
-    settings = merge_env_with_settings(await db.get_settings())
     raw = get_config("SCAN_KEYWORDS", settings.get("scan_keywords", []))
     keywords: list = raw if isinstance(raw, list) else [raw]
     if not keywords:
@@ -529,6 +590,32 @@ async def _run_scan(job_id: int, keywords: list, max_per_keyword: int, source: s
     except Exception as e:
         log.error("Pipeline job %d failed: %s", job_id, e)
         await db.update_job(job_id, status="error")
+
+
+async def _run_ingest(job_id: int, products: list) -> None:
+    try:
+        log.info("Job %d starting local ingest: products=%d", job_id, len(products))
+        await process_scraped_products(job_id, products)
+    except Exception as e:
+        log.error("Ingest job %d failed: %s", job_id, e)
+        await db.update_job(job_id, status="error")
+
+
+async def _verify_ingest_token(
+    authorization: Optional[str],
+    x_ingest_token: Optional[str],
+) -> None:
+    settings = merge_env_with_settings(await db.get_settings())
+    expected = str(get_config("INGEST_API_TOKEN", settings.get("ingest_api_token", "")) or "").strip()
+    if not expected:
+        raise HTTPException(500, "INGEST_API_TOKEN is not configured on the website")
+    provided = (x_ingest_token or "").strip()
+    if not provided and authorization:
+        scheme, _, token = authorization.partition(" ")
+        if scheme.lower() == "bearer":
+            provided = token.strip()
+    if not hmac.compare_digest(provided, expected):
+        raise HTTPException(401, "Invalid ingest token")
 
 
 async def _process_ig_webhook(body: dict) -> None:
