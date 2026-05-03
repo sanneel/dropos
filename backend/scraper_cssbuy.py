@@ -21,6 +21,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Literal, Optional
@@ -63,7 +64,10 @@ async def scrape(
         log.error("Playwright not installed. Run: pip install playwright && playwright install chromium")
         return []
 
-    headless = bool(captcha_key)
+    # Run headless by default in server environments (e.g. Railway).
+    # Set PLAYWRIGHT_HEADED=1 only for local interactive debugging.
+    force_headed = str(os.getenv("PLAYWRIGHT_HEADED", "")).lower() in {"1", "true", "yes"}
+    headless = not force_headed
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
