@@ -1697,9 +1697,9 @@ async function renderSettings() {
         </div>
         <div class="card-sm" style="margin-top:4px">
           <div style="font-size:11px;color:var(--t3);line-height:1.6">
-            Priority: <b style="color:var(--t1)">Gemini</b> → <b style="color:var(--t1)">Groq</b> → Anthropic → mock rule-based.<br>
-            Gemini analyses the actual product photo for visual appeal. ~$0.001/scan.<br>
-            Groq is completely free — 14,400 requests/day, Llama 3.3 70B.
+            Priority: <b style="color:var(--t1)">Groq</b> → Gemini → Anthropic → mock rule-based.<br>
+            Groq is used first to avoid Gemini quota delays.<br>
+            Gemini is only used if Groq is unavailable and will fall back immediately on quota errors.
           </div>
         </div>
       </div>
@@ -2063,9 +2063,12 @@ async function renderPipeline() {
         <span style="font-size:11px;color:var(--t3)">${job.created_at ? new Date(job.created_at).toLocaleString() : ''}</span>
       </div>
 
-      <div style="font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;font-family:var(--ff-m);margin-bottom:10px">AI Summary</div>
+      <div style="font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;font-family:var(--ff-m);margin-bottom:10px">Pipeline Summary</div>
       <div class="pl-summary" style="margin-bottom:24px">
         <div class="pl-sum-card"><div class="pl-sum-label">Scraped</div><div class="pl-sum-val">${job.scraped??0}</div><div class="pl-sum-sub">raw products</div></div>
+        <div class="pl-sum-card"><div class="pl-sum-label">After filter</div><div class="pl-sum-val">${job.after_basic??0}</div><div class="pl-sum-sub">passed quality checks</div></div>
+        <div class="pl-sum-card"><div class="pl-sum-label">Profitable</div><div class="pl-sum-val">${job.after_profit??0}</div><div class="pl-sum-sub">passed margin checks</div></div>
+        <div class="pl-sum-card"><div class="pl-sum-label">Deduped</div><div class="pl-sum-val">${job.after_dedup??0}</div><div class="pl-sum-sub">unique products</div></div>
         <div class="pl-sum-card"><div class="pl-sum-label">AI Pass rate</div><div class="pl-sum-val" style="color:var(--green)">${passRate}%</div><div class="pl-sum-sub">${aiPass.length} of ${aiTotal} reviewed</div></div>
         <div class="pl-sum-card"><div class="pl-sum-label">Avg AI score</div><div class="pl-sum-val">${avgScore}</div><div class="pl-sum-sub">passed products</div></div>
         <div class="pl-sum-card"><div class="pl-sum-label">Avg niche fit</div><div class="pl-sum-val">${avgNiche}</div><div class="pl-sum-sub">niche relevance</div></div>

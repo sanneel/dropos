@@ -43,6 +43,16 @@ def _pipeline_rec(job_id: int, product: dict, stage: str, reason: str = "", ai_s
     }
 
 
+async def _flush_pipeline_records(job_id: int, records: list) -> None:
+    if not records:
+        return
+    try:
+        await db.bulk_insert_pipeline(records)
+    except Exception as exc:
+        log.warning("Job %d: pipeline records save failed: %s", job_id, exc)
+    records.clear()
+
+
 async def run_pipeline(
     job_id: Optional[int] = None,
     keywords: Optional[list] = None,
@@ -112,6 +122,7 @@ async def process_scraped_products(job_id: int, raw_all: list, settings: Optiona
 
     filtered_ids = {p.get("source_id") for p in filtered if p.get("source_id")}
     pipeline_recs = [_pipeline_rec(job_id, p, "basic_reject", "spam/no-image/low-orders") for p in raw_all if p.get("source_id") not in filtered_ids]
+    await _flush_pipeline_records(job_id, pipeline_recs)
 
     # ── 4. Profit filter (adds cost/sell/margin fields) ────────────────────────
     profitable = [p for p in filtered if profit_filter(p, settings)]
@@ -119,6 +130,7 @@ async def process_scraped_products(job_id: int, raw_all: list, settings: Optiona
 
     profitable_ids = {p.get("source_id") for p in profitable if p.get("source_id")}
     pipeline_recs += [_pipeline_rec(job_id, p, "profit_reject", "margin too low") for p in filtered if p.get("source_id") not in profitable_ids]
+    await _flush_pipeline_records(job_id, pipeline_recs)
 
     # ── 5. Dedup by first image ────────────────────────────────────────────────
     deduped = dedup(profitable)
@@ -126,6 +138,7 @@ async def process_scraped_products(job_id: int, raw_all: list, settings: Optiona
 
     deduped_ids = {p.get("source_id") for p in deduped if p.get("source_id")}
     pipeline_recs += [_pipeline_rec(job_id, p, "dedup_reject", "duplicate product") for p in profitable if p.get("source_id") not in deduped_ids]
+    await _flush_pipeline_records(job_id, pipeline_recs)
 
     # ── 6. Rule-based scoring + pre-filter ────────────────────────────────────
     scored = [score_product(p) for p in deduped]
@@ -138,6 +151,7 @@ async def process_scraped_products(job_id: int, raw_all: list, settings: Optiona
 
     candidates_ids = {p.get("source_id") for p in candidates if p.get("source_id")}
     pipeline_recs += [_pipeline_rec(job_id, p, "score_reject", f"raw score {p.get('raw_score',0):.0f} < {_AI_PREFILTER_THRESHOLD}") for p in scored if p.get("source_id") not in candidates_ids]
+    await _flush_pipeline_records(job_id, pipeline_recs)
 
     # ── 7. AI enrichment ───────────────────────────────────────────────────────
     passed: list = []
@@ -184,6 +198,7 @@ async def process_scraped_products(job_id: int, raw_all: list, settings: Optiona
             log.warning("Enrichment returned None for source_id=%s", product.get("source_id", "?"))
 
         if i % 5 == 0:
+            await _flush_pipeline_records(job_id, pipeline_recs)
             progress = 55 + int((i / max(total, 1)) * 38)
             await db.update_job(job_id, status="ai_review", progress=progress, after_ai=len(passed))
 
@@ -198,10 +213,7 @@ async def process_scraped_products(job_id: int, raw_all: list, settings: Optiona
     except Exception as exc:
         log.error("Job %d: sheets append failed: %s", job_id, exc)
 
-    try:
-        await db.bulk_insert_pipeline(pipeline_recs)
-    except Exception as exc:
-        log.warning("Job %d: pipeline records save failed: %s", job_id, exc)
+    await _flush_pipeline_records(job_id, pipeline_recs)
 
     await db.update_job(job_id, status="done", progress=100, after_ai=len(passed))
 

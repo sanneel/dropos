@@ -25,6 +25,7 @@ log = logging.getLogger(__name__)
 # Limits concurrent AI calls globally — prevents two simultaneous jobs from
 # both hammering the API and hitting rate limits faster.
 _AI_SEMAPHORE: Optional[asyncio.Semaphore] = None
+_GEMINI_QUOTA_EXHAUSTED = False
 
 
 def _get_semaphore() -> asyncio.Semaphore:
@@ -271,8 +272,11 @@ async def _fetch_image_b64(url: str) -> Optional[tuple]:
 
 
 async def gemini_enrich(product: dict, settings: dict) -> Optional[dict]:
+    global _GEMINI_QUOTA_EXHAUSTED
     api_key = get_config("GEMINI_KEY", settings.get("gemini_key", ""))
     if not api_key:
+        return None
+    if _GEMINI_QUOTA_EXHAUSTED:
         return None
 
     model = get_config("GEMINI_MODEL", settings.get("gemini_model", "gemini-2.0-flash"))
@@ -319,12 +323,10 @@ async def gemini_enrich(product: dict, settings: dict) -> Optional[dict]:
                 )
 
             if resp.status_code == 429:
-                retry_after = int(resp.headers.get("Retry-After", 0))
-                wait = retry_after if retry_after > 0 else 60
                 print(f"[GEMINI 429] key=...{api_key[-6:]} body={resp.text[:300]}", flush=True)
-                log.warning("Gemini 429 rate limit — waiting %ds (attempt %d/3)", wait, attempt + 1)
-                await asyncio.sleep(wait)
-                continue
+                _GEMINI_QUOTA_EXHAUSTED = True
+                log.warning("Gemini 429 quota/rate limit — disabling Gemini for this process and falling back")
+                return None
 
             if resp.status_code != 200:
                 log.warning("Gemini API %d: %s", resp.status_code, resp.text[:300])
@@ -357,7 +359,7 @@ async def gemini_enrich(product: dict, settings: dict) -> Optional[dict]:
             log.warning("Gemini enrichment error: %s", exc)
             return None
 
-    log.warning("Gemini: gave up after 3 rate-limit retries for '%s'", title[:40])
+    log.warning("Gemini: gave up after retries for '%s'", title[:40])
     return None
 
 
@@ -501,12 +503,12 @@ async def groq_enrich(product: dict, settings: dict) -> Optional[dict]:
 # ── Public entry point ─────────────────────────────────────────────────────────
 
 async def ai_enrich(product: dict, settings: dict) -> Optional[dict]:
-    """Gemini → Groq → Anthropic → mock, whichever key is available."""
+    """Groq first, then Gemini, Anthropic, and mock."""
     async with _get_semaphore():
-        result = await gemini_enrich(product, settings)
+        result = await groq_enrich(product, settings)
         if result:
             return result
-        result = await groq_enrich(product, settings)
+        result = await gemini_enrich(product, settings)
         if result:
             return result
         result = await anthropic_enrich(product, settings)
