@@ -6,7 +6,8 @@ from typing import List, Optional
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -59,9 +60,18 @@ app.add_middleware(
 )
 
 
+_FRONTEND = os.path.join(os.path.dirname(__file__), "..", "frontend")
+
 @app.get("/")
 async def root():
+    index = os.path.join(_FRONTEND, "index.html")
+    if os.path.exists(index):
+        return FileResponse(index)
     return {"status": "DropOS backend running", "docs": "/docs", "api": "/api/stats"}
+
+# Serve any other static files (images, css, js) from frontend/
+if os.path.isdir(_FRONTEND):
+    app.mount("/static", StaticFiles(directory=_FRONTEND), name="static")
 
 
 # ── Request models ─────────────────────────────────────────────────────────────

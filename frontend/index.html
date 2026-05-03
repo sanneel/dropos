@@ -527,7 +527,9 @@ label { display: block; font-size: 11px; color: var(--t3); font-family: var(--ff
 <div id="toast-container"></div>
 
 <script>
-const API = 'http://localhost:8000/api';
+const API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ? 'http://localhost:8000/api'
+  : window.location.origin + '/api';
 
 // ── Icons (SVG strings) ────────────────────────────────────────────────────
 const IC = {
