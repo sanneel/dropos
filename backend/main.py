@@ -571,3 +571,9 @@ async def test_playwright():
     except Exception as exc:
         log.exception("Playwright test failed")
         raise HTTPException(500, f"Playwright test failed: {exc}")
+
+
+@app.get("/health-playwright")
+async def health_playwright():
+    result = await test_playwright()
+    return {"status": "ok", **result}
