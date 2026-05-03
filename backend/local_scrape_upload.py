@@ -16,8 +16,10 @@ Optional env:
 
 import argparse
 import asyncio
+import json
 import os
 import sys
+from pathlib import Path
 from typing import Sequence
 
 import httpx
@@ -41,6 +43,11 @@ def _arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--username", default=os.getenv("CSSBUY_USERNAME", ""))
     parser.add_argument("--password", default=os.getenv("CSSBUY_PASSWORD", ""))
     parser.add_argument("--captcha-key", default=os.getenv("CAPTCHA_2CAPTCHA_KEY", ""))
+    parser.add_argument(
+        "--payload-out",
+        default=os.getenv("LOCAL_SCRAPE_PAYLOAD_OUT", "local_scrape_payload.json"),
+        help="Where to save scraped products before upload",
+    )
     return parser
 
 
@@ -48,7 +55,9 @@ async def _upload(website_url: str, token: str, payload: dict) -> dict:
     url = website_url.rstrip("/") + "/api/ingest/products"
     async with httpx.AsyncClient(timeout=60) as client:
         response = await client.post(url, json=payload, headers={"Authorization": f"Bearer {token}"})
-        response.raise_for_status()
+        if response.status_code >= 400:
+            body = response.text.strip()
+            raise RuntimeError(f"Upload failed: HTTP {response.status_code} from {url}\n{body[:1000]}")
         return response.json()
 
 
@@ -85,10 +94,15 @@ async def main(argv: Sequence[str] | None = None) -> int:
     if not products:
         return 1
 
+    payload = {"keywords": list(keywords), "source": args.source, "products": products}
+    payload_path = Path(args.payload_out)
+    payload_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    print(f"Saved upload payload to {payload_path.resolve()}")
+
     result = await _upload(
         args.website_url,
         args.token,
-        {"keywords": list(keywords), "source": args.source, "products": products},
+        payload,
     )
     print(f"Uploaded to website: job #{result.get('job_id')} ({result.get('products')} products)")
     return 0

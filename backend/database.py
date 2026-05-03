@@ -28,8 +28,8 @@ class Database:
              price_cny, cost_eur, sell_price_eur, margin_pct, orders, rating,
              images_json, url, category, keyword,
              score, niche_fit, visual_appeal, trend_score, competition_score,
-             caption, hashtags_json, stage, created_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             caption, hashtags_json, ai_provider, stage, created_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             job_id,
             p.get("source", ""),
@@ -54,6 +54,7 @@ class Database:
             p.get("competition_score", 0),
             p.get("caption", ""),
             json.dumps(p.get("hashtags", [])),
+            p.get("ai_provider", ""),
             "pending",
             _now(),
         ))
@@ -129,13 +130,14 @@ class Database:
             await self._db.execute("""
                 INSERT INTO pipeline_products
                 (job_id, source_id, title, image_url, price_cny, orders, margin_pct,
-                 filter_stage, filter_reason, ai_score, ai_niche_fit, ai_visual, created_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 filter_stage, filter_reason, ai_score, ai_niche_fit, ai_visual, ai_provider, created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, (
                 r["job_id"], r["source_id"], r["title"], r["image_url"],
                 r["price_cny"], r["orders"], r["margin_pct"],
                 r["filter_stage"], r.get("filter_reason", ""),
                 r.get("ai_score", 0), r.get("ai_niche_fit", 0), r.get("ai_visual", 0),
+                r.get("ai_provider", ""),
                 _now(),
             ))
         await self._db.commit()
@@ -418,6 +420,7 @@ async def init_db():
             competition_score REAL DEFAULT 0,
             caption           TEXT,
             hashtags_json     TEXT,
+            ai_provider       TEXT DEFAULT '',
             stage             TEXT DEFAULT 'pending',
             rejection_reason  TEXT,
             review_note       TEXT,
@@ -436,6 +439,7 @@ async def init_db():
         ("approved_at", "TEXT"),
         ("rejected_at", "TEXT"),
         ("posted_at", "TEXT"),
+        ("ai_provider", "TEXT DEFAULT ''"),
     ])
 
     await conn.execute("""
@@ -491,9 +495,13 @@ async def init_db():
             ai_score     REAL DEFAULT 0,
             ai_niche_fit REAL DEFAULT 0,
             ai_visual    REAL DEFAULT 0,
+            ai_provider  TEXT DEFAULT '',
             created_at   TEXT
         )
     """)
+    await _add_columns_if_missing(conn, "pipeline_products", [
+        ("ai_provider", "TEXT DEFAULT ''"),
+    ])
 
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS settings (

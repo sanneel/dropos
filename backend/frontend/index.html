@@ -604,6 +604,10 @@ function navigate(page) {
   renderPage();
 }
 
+function imageUrl(src) {
+  return src ? `/api/image?url=${encodeURIComponent(src)}` : '';
+}
+
 function setTitle(t, sub = '') {
   document.getElementById('page-title').textContent = t;
   document.getElementById('page-sub').textContent = sub ? '· ' + sub : '';
@@ -1016,7 +1020,7 @@ function renderApprovedGrid() {
 // ── Product card ───────────────────────────────────────────────────────────
 function productCard(p, mode) {
   const sel = selectedProducts.has(p.id);
-  const img = (p.images || [])[0] || '';
+  const img = imageUrl((p.images || [])[0] || '');
   const score = p.score || 0;
   const sc = score >= 8 ? 'hi' : score >= 7 ? 'mi' : 'lo';
 
@@ -1030,6 +1034,7 @@ function productCard(p, mode) {
   }
 
   const name = p.product_name || p.title_translated || p.title || 'Unknown';
+  const provider = p.ai_provider ? String(p.ai_provider).toUpperCase() : '';
   const cat  = [p.keyword ? `#${p.keyword}` : '', p.category].filter(Boolean).join(' · ');
 
   return `
@@ -1040,6 +1045,7 @@ function productCard(p, mode) {
           : ''}
         <div class="pcard-placeholder" style="${img ? 'display:none' : ''}">◈</div>
         <div class="pcard-score ${sc}">${score.toFixed(1)}</div>
+        ${provider ? `<div class="pcard-score ${sc}" style="left:auto;right:10px;font-size:9px">${provider}</div>` : ''}
         <div class="pcard-check" onclick="event.stopPropagation();toggleSel(${p.id})">
           <span class="pcard-check-mark">${IC.check}</span>
         </div>
@@ -1232,7 +1238,7 @@ async function showDetail(id) {
   document.getElementById('detail-overlay')?.remove();
 
   const stage = p.stage || 'pending';
-  const img   = (p.images || [])[0] || '';
+  const img   = imageUrl((p.images || [])[0] || '');
   const tags  = (p.hashtags || []);
 
   const sBar = (label, val) => {
@@ -1426,7 +1432,7 @@ async function renderPosted() {
             <tr style="cursor:pointer" onclick="showDetail(${p.id})">
               <td>
                 <div style="display:flex;align-items:center;gap:10px">
-                  ${(p.images || [])[0] ? `<img src="${(p.images || [])[0]}" style="width:36px;height:36px;object-fit:cover;border-radius:6px;flex-shrink:0" onerror="this.style.display='none'">` : ''}
+                  ${(p.images || [])[0] ? `<img src="${imageUrl((p.images || [])[0])}" style="width:36px;height:36px;object-fit:cover;border-radius:6px;flex-shrink:0" onerror="this.style.display='none'">` : ''}
                   <div>
                     <div style="font-weight:500;font-size:12.5px">${p.product_name || p.title_translated || '—'}</div>
                     <div style="font-size:10px;color:var(--t3);font-family:var(--ff-m)">${p.keyword || p.category || ''}</div>
@@ -2097,13 +2103,13 @@ async function renderPipeline() {
             ${stageItems.map(p => `
               <div class="pl-card">
                 ${p.image_url
-                  ? `<img src="${p.image_url}" loading="lazy" onerror="this.style.display='none'">`
+                  ? `<img src="${imageUrl(p.image_url)}" loading="lazy" onerror="this.style.display='none'">`
                   : `<div style="width:100%;aspect-ratio:1;background:var(--s3);display:flex;align-items:center;justify-content:center;color:var(--t4);font-size:20px">?</div>`
                 }
                 <div class="pl-card-body">
                   <div class="pl-card-title">${p.title||'—'}</div>
                   ${p.filter_reason ? `<div class="pl-card-reason">${p.filter_reason}</div>` : ''}
-                  ${p.ai_score ? `<div class="pl-card-score">score ${p.ai_score.toFixed(1)}</div>` : ''}
+                  ${p.ai_score ? `<div class="pl-card-score">score ${p.ai_score.toFixed(1)}${p.ai_provider ? ' · '+String(p.ai_provider).toUpperCase() : ''}</div>` : ''}
                   <div class="pl-card-meta">¥${p.price_cny?.toFixed(0)||0}${p.orders ? ' · '+p.orders+' sold' : ''}</div>
                 </div>
               </div>`).join('')}

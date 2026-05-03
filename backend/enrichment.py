@@ -234,6 +234,7 @@ def mock_enrich(product: dict) -> dict:
         "hashtags":          _get_tags(product),
         "audience":          infer_audience(product),
         "rejection_reason":  "" if store_match else "Score below threshold for niche",
+        "ai_provider":       "mock",
     }
 
 
@@ -341,6 +342,7 @@ async def gemini_enrich(product: dict, settings: dict) -> Optional[dict]:
                 result["store_match"] = float(result.get("niche_fit", 0)) >= 6.0
             if "audience" not in result:
                 result["audience"] = infer_audience(product)
+            result["ai_provider"] = "gemini"
 
             log.info(
                 "Gemini '%s' → score=%.1f niche=%.1f visual=%.1f match=%s",
@@ -414,6 +416,7 @@ async def anthropic_enrich(product: dict, settings: dict) -> Optional[dict]:
             result["store_match"] = float(result.get("niche_fit", 0)) >= 7.0
         if "audience" not in result:
             result["audience"] = infer_audience(product)
+        result["ai_provider"] = "anthropic"
         return result
 
     except json.JSONDecodeError as exc:
@@ -482,6 +485,7 @@ async def groq_enrich(product: dict, settings: dict) -> Optional[dict]:
             result["store_match"] = float(result.get("niche_fit", 0)) >= 7.0
         if "audience" not in result:
             result["audience"] = infer_audience(product)
+        result["ai_provider"] = "groq"
 
         log.info(
             "Groq '%s' → score=%.1f niche=%.1f visual=%.1f match=%s",

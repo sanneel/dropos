@@ -40,6 +40,7 @@ def _pipeline_rec(job_id: int, product: dict, stage: str, reason: str = "", ai_s
         "ai_score":     ai_score,
         "ai_niche_fit": ai_niche_fit,
         "ai_visual":    ai_visual,
+        "ai_provider":  product.get("ai_provider", ""),
     }
 
 

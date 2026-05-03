@@ -4,10 +4,11 @@ import sys
 import hmac
 from contextlib import asynccontextmanager
 from typing import List, Optional
+from urllib.parse import unquote, urlparse
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -19,6 +20,7 @@ from runner import process_scraped_products, run_pipeline
 from scheduler import create_scheduler, get_scheduler_status
 import instagram
 import sheets
+import httpx
 from utils.google_auth import configure_google_credentials_from_env
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -245,6 +247,41 @@ async def get_product(product_id: int):
     if not p:
         raise HTTPException(404, "Not found")
     return p
+
+
+@app.get("/api/image")
+async def proxy_image(url: str):
+    src = unquote(url or "").strip()
+    parsed = urlparse(src)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(400, "Invalid image URL")
+    host = (parsed.hostname or "").lower()
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        raise HTTPException(400, "Invalid image host")
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            r = await client.get(
+                src,
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                    "Referer": "https://www.1688.com/",
+                },
+            )
+        if r.status_code != 200:
+            raise HTTPException(r.status_code, "Image fetch failed")
+        content_type = r.headers.get("content-type", "image/jpeg").split(";")[0].strip()
+        if not content_type.startswith("image/"):
+            raise HTTPException(400, "URL did not return an image")
+        return Response(
+            content=r.content,
+            media_type=content_type,
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"Image proxy failed: {exc}")
 
 
 @app.post("/api/products/{product_id}/approve")
@@ -608,7 +645,7 @@ async def _verify_ingest_token(
     settings = merge_env_with_settings(await db.get_settings())
     expected = str(get_config("INGEST_API_TOKEN", settings.get("ingest_api_token", "")) or "").strip()
     if not expected:
-        raise HTTPException(500, "INGEST_API_TOKEN is not configured on the website")
+        raise HTTPException(503, "INGEST_API_TOKEN is not configured on the website")
     provided = (x_ingest_token or "").strip()
     if not provided and authorization:
         scheme, _, token = authorization.partition(" ")
