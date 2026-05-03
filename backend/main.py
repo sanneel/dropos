@@ -60,18 +60,21 @@ app.add_middleware(
 )
 
 
-_FRONTEND = os.path.join(os.path.dirname(__file__), "..", "frontend")
+_BACKEND_DIR  = os.path.dirname(os.path.abspath(__file__))
+_FRONTEND     = os.path.join(_BACKEND_DIR, "..", "frontend")
+_FRONTEND_ABS = os.path.abspath(_FRONTEND)
+log.info("Frontend path: %s  exists=%s", _FRONTEND_ABS, os.path.exists(_FRONTEND_ABS))
 
 @app.get("/")
 async def root():
-    index = os.path.join(_FRONTEND, "index.html")
+    index = os.path.join(_FRONTEND_ABS, "index.html")
     if os.path.exists(index):
         return FileResponse(index)
     return {"status": "DropOS backend running", "docs": "/docs", "api": "/api/stats"}
 
-# Serve any other static files (images, css, js) from frontend/
-if os.path.isdir(_FRONTEND):
-    app.mount("/static", StaticFiles(directory=_FRONTEND), name="static")
+# Serve static files from frontend/
+if os.path.isdir(_FRONTEND_ABS):
+    app.mount("/static", StaticFiles(directory=_FRONTEND_ABS), name="static")
 
 
 # ── Request models ─────────────────────────────────────────────────────────────
