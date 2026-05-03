@@ -35,6 +35,18 @@ class PipelineScheduler:
                 keywords: list = raw if isinstance(raw, list) else [raw]
                 if not keywords:
                     keywords = DEFAULT_KEYWORDS
+                active = await db.get_active_job()
+                if active:
+                    log.info(
+                        "Scheduled pipeline skipped: job %s already %s",
+                        active.get("id"),
+                        active.get("status"),
+                    )
+                    self._last_run = f"skipped active_job={active.get('id')}"
+                    self._last_error = None
+                    interval = int(get_config("SCRAPE_INTERVAL", 3600))
+                    await asyncio.sleep(max(interval, 60))
+                    continue
                 summary = await run_pipeline(keywords=keywords, max_per_keyword=50, settings=settings)
                 self._last_run = f"job={summary.get('job_id')} passed_ai={summary.get('passed_ai')}"
                 self._last_error = None

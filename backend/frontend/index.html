@@ -624,7 +624,15 @@ async function api(path, method = 'GET', body = null) {
   if (body !== null) opts.body = JSON.stringify(body);
   try {
     const r = await fetch(API + path, opts);
-    if (!r.ok) { const t = await r.text().catch(() => r.statusText); throw new Error(t || `HTTP ${r.status}`); }
+    if (!r.ok) {
+      const text = await r.text().catch(() => r.statusText);
+      let message = text || `HTTP ${r.status}`;
+      try {
+        const parsed = JSON.parse(text);
+        message = parsed.detail?.message || parsed.detail || message;
+      } catch(e) {}
+      throw new Error(message);
+    }
     return r.json();
   } catch(e) { toast(e.message || 'API error', 'error'); throw e; }
 }

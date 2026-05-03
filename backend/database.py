@@ -216,6 +216,24 @@ class Database:
             rows = await cur.fetchall()
         return [_row_to_job(r) for r in rows]
 
+    async def get_active_job(self) -> Optional[dict]:
+        active_statuses = (
+            "queued",
+            "scraping",
+            "filtering",
+            "calculating",
+            "deduping",
+            "ai_review",
+            "saving",
+        )
+        placeholders = ",".join("?" for _ in active_statuses)
+        async with self._db.execute(
+            f"SELECT * FROM jobs WHERE status IN ({placeholders}) ORDER BY id DESC LIMIT 1",
+            active_statuses,
+        ) as cur:
+            row = await cur.fetchone()
+        return _row_to_job(row) if row else None
+
     # ── Settings ──────────────────────────────────────────────────────────────
 
     async def get_settings(self) -> dict:

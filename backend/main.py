@@ -318,6 +318,17 @@ async def update_note(product_id: int, body: NoteUpdate):
 
 @app.post("/api/scan")
 async def start_scan(body: ScanRequest, bg: BackgroundTasks):
+    active = await db.get_active_job()
+    if active:
+        raise HTTPException(
+            409,
+            {
+                "message": f"Job #{active['id']} is already running",
+                "job_id": active["id"],
+                "keywords": active.get("keywords", []),
+                "status": active.get("status", ""),
+            },
+        )
     job_id = await db.create_job(keywords=body.keywords)
     bg.add_task(_run_scan, job_id, body.keywords, body.max_per_keyword, body.source)
     return {"job_id": job_id, "status": "started"}
@@ -355,6 +366,17 @@ async def scheduler_status():
 @app.post("/api/scheduler/trigger")
 async def scheduler_trigger(bg: BackgroundTasks):
     """Manually fire a scheduled scan now (uses stored scan_keywords)."""
+    active = await db.get_active_job()
+    if active:
+        raise HTTPException(
+            409,
+            {
+                "message": f"Job #{active['id']} is already running",
+                "job_id": active["id"],
+                "keywords": active.get("keywords", []),
+                "status": active.get("status", ""),
+            },
+        )
     settings = merge_env_with_settings(await db.get_settings())
     raw = get_config("SCAN_KEYWORDS", settings.get("scan_keywords", []))
     keywords: list = raw if isinstance(raw, list) else [raw]
@@ -459,6 +481,7 @@ async def export_to_sheets():
 
 async def _run_scan(job_id: int, keywords: list, max_per_keyword: int, source: str = "1688") -> None:
     try:
+        log.info("Job %d starting scan: keywords=%s source=%s max_per_keyword=%s", job_id, keywords, source, max_per_keyword)
         await run_pipeline(job_id, keywords, max_per_keyword, source=source)
     except Exception as e:
         log.error("Pipeline job %d failed: %s", job_id, e)
