@@ -123,6 +123,40 @@ class Database:
         )
         await self._db.commit()
 
+    async def bulk_insert_pipeline(self, records: list) -> None:
+        """Bulk insert pipeline tracking records."""
+        for r in records:
+            await self._db.execute("""
+                INSERT INTO pipeline_products
+                (job_id, source_id, title, image_url, price_cny, orders, margin_pct,
+                 filter_stage, filter_reason, ai_score, ai_niche_fit, ai_visual, created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """, (
+                r["job_id"], r["source_id"], r["title"], r["image_url"],
+                r["price_cny"], r["orders"], r["margin_pct"],
+                r["filter_stage"], r.get("filter_reason", ""),
+                r.get("ai_score", 0), r.get("ai_niche_fit", 0), r.get("ai_visual", 0),
+                _now(),
+            ))
+        await self._db.commit()
+
+    async def get_pipeline(self, job_id: int) -> dict:
+        """Return pipeline breakdown for a job."""
+        async with self._db.execute(
+            "SELECT * FROM pipeline_products WHERE job_id=? ORDER BY filter_stage, id",
+            (job_id,)
+        ) as cur:
+            rows = await cur.fetchall()
+
+        stages = {}
+        for row in rows:
+            d = dict(row)
+            s = d["filter_stage"]
+            if s not in stages:
+                stages[s] = []
+            stages[s].append(d)
+        return stages
+
     # ── Raw products ───────────────────────────────────────────────────────────
 
     async def insert_raw(self, p: dict, job_id: int) -> None:
@@ -203,6 +237,28 @@ class Database:
                 "INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)", (k, val)
             )
         await self._db.commit()
+
+    # ── Comment reply log ─────────────────────────────────────────────────────
+
+    async def has_replied_to_comment(self, comment_id: str) -> bool:
+        async with self._db.execute(
+            "SELECT id FROM comment_reply_log WHERE comment_id=?", (comment_id,)
+        ) as cur:
+            return await cur.fetchone() is not None
+
+    async def log_comment_reply(self, comment_id: str, matched_rule: str, reply_type: str = "comment") -> None:
+        await self._db.execute(
+            "INSERT OR IGNORE INTO comment_reply_log (comment_id, reply_type, replied_at, matched_rule) VALUES (?,?,?,?)",
+            (comment_id, reply_type, _now(), matched_rule),
+        )
+        await self._db.commit()
+
+    async def get_comment_reply_log(self, limit: int = 50) -> list:
+        async with self._db.execute(
+            "SELECT * FROM comment_reply_log ORDER BY id DESC LIMIT ?", (limit,)
+        ) as cur:
+            rows = await cur.fetchall()
+        return [dict(r) for r in rows]
 
     # ── Stats ─────────────────────────────────────────────────────────────────
 
@@ -286,6 +342,9 @@ db = Database()
 async def init_db():
     await db.connect()
     conn = db._db
+    await conn.execute("PRAGMA journal_mode=WAL")
+    await conn.execute("PRAGMA synchronous=NORMAL")
+    await conn.execute("PRAGMA cache_size=-64000")
 
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS products (
@@ -372,14 +431,51 @@ async def init_db():
     """)
 
     await conn.execute("""
+        CREATE TABLE IF NOT EXISTS pipeline_products (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id       INTEGER,
+            source_id    TEXT,
+            title        TEXT,
+            image_url    TEXT,
+            price_cny    REAL DEFAULT 0,
+            orders       INTEGER DEFAULT 0,
+            margin_pct   REAL DEFAULT 0,
+            filter_stage TEXT,
+            filter_reason TEXT DEFAULT '',
+            ai_score     REAL DEFAULT 0,
+            ai_niche_fit REAL DEFAULT 0,
+            ai_visual    REAL DEFAULT 0,
+            created_at   TEXT
+        )
+    """)
+
+    await conn.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             key   TEXT PRIMARY KEY,
             value TEXT
         )
     """)
 
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS comment_reply_log (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            comment_id   TEXT UNIQUE,
+            reply_type   TEXT DEFAULT 'comment',
+            replied_at   TEXT,
+            matched_rule TEXT
+        )
+    """)
+    await _add_columns_if_missing(conn, "comment_reply_log", [
+        ("reply_type", "TEXT DEFAULT 'comment'"),
+    ])
+
     defaults = {
-        "niche": "aesthetic lifestyle & home decor",
+        "instagram_auto_reply_enabled": False,
+        "instagram_reply_rules": [],
+        "instagram_dm_reply_enabled": False,
+        "instagram_dm_rules": [],
+        "instagram_webhook_token": "dropos_webhook_secret",
+        "niche": "couple gifts & romantic products",
         "min_margin": 60.0,
         "min_score": 6.0,
         "min_orders": 100,
@@ -387,16 +483,23 @@ async def init_db():
         "sell_markup_low": 3.5,
         "sell_markup_mid": 2.8,
         "sell_markup_high": 2.2,
-        "exchange_rate": 0.13,
+        "exchange_rate": 0.353,
         "apify_token": "",
         "anthropic_key": "",
+        "gemini_key": "",
         "instagram_username": "",
-        "scan_keywords": ["aesthetic home decor", "minimalist room decor", "aesthetic lifestyle"],
+        "scan_keywords": ["couple gifts", "romantic gifts for her", "gifts for boyfriend", "gifts for girlfriend", "anniversary gifts"],
         "google_sheets_id": "",
         "google_sheets_credentials": "",
         "cssbuy_username": "",
         "cssbuy_password": "",
+        "cssbuy_source": "1688",
         "captcha_2captcha_key": "",
+        "gemini_model": "gemini-2.5-flash-lite",
+        "target_audience": "couples and people buying gifts for partners, ages 18-35",
+        "sell_price_min": 15,
+        "sell_price_max": 80,
+        "example_products": "matching couple bracelets, personalised photo frames, couple card games, romantic candle sets, love letter boxes, matching phone cases",
     }
     for k, v in defaults.items():
         await conn.execute(
