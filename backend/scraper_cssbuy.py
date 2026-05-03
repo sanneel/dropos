@@ -30,6 +30,7 @@ from urllib.parse import quote
 log = logging.getLogger(__name__)
 
 SESSION_FILE      = Path(__file__).parent / "cssbuy_session.json"
+SESSION_ENV       = "CSSBUY_SESSION_JSON"
 BASE_URL          = "https://www.cssbuy.com"
 LOGIN_URL         = f"{BASE_URL}/login"
 RECAPTCHA_SITEKEY = "6LeJ_noqAAAAAIOBR2APiofxlH0DQuEsm1qace0t"
@@ -130,11 +131,15 @@ async def _search_keyword(
 
     resp_1688:   list = []   # Response objects from getCrossKeywordSearch
     resp_taobao: list = []   # Response objects from taoBaoGoodsByKeyWord
+    recent_urls: list[str] = []
 
     # Sync listener — captures Response objects without blocking the page
     def on_response(response):
         url = response.url
         status = response.status
+        if "cssbuy.com" in url or url.startswith(BASE_URL):
+            recent_urls.append(f"{status} {response.request.resource_type} {url}")
+            del recent_urls[:-80]
         if "getCrossKeywordSearch" in url and status == 200:
             resp_1688.append(response)
             log.debug("CSSBuy 1688: captured XHR #%d", len(resp_1688))
@@ -179,6 +184,7 @@ async def _search_keyword(
 
             if not resp_1688:
                 log.warning("CSSBuy 1688: no XHR for '%s'", keyword)
+                await _save_search_debug(page, keyword, "no_1688_xhr", recent_urls)
             else:
                 await _scroll_until_enough(page, resp_1688, max_results)
 
@@ -220,6 +226,7 @@ async def _search_keyword(
                 await _scroll_until_enough(page, resp_taobao, max_results)
             else:
                 log.warning("CSSBuy Taobao: no XHR for '%s'", keyword)
+                await _save_search_debug(page, keyword, "no_taobao_xhr", recent_urls)
 
     finally:
         page.remove_listener("response", on_response)
@@ -328,6 +335,15 @@ async def _dismiss_modal(page) -> None:
                     })()
                 """)
 
+            await page.evaluate("""
+                (() => {
+                    const app = document.querySelector('#prductlist')?.__vue__;
+                    if (app?.fxts && typeof app.jieshou === 'function') {
+                        app.jieshou();
+                    }
+                })()
+            """)
+
             try:
                 await page.wait_for_selector(".fxts", state="hidden", timeout=5000)
             except Exception:
@@ -347,6 +363,21 @@ async def _dismiss_modal(page) -> None:
 
 
 # ── Normalizers ────────────────────────────────────────────────────────────────
+
+async def _save_search_debug(page, keyword: str, reason: str, recent_urls: list[str]) -> None:
+    try:
+        safe_keyword = re.sub(r"[^a-zA-Z0-9_-]+", "_", keyword).strip("_")[:40] or "keyword"
+        debug_dir = Path(__file__).parent
+        prefix = f"cssbuy_{reason}_{safe_keyword}"
+        await page.screenshot(path=str(debug_dir / f"{prefix}.png"), full_page=True)
+        await (debug_dir / f"{prefix}.html").write_text(await page.content(), encoding="utf-8")
+        await (debug_dir / f"{prefix}_urls.txt").write_text("\n".join(recent_urls), encoding="utf-8")
+        log.warning("CSSBuy: saved debug files for %s (%s)", keyword, reason)
+        if recent_urls:
+            log.warning("CSSBuy: recent network URLs before %s: %s", reason, recent_urls[-12:])
+    except Exception as exc:
+        log.debug("CSSBuy: debug save failed: %s", exc)
+
 
 def _normalize_1688(item: dict, keyword: str) -> Optional[dict]:
     price_raw = (item.get("offerPrice") or {}).get("price") or item.get("price") or 0
@@ -486,7 +517,18 @@ async def _check_login(page) -> bool:
     try:
         await page.goto(f"{BASE_URL}/web/user", wait_until="domcontentloaded", timeout=15000)
         await asyncio.sleep(1)
-        return "login" not in page.url
+        login_form = await page.locator(f"{_SEL_USERNAME}, {_SEL_PASSWORD}, {_SEL_SUBMIT}").count()
+        username = await page.evaluate("localStorage.getItem('username') || ''")
+        cookies = await page.context.cookies(BASE_URL)
+        has_session_cookie = any(c.get("name") in {"PHPSESSID", "token", "user_token"} for c in cookies)
+        valid = "login" not in page.url.lower() and not login_form and (bool(username) or has_session_cookie)
+        log.info(
+            "CSSBuy: session check url=%s username=%s session_cookie=%s",
+            page.url,
+            bool(username),
+            has_session_cookie,
+        )
+        return valid
     except Exception:
         return False
 
@@ -515,8 +557,9 @@ async def _login(page, username: str, password: str, captcha_key: str) -> None:
         await page.click(_SEL_SUBMIT)
         timeout_ms = 25000
     else:
-        log.info("CSSBuy: browser open — solve captcha and click Login (5 min timeout)")
-        timeout_ms = 300000
+        log.info("CSSBuy: submitting password login without captcha solver")
+        await page.click(_SEL_SUBMIT)
+        timeout_ms = 45000
 
     try:
         await page.wait_for_function(
@@ -549,6 +592,14 @@ async def _solve_recaptcha(captcha_key: str) -> Optional[str]:
 # ── Session helpers ────────────────────────────────────────────────────────────
 
 async def _restore_context(browser):
+    session_json = os.getenv(SESSION_ENV, "").strip()
+    if session_json:
+        try:
+            storage = json.loads(session_json)
+            log.info("CSSBuy: restoring session from %s", SESSION_ENV)
+            return await browser.new_context(storage_state=storage)
+        except Exception as e:
+            log.warning("CSSBuy: %s is not valid Playwright storage JSON: %s", SESSION_ENV, e)
     if SESSION_FILE.exists():
         try:
             storage = json.loads(SESSION_FILE.read_text())

@@ -365,6 +365,31 @@ async def get_job_pipeline(job_id: int):
     return {"job": job, "stages": stages}
 
 
+@app.get("/api/debug/cssbuy")
+async def cssbuy_debug_files():
+    files = []
+    for name in os.listdir(_BACKEND_DIR):
+        if name.startswith("cssbuy_") and name.rsplit(".", 1)[-1] in {"png", "html", "txt", "json"}:
+            path = os.path.join(_BACKEND_DIR, name)
+            files.append({
+                "name": name,
+                "size": os.path.getsize(path),
+                "modified": os.path.getmtime(path),
+                "url": f"/api/debug/cssbuy/{name}",
+            })
+    return sorted(files, key=lambda f: f["modified"], reverse=True)
+
+
+@app.get("/api/debug/cssbuy/{filename}")
+async def get_cssbuy_debug_file(filename: str):
+    if "/" in filename or "\\" in filename or not filename.startswith("cssbuy_"):
+        raise HTTPException(400, "Invalid filename")
+    path = os.path.join(_BACKEND_DIR, filename)
+    if not os.path.isfile(path):
+        raise HTTPException(404)
+    return FileResponse(path)
+
+
 # ── Scheduler ──────────────────────────────────────────────────────────────────
 
 @app.get("/api/scheduler/status")
