@@ -1,24 +1,56 @@
-from fastapi import FastAPI, BackgroundTasks, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional, List
-import asyncio
-import json
+import logging
 import os
-import httpx
-import hashlib
-import re
-from datetime import datetime
-import sys, os
+import sys
+from contextlib import asynccontextmanager
+from typing import List, Optional
+
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
 sys.path.insert(0, os.path.dirname(__file__))
+
 from database import db, init_db
+from runner import run_pipeline
+from scheduler import create_scheduler, get_scheduler_status
+import instagram
+import sheets
 
-app = FastAPI(title="Dropship Backoffice")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+log = logging.getLogger(__name__)
+
+# Ensure app-level loggers survive uvicorn's log override
+def _setup_app_logging():
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(fmt)
+    for name in ("runner", "scraper_cssbuy", "filter_engine", "enrichment", "scorer", "__main__"):
+        lg = logging.getLogger(name)
+        if not lg.handlers:
+            lg.addHandler(handler)
+        lg.setLevel(logging.INFO)
+        lg.propagate = True
+
+_setup_app_logging()
+
+_scheduler = None
 
 
-@app.get("/")
-async def root():
-    return {"status": "DropOS backend running", "docs": "/docs", "api": "/api/stats"}
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _scheduler
+    await init_db()
+    _scheduler = create_scheduler()
+    _scheduler.start()
+    log.info("Scheduler started — jobs: %s", [j.id for j in _scheduler.get_jobs()])
+    yield
+    _scheduler.shutdown(wait=False)
+    await db.close()
+
+
+app = FastAPI(title="DropOS Backoffice", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,18 +59,63 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Startup ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
-@app.on_event("startup")
-async def startup():
-    await init_db()
 
-# ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Models ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
+_BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+_FRONTEND_ABS = next(
+    (os.path.abspath(p) for p in [
+        os.path.join(_BACKEND_DIR, "frontend"),        # Railway: copied during build
+        os.path.join(_BACKEND_DIR, "..", "frontend"),  # local dev
+    ] if os.path.isdir(os.path.abspath(p))),
+    None,
+)
+log.info("Frontend path: %s", _FRONTEND_ABS)
+
+@app.get("/robots.txt", response_class=PlainTextResponse)
+async def robots_txt():
+    return "User-agent: *\nAllow: /\nUser-agent: facebookexternalhit\nAllow: /\n"
+
+
+@app.get("/")
+async def root():
+    if _FRONTEND_ABS:
+        index = os.path.join(_FRONTEND_ABS, "index.html")
+        if os.path.exists(index):
+            return FileResponse(index)
+    return {"status": "DropOS backend running", "docs": "/docs", "api": "/api/stats"}
+
+# Serve static files from frontend/
+if _FRONTEND_ABS and os.path.isdir(_FRONTEND_ABS):
+    app.mount("/static", StaticFiles(directory=_FRONTEND_ABS), name="static")
+
+
+# ── Request models ─────────────────────────────────────────────────────────────
+
 class ScanRequest(BaseModel):
     keywords: List[str]
-    max_per_keyword: int = 100
+    max_per_keyword: int = 50
+    source: str = "taobao"
+
 
 class ApproveRequest(BaseModel):
     product_ids: List[int]
+
+
+class BatchRejectRequest(BaseModel):
+    product_ids: List[int]
+    reason: Optional[str] = None
+
+
+class PostRequest(BaseModel):
+    product_ids: List[int]
+
+
+class RejectRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+class NoteUpdate(BaseModel):
+    note: str
+
 
 class SettingsUpdate(BaseModel):
     niche: Optional[str] = None
@@ -49,32 +126,66 @@ class SettingsUpdate(BaseModel):
     sell_markup_low: Optional[float] = None
     sell_markup_mid: Optional[float] = None
     sell_markup_high: Optional[float] = None
+    exchange_rate: Optional[float] = None
     instagram_username: Optional[str] = None
+    instagram_access_token: Optional[str] = None
+    instagram_user_id: Optional[str] = None
+    instagram_auto_reply_enabled: Optional[bool] = None
+    instagram_reply_rules: Optional[list] = None
+    instagram_dm_reply_enabled: Optional[bool] = None
+    instagram_dm_rules: Optional[list] = None
+    instagram_webhook_token: Optional[str] = None
     apify_token: Optional[str] = None
     anthropic_key: Optional[str] = None
-    exchange_rate: Optional[float] = None
+    gemini_key: Optional[str] = None
+    groq_key: Optional[str] = None
+    scan_keywords: Optional[List[str]] = None
+    google_sheets_id: Optional[str] = None
+    google_sheets_credentials: Optional[str] = None
+    cssbuy_username: Optional[str] = None
+    cssbuy_password: Optional[str] = None
+    cssbuy_source: Optional[str] = None
+    captcha_2captcha_key: Optional[str] = None
 
-# ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Settings ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
+
+# ── Settings ───────────────────────────────────────────────────────────────────
+
 @app.get("/api/settings")
 async def get_settings():
     return await db.get_settings()
 
+
 @app.patch("/api/settings")
 async def update_settings(body: SettingsUpdate):
-    await db.update_settings(body.model_dump(exclude_none=True))
+    data = body.model_dump(exclude_none=True)
+    await db.update_settings(data)
+
+    # Reconfigure sheets exporter if credentials changed
+    gid = data.get("google_sheets_id") or (await db.get_settings()).get("google_sheets_id", "")
+    gcreds = data.get("google_sheets_credentials", "")
+    if gid and gcreds:
+        sheets.configure(gcreds, gid)
+
     return {"ok": True}
 
-# ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Stats ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
+
+# ── Stats ──────────────────────────────────────────────────────────────────────
+
 @app.get("/api/stats")
 async def get_stats():
     return await db.get_stats()
 
-# ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Products ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
+
+# ── Products ───────────────────────────────────────────────────────────────────
+
 @app.get("/api/products")
-async def get_products(stage: str = "pending", limit: int = 50, offset: int = 0):
-    products = await db.get_products(stage=stage, limit=limit, offset=offset)
+async def get_products(
+    stage: str = "pending", limit: int = 50, offset: int = 0, sort: str = "score"
+):
+    products = await db.get_products(stage=stage, limit=limit, offset=offset, sort=sort)
     total = await db.count_products(stage=stage)
     return {"products": products, "total": total}
+
 
 @app.get("/api/products/{product_id}")
 async def get_product(product_id: int):
@@ -83,30 +194,105 @@ async def get_product(product_id: int):
         raise HTTPException(404, "Not found")
     return p
 
-@app.post("/api/products/{product_id}/reject")
-async def reject_product(product_id: int):
-    await db.set_stage(product_id, "rejected")
+
+@app.post("/api/products/{product_id}/approve")
+async def approve_product(product_id: int):
+    p = await db.get_product(product_id)
+    if not p:
+        raise HTTPException(404, "Not found")
+    if p.get("stage") != "pending":
+        raise HTTPException(400, f"Cannot approve product in stage '{p.get('stage')}'")
+    await db.set_stage(product_id, "approved")
     return {"ok": True}
 
+
 @app.post("/api/approve")
-async def approve_products(body: ApproveRequest, bg: BackgroundTasks):
+async def approve_products(body: ApproveRequest):
+    if len(body.product_ids) > 50:
+        raise HTTPException(400, "Max 50 products at once")
+    for pid in body.product_ids:
+        p = await db.get_product(pid)
+        if p and p.get("stage") == "pending":
+            await db.set_stage(pid, "approved")
+    return {"ok": True, "approved": len(body.product_ids)}
+
+
+@app.post("/api/reject")
+async def reject_products(body: BatchRejectRequest):
+    if len(body.product_ids) > 50:
+        raise HTTPException(400, "Max 50 products at once")
+    reason = (body.reason or "").strip() or None
+    for pid in body.product_ids:
+        await db.set_stage(pid, "rejected", reason=reason)
+    return {"ok": True, "rejected": len(body.product_ids)}
+
+
+@app.post("/api/products/{product_id}/post")
+async def post_product(product_id: int, bg: BackgroundTasks):
+    p = await db.get_product(product_id)
+    if not p:
+        raise HTTPException(404, "Not found")
+    if p.get("stage") != "approved":
+        raise HTTPException(400, f"Can only post approved products (stage: '{p.get('stage')}')")
+    await db.set_stage(product_id, "posted")
+    await db.log_post(product_id)
+    bg.add_task(_post_and_export, [p])
+    return {"ok": True}
+
+
+@app.post("/api/post")
+async def post_products(body: PostRequest, bg: BackgroundTasks):
     if len(body.product_ids) > 10:
         raise HTTPException(400, "Max 10 products at once")
+    to_post = []
     for pid in body.product_ids:
-        await db.set_stage(pid, "approved")
-    bg.add_task(post_approved_products, body.product_ids)
-    return {"ok": True, "queued": len(body.product_ids)}
+        p = await db.get_product(pid)
+        if p and p.get("stage") == "approved":
+            await db.set_stage(pid, "posted")
+            await db.log_post(pid)
+            to_post.append(p)
+    bg.add_task(_post_and_export, to_post)
+    return {"ok": True, "queued": len(to_post)}
 
-# ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Scan pipeline ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
+
+@app.post("/api/products/{product_id}/reject")
+async def reject_product(product_id: int, body: RejectRequest = None):
+    reason = (body.reason or "").strip() if body else ""
+    await db.set_stage(product_id, "rejected", reason=reason or None)
+    return {"ok": True}
+
+
+@app.post("/api/products/{product_id}/reconsider")
+async def reconsider_product(product_id: int):
+    p = await db.get_product(product_id)
+    if not p:
+        raise HTTPException(404, "Not found")
+    await db.set_stage(product_id, "pending")
+    return {"ok": True}
+
+
+@app.patch("/api/products/{product_id}/note")
+async def update_note(product_id: int, body: NoteUpdate):
+    p = await db.get_product(product_id)
+    if not p:
+        raise HTTPException(404, "Not found")
+    await db.update_product_note(product_id, body.note)
+    return {"ok": True}
+
+
+# ── Scan / Jobs ────────────────────────────────────────────────────────────────
+
 @app.post("/api/scan")
 async def start_scan(body: ScanRequest, bg: BackgroundTasks):
     job_id = await db.create_job(keywords=body.keywords)
-    bg.add_task(run_pipeline, job_id, body.keywords, body.max_per_keyword)
+    bg.add_task(_run_scan, job_id, body.keywords, body.max_per_keyword, body.source)
     return {"job_id": job_id, "status": "started"}
 
+
 @app.get("/api/jobs")
-async def get_jobs(limit: int = 10):
+async def get_jobs(limit: int = 20):
     return await db.get_jobs(limit)
+
 
 @app.get("/api/jobs/{job_id}")
 async def get_job(job_id: int):
@@ -115,283 +301,216 @@ async def get_job(job_id: int):
         raise HTTPException(404)
     return job
 
-# ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Pipeline logic ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
-async def run_pipeline(job_id: int, keywords: list, max_per_keyword: int):
+
+@app.get("/api/jobs/{job_id}/pipeline")
+async def get_job_pipeline(job_id: int):
+    job = await db.get_job(job_id)
+    if not job:
+        raise HTTPException(404)
+    stages = await db.get_pipeline(job_id)
+    return {"job": job, "stages": stages}
+
+
+# ── Scheduler ──────────────────────────────────────────────────────────────────
+
+@app.get("/api/scheduler/status")
+async def scheduler_status():
+    return get_scheduler_status(_scheduler)
+
+
+@app.post("/api/scheduler/trigger")
+async def scheduler_trigger(bg: BackgroundTasks):
+    """Manually fire a scheduled scan now (uses stored scan_keywords)."""
     settings = await db.get_settings()
-    await db.update_job(job_id, status="scraping", progress=5)
-
-    # 1. SCRAPE
-    raw_products = await scrape_products(settings, keywords, max_per_keyword)
-    await db.update_job(job_id, status="scraping", progress=20,
-                        scraped=len(raw_products))
-
-    # 2. BASIC FILTER (fast, no AI)
-    filtered = basic_filter(raw_products, settings)
-    await db.update_job(job_id, status="filtering", progress=40,
-                        after_basic=len(filtered))
-
-    # 3. PROFIT FILTER
-    profitable = [p for p in filtered if profit_filter(p, settings)]
-    await db.update_job(job_id, status="calculating", progress=55,
-                        after_profit=len(profitable))
-
-    # 4. DEDUP
-    deduped = dedup(profitable)
-    await db.update_job(job_id, status="deduping", progress=60,
-                        after_dedup=len(deduped))
-
-    # 5. AI REVIEW (batched to save API calls)
-    passed = []
-    total = len(deduped)
-    for i, product in enumerate(deduped):
-        reviewed = await ai_review(product, settings)
-        if reviewed and reviewed.get("score", 0) >= settings.get("min_score", 7.0):
-            product.update(reviewed)
-            passed.append(product)
-        progress = 60 + int((i / max(total, 1)) * 35)
-        if i % 5 == 0:
-            await db.update_job(job_id, status="ai_review", progress=progress,
-                                after_ai=len(passed))
-
-    await db.update_job(job_id, status="saving", progress=96,
-                        after_ai=len(passed))
-
-    # 6. SAVE to DB as "pending"
-    for product in passed:
-        await db.insert_product(product, job_id)
-
-    await db.update_job(job_id, status="done", progress=100,
-                        after_ai=len(passed))
+    raw = settings.get("scan_keywords", [])
+    keywords: list = raw if isinstance(raw, list) else [raw]
+    if not keywords:
+        keywords = ["aesthetic home decor"]
+    job_id = await db.create_job(keywords=keywords)
+    scan_src = str(settings.get("cssbuy_source", "1688"))
+    bg.add_task(_run_scan, job_id, keywords, 50, scan_src)
+    return {"ok": True, "job_id": job_id, "keywords": keywords}
 
 
-def basic_filter(products: list, settings: dict) -> list:
-    out = []
-    seen_titles = set()
-    for p in products:
-        # Must have title and price
-        if not p.get("title") or not p.get("price_cny"):
-            continue
-        # Min orders
-        if p.get("orders", 0) < settings.get("min_orders", 100):
-            continue
-        # Min rating
-        if p.get("rating", 0) < settings.get("min_rating", 4.5):
-            continue
-        # Skip wholesale/factory spam titles
-        spam_keywords = ["ÃÂÃÂ¦ÃÂÃÂÃÂÃÂ¹ÃÂÃÂ¥ÃÂÃÂÃÂÃÂ", "ÃÂÃÂ¥ÃÂÃÂ·ÃÂÃÂ¥ÃÂÃÂ¥ÃÂÃÂÃÂÃÂÃÂÃÂ§ÃÂÃÂÃÂÃÂ´ÃÂÃÂ©ÃÂÃÂÃÂÃÂ", "ÃÂÃÂ¤ÃÂÃÂ»ÃÂÃÂ£ÃÂÃÂ¥ÃÂÃÂÃÂÃÂ", "ÃÂÃÂ¥ÃÂÃÂÃÂÃÂÃÂÃÂ¥ÃÂÃÂ®ÃÂÃÂ¶ÃÂÃÂ§ÃÂÃÂÃÂÃÂ´ÃÂÃÂ¤ÃÂÃÂ¾ÃÂÃÂ"]
-        if any(kw in p.get("title", "") for kw in spam_keywords):
-            continue
-        # Skip if no images
-        if not p.get("images"):
-            continue
-        # Dedup by title hash
-        title_hash = hashlib.md5(p["title"][:30].encode()).hexdigest()
-        if title_hash in seen_titles:
-            continue
-        seen_titles.add(title_hash)
-        out.append(p)
-    return out
+# ── Instagram ─────────────────────────────────────────────────────────────────
 
-
-def profit_filter(product: dict, settings: dict) -> bool:
-    price_cny = float(product.get("price_cny", 0))
-    exchange_rate = float(settings.get("exchange_rate", 0.13))
-    shipping_cny = 15.0  # average shipping cost
-
-    cost_eur = (price_cny + shipping_cny) * exchange_rate
-
-    # Markup tiers
-    if cost_eur < 5:
-        markup = settings.get("sell_markup_low", 3.5)
-    elif cost_eur < 15:
-        markup = settings.get("sell_markup_mid", 2.8)
-    else:
-        markup = settings.get("sell_markup_high", 2.2)
-
-    sell_price = cost_eur * markup
-    margin = ((sell_price - cost_eur) / sell_price) * 100
-
-    product["cost_eur"] = round(cost_eur, 2)
-    product["sell_price_eur"] = round(sell_price, 2)
-    product["margin_pct"] = round(margin, 1)
-
-    return margin >= settings.get("min_margin", 60.0)
-
-
-def dedup(products: list) -> list:
-    seen = set()
-    out = []
-    for p in products:
-        # Hash first image URL to catch duplicate listings
-        img = (p.get("images") or [""])[0]
-        key = hashlib.md5(img.encode()).hexdigest() if img else None
-        if key and key in seen:
-            continue
-        if key:
-            seen.add(key)
-        out.append(p)
-    return out
-
-
-async def ai_review(product: dict, settings: dict) -> Optional[dict]:
-    api_key = settings.get("anthropic_key", "")
-    niche = settings.get("niche", "aesthetic lifestyle products")
-
-    prompt = f"""You are reviewing a product for an Instagram dropshipping store.
-Store niche: "{niche}"
-
-Product data:
-- Translated title: {product.get('title_translated', product.get('title', 'Unknown'))}
-- Category: {product.get('category', 'Unknown')}
-- Price: ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ¬{product.get('cost_eur', '?')} cost ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ¬{product.get('sell_price_eur', '?')} sell ({product.get('margin_pct', '?')}% margin)
-- Orders: {product.get('orders', 0)}
-- Rating: {product.get('rating', 0)}/5
-- Images available: {len(product.get('images', []))}
-
-Score this product from 1-10 on:
-1. Niche fit (does it match the store theme?)
-2. Instagram visual appeal (would it look good in a post?)
-3. Trend potential (is this something people want now?)
-4. Competition level (avoid oversaturated products)
-
-Also generate:
-- A punchy English product name (3-5 words, no brand names)
-- An Instagram caption (2-3 sentences, aspirational, fits the niche)
-- 15 relevant hashtags
-
-Return ONLY valid JSON, no markdown:
-{{
-  "score": <number 1-10>,
-  "niche_fit": <1-10>,
-  "visual_appeal": <1-10>,
-  "trend_score": <1-10>,
-  "rejection_reason": "<if score < 7, why>",
-  "product_name": "<punchy name>",
-  "caption": "<instagram caption>",
-  "hashtags": ["tag1", "tag2", ...]
-}}"""
-
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": "claude-haiku-4-5-20251001",  # cheap + fast for bulk review
-                    "max_tokens": 600,
-                    "messages": [{"role": "user", "content": prompt}]
-                }
-            )
-            if resp.status_code != 200:
-                return None
-            text = resp.json()["content"][0]["text"]
-            # Strip any accidental markdown fences
-            text = re.sub(r"```json|```", "", text).strip()
-            return json.loads(text)
-    except Exception:
-        return None
-
-
-async def scrape_products(settings: dict, keywords: list, max_per_keyword: int) -> list:
-    token = settings.get("apify_token", "")
+@app.get("/api/instagram/accounts")
+async def instagram_accounts():
+    """
+    Resolve the Instagram Business Account ID from the stored Page Access Token.
+    Calls GET /me/accounts to list Facebook Pages, then fetches the linked
+    Instagram Business Account ID for each page.
+    """
+    import httpx as _httpx
+    settings = await db.get_settings()
+    token = str(settings.get("instagram_access_token") or "").strip()
     if not token:
-        # Return mock data for testing without Apify token
-        return _mock_products(keywords)
+        raise HTTPException(400, "instagram_access_token not configured")
 
-    all_products = []
-    async with httpx.AsyncClient(timeout=60) as client:
-        for keyword in keywords:
-            try:
-                # Start Apify run
-                resp = await client.post(
-                    "https://api.apify.com/v2/acts/apify~1688-scraper/runs",
-                    params={"token": token},
-                    json={"keywords": [keyword], "maxResults": max_per_keyword}
+    graph = "https://graph.facebook.com/v21.0"
+    try:
+        async with _httpx.AsyncClient(timeout=15) as client:
+            # 1. List all Facebook Pages the token has access to
+            r = await client.get(f"{graph}/me/accounts", params={"access_token": token})
+            body = r.json()
+            if "error" in body:
+                raise HTTPException(400, body["error"].get("message", str(body["error"])))
+
+            pages = body.get("data", [])
+            results = []
+            for page in pages:
+                page_id = page.get("id")
+                page_name = page.get("name", "")
+                # 2. Fetch the linked Instagram Business Account for each page
+                r2 = await client.get(
+                    f"{graph}/{page_id}",
+                    params={"fields": "instagram_business_account", "access_token": token},
                 )
-                if resp.status_code != 201:
+                b2 = r2.json()
+                ig = b2.get("instagram_business_account")
+                results.append({
+                    "page_id":   page_id,
+                    "page_name": page_name,
+                    "instagram_business_account_id": ig.get("id") if ig else None,
+                })
+        return {"accounts": results}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+@app.get("/api/instagram/webhook")
+async def ig_webhook_verify(
+    hub_mode: str = Query(None, alias="hub.mode"),
+    hub_verify_token: str = Query(None, alias="hub.verify_token"),
+    hub_challenge: str = Query(None, alias="hub.challenge"),
+):
+    """Meta webhook verification handshake."""
+    settings = await db.get_settings()
+    verify_token = str(settings.get("instagram_webhook_token") or "dropos_webhook_secret")
+    if hub_mode == "subscribe" and hub_verify_token == verify_token:
+        return PlainTextResponse(hub_challenge)
+    raise HTTPException(403, "Webhook verification failed — check your verify token")
+
+
+@app.post("/api/instagram/webhook")
+async def ig_webhook_receive(request: Request, bg: BackgroundTasks):
+    """Receive Instagram comment events from Meta and process in background."""
+    body = await request.json()
+    bg.add_task(_process_ig_webhook, body)
+    return {"ok": True}
+
+
+@app.get("/api/instagram/reply-log")
+async def ig_reply_log():
+    return await db.get_comment_reply_log(limit=100)
+
+
+# ── Google Sheets ──────────────────────────────────────────────────────────────
+
+@app.post("/api/sheets/export")
+async def export_to_sheets():
+    """Export all approved + posted products to Google Sheets."""
+    approved = await db.get_products(stage="approved", limit=500)
+    posted = await db.get_products(stage="posted", limit=500)
+    all_products = approved + posted
+    if not all_products:
+        return {"ok": True, "exported": 0, "message": "No products to export"}
+    result = sheets.export(all_products)
+    return result
+
+
+# ── Background helpers ─────────────────────────────────────────────────────────
+
+async def _run_scan(job_id: int, keywords: list, max_per_keyword: int, source: str = "1688") -> None:
+    try:
+        await run_pipeline(job_id, keywords, max_per_keyword, source=source)
+    except Exception as e:
+        log.error("Pipeline job %d failed: %s", job_id, e)
+        await db.update_job(job_id, status="error")
+
+
+async def _process_ig_webhook(body: dict) -> None:
+    if body.get("object") != "instagram":
+        return
+
+    settings  = await db.get_settings()
+    ig_uid    = str(settings.get("instagram_user_id") or "")
+    comment_on = bool(settings.get("instagram_auto_reply_enabled"))
+    dm_on      = bool(settings.get("instagram_dm_reply_enabled"))
+
+    if not comment_on and not dm_on:
+        return
+
+    comment_rules = settings.get("instagram_reply_rules") or []
+    dm_rules      = settings.get("instagram_dm_rules")    or []
+
+    for entry in body.get("entry", []):
+
+        # ── Comment events (in "changes") ──────────────────────────────────────
+        if comment_on:
+            for change in entry.get("changes", []):
+                if change.get("field") != "comments":
                     continue
-                run_id = resp.json()["data"]["id"]
+                value      = change.get("value", {})
+                comment_id = value.get("id")
+                text       = value.get("text", "")
+                from_id    = str((value.get("from") or {}).get("id", ""))
 
-                # Poll until done (max 5 min)
-                for _ in range(60):
-                    await asyncio.sleep(5)
-                    status_resp = await client.get(
-                        f"https://api.apify.com/v2/actor-runs/{run_id}",
-                        params={"token": token}
-                    )
-                    status = status_resp.json()["data"]["status"]
-                    if status == "SUCCEEDED":
-                        break
-                    if status in ("FAILED", "ABORTED"):
-                        break
+                if not comment_id or from_id == ig_uid:
+                    continue
+                if await db.has_replied_to_comment(comment_id):
+                    continue
 
-                # Fetch results
-                items_resp = await client.get(
-                    f"https://api.apify.com/v2/actor-runs/{run_id}/dataset/items",
-                    params={"token": token, "limit": max_per_keyword}
-                )
-                items = items_resp.json()
+                reply = instagram.match_reply_rule(text, comment_rules)
+                if not reply:
+                    continue
 
-                for item in items:
-                    all_products.append({
-                        "source": "1688",
-                        "source_id": str(item.get("offerId", "")),
-                        "title": item.get("title", ""),
-                        "title_translated": item.get("titleEnglish", item.get("title", "")),
-                        "price_cny": float(item.get("priceMin", item.get("price", 0)) or 0),
-                        "orders": int(item.get("tradeCount", 0) or 0),
-                        "rating": float(item.get("repurchaseRate", 4.5) or 4.5),
-                        "images": item.get("images", []),
-                        "url": item.get("productUrl", ""),
-                        "category": item.get("category", ""),
-                        "keyword": keyword,
-                    })
-            except Exception:
-                continue
+                success = await instagram.reply_to_comment(comment_id, reply, settings)
+                if success:
+                    await db.log_comment_reply(comment_id, reply[:80], "comment")
+                    log.info("Auto-replied to comment %s: %.50s", comment_id, reply)
 
-    return all_products
+        # ── DM events (in "messaging") ─────────────────────────────────────────
+        if dm_on:
+            for msg_event in entry.get("messaging", []):
+                sender_id = str((msg_event.get("sender") or {}).get("id", ""))
+                message   = msg_event.get("message", {})
+                msg_id    = message.get("mid", "")
+                text      = message.get("text", "")
 
+                if not sender_id or not msg_id or not text:
+                    continue
+                if sender_id == ig_uid:
+                    continue  # don't reply to our own messages
+                if message.get("is_echo"):
+                    continue  # echoes of our own sent messages
+                if await db.has_replied_to_comment(msg_id):
+                    continue  # already replied
 
-def _mock_products(keywords: list) -> list:
-    """Returns realistic mock data when no Apify token is configured."""
-    mock = []
-    samples = [
-        {"title": "ÃÂÃÂ¦ÃÂÃÂÃÂÃÂ ÃÂÃÂ§ÃÂÃÂºÃÂÃÂ¿ÃÂÃÂ¨ÃÂÃÂÃÂÃÂÃÂÃÂ§ÃÂÃÂÃÂÃÂÃÂÃÂ¨ÃÂÃÂÃÂÃÂ³ÃÂÃÂ¦ÃÂÃÂÃÂÃÂº5.0ÃÂÃÂ©ÃÂÃÂÃÂÃÂÃÂÃÂ¥ÃÂÃÂÃÂÃÂªÃÂÃÂ¨ÃÂÃÂ¶ÃÂÃÂÃÂÃÂ©ÃÂÃÂÃÂÃÂ¿ÃÂÃÂ§ÃÂÃÂ»ÃÂÃÂ­ÃÂÃÂ¨ÃÂÃÂÃÂÃÂª", "title_translated": "Wireless Bluetooth Earphones 5.0 Noise Cancel Long Battery", "price_cny": 28, "orders": 4521, "rating": 4.7, "category": "Electronics"},
-        {"title": "ÃÂÃÂ§ÃÂÃÂ£ÃÂÃÂÃÂÃÂ¥ÃÂÃÂÃÂÃÂ¸ÃÂÃÂ¦ÃÂÃÂÃÂÃÂÃÂÃÂ¦ÃÂÃÂÃÂÃÂºÃÂÃÂ¦ÃÂÃÂÃÂÃÂ¯ÃÂÃÂ¦ÃÂÃÂÃÂÃÂ¶ÃÂÃÂ¦ÃÂÃÂ¡ÃÂÃÂÃÂÃÂ©ÃÂÃÂÃÂÃÂ¢ÃÂÃÂ¦ÃÂÃÂÃÂÃÂÃÂÃÂ¤ÃÂÃÂºÃÂÃÂºÃÂÃÂ¦ÃÂÃÂÃÂÃÂ¯ÃÂÃÂ¦ÃÂÃÂÃÂÃÂÃÂÃÂ¦ÃÂÃÂÃÂÃÂ¶", "title_translated": "Magnetic Phone Stand Desktop Lazy Holder", "price_cny": 12, "orders": 8234, "rating": 4.8, "category": "Phone Accessories"},
-        {"title": "ÃÂÃÂ§ÃÂÃÂ®ÃÂÃÂÃÂÃÂ§ÃÂÃÂºÃÂÃÂ¦ÃÂÃÂ©ÃÂÃÂÃÂÃÂ¶ÃÂÃÂ§ÃÂÃÂÃÂÃÂ·ÃÂÃÂ©ÃÂÃÂ©ÃÂÃÂ¬ÃÂÃÂ¥ÃÂÃÂÃÂÃÂÃÂÃÂ¦ÃÂÃÂÃÂÃÂ¯ÃÂÃÂ¥ÃÂÃÂÃÂÃÂÃÂÃÂ¥ÃÂÃÂÃÂÃÂ¡ÃÂÃÂ¦ÃÂÃÂÃÂÃÂ¯ÃÂÃÂ¥ÃÂÃÂÃÂÃÂÃÂÃÂ¥ÃÂÃÂÃÂÃÂ¬ÃÂÃÂ¥ÃÂÃÂ®ÃÂÃÂ¤", "title_translated": "Minimalist Ceramic Mug Coffee Cup Office", "price_cny": 18, "orders": 3102, "rating": 4.9, "category": "Home"},
-        {"title": "LEDÃÂÃÂ¦ÃÂÃÂ°ÃÂÃÂÃÂÃÂ¥ÃÂÃÂÃÂÃÂ´ÃÂÃÂ§ÃÂÃÂÃÂÃÂ¯USBÃÂÃÂ¦ÃÂÃÂ¡ÃÂÃÂÃÂÃÂ©ÃÂÃÂÃÂÃÂ¢ÃÂÃÂ¥ÃÂÃÂ°ÃÂÃÂÃÂÃÂ¥ÃÂÃÂ¤ÃÂÃÂÃÂÃÂ§ÃÂÃÂÃÂÃÂ¯", "title_translated": "LED Ambient Light USB Desktop Night Light", "price_cny": 22, "orders": 6780, "rating": 4.6, "category": "Home Decor"},
-        {"title": "ÃÂÃÂ§ÃÂÃÂÃÂÃÂ®ÃÂÃÂ¨ÃÂÃÂ´ÃÂÃÂ¨ÃÂÃÂ§ÃÂÃÂ¬ÃÂÃÂÃÂÃÂ¨ÃÂÃÂ®ÃÂÃÂ°ÃÂÃÂ¦ÃÂÃÂÃÂÃÂ¬ÃÂÃÂ¦ÃÂÃÂÃÂÃÂÃÂÃÂ¨ÃÂÃÂ´ÃÂÃÂ¦ÃÂÃÂ¦ÃÂÃÂÃÂÃÂ¥ÃÂÃÂ¨ÃÂÃÂ®ÃÂÃÂ°ÃÂÃÂ¦ÃÂÃÂÃÂÃÂ¬", "title_translated": "Leather Notebook Journal Diary", "price_cny": 35, "orders": 2890, "rating": 4.8, "category": "Stationery"},
-        {"title": "ÃÂÃÂ¥ÃÂÃÂ¤ÃÂÃÂÃÂÃÂ¥ÃÂÃÂÃÂÃÂÃÂÃÂ¨ÃÂÃÂÃÂÃÂ½ÃÂÃÂ¦ÃÂÃÂÃÂÃÂ¶ÃÂÃÂ§ÃÂÃÂºÃÂÃÂ³ÃÂÃÂ§ÃÂÃÂÃÂÃÂÃÂÃÂ¦ÃÂÃÂ¡ÃÂÃÂÃÂÃÂ©ÃÂÃÂÃÂÃÂ¢ÃÂÃÂ¦ÃÂÃÂÃÂÃÂ´ÃÂÃÂ§ÃÂÃÂÃÂÃÂ", "title_translated": "Multi-function Storage Box Desktop Organizer", "price_cny": 25, "orders": 5430, "rating": 4.7, "category": "Home"},
-        {"title": "ÃÂÃÂ§ÃÂÃÂ¡ÃÂÃÂÃÂÃÂ¨ÃÂÃÂÃÂÃÂ¶ÃÂÃÂ¦ÃÂÃÂÃÂÃÂÃÂÃÂ¦ÃÂÃÂÃÂÃÂºÃÂÃÂ¥ÃÂÃÂ£ÃÂÃÂ³ÃÂÃÂ©ÃÂÃÂÃÂÃÂ²ÃÂÃÂ¦ÃÂÃÂÃÂÃÂÃÂÃÂ¤ÃÂÃÂ¿ÃÂÃÂÃÂÃÂ¦ÃÂÃÂÃÂÃÂ¤ÃÂÃÂ¥ÃÂÃÂ¥ÃÂÃÂ", "title_translated": "Silicone Phone Case Anti-drop Protective Cover", "price_cny": 8, "orders": 12000, "rating": 4.5, "category": "Phone Cases"},
-        {"title": "ÃÂÃÂ§ÃÂÃÂ¼ÃÂÃÂÃÂÃÂ§ÃÂÃÂ»ÃÂÃÂÃÂÃÂ¦ÃÂÃÂÃÂÃÂÃÂÃÂ¦ÃÂÃÂÃÂÃÂÃÂÃÂ¥ÃÂÃÂÃÂÃÂÃÂÃÂ¦ÃÂÃÂÃÂÃÂÃÂÃÂ§ÃÂÃÂÃÂÃÂ¹ÃÂÃÂ¥ÃÂÃÂÃÂÃÂÃÂÃÂ¥ÃÂÃÂ¥ÃÂÃÂ³", "title_translated": "Woven Tote Bag Shoulder Bag Women", "price_cny": 45, "orders": 1890, "rating": 4.8, "category": "Bags"},
-        {"title": "ÃÂÃÂ©ÃÂÃÂ¦ÃÂÃÂÃÂÃÂ¨ÃÂÃÂÃÂÃÂ°ÃÂÃÂ¨ÃÂÃÂÃÂÃÂ¡ÃÂÃÂ§ÃÂÃÂÃÂÃÂÃÂÃÂ§ÃÂÃÂ¤ÃÂÃÂ¼ÃÂÃÂ§ÃÂÃÂÃÂÃÂÃÂÃÂ¥ÃÂÃÂ¥ÃÂÃÂÃÂÃÂ¨ÃÂÃÂ£ÃÂÃÂ", "title_translated": "Aromatherapy Candle Gift Box Set", "price_cny": 38, "orders": 3210, "rating": 4.9, "category": "Home Fragrance"},
-        {"title": "insÃÂÃÂ©ÃÂÃÂ£ÃÂÃÂÃÂÃÂ¥ÃÂÃÂ¹ÃÂÃÂ²ÃÂÃÂ¨ÃÂÃÂÃÂÃÂ±ÃÂÃÂ§ÃÂÃÂÃÂÃÂ¸ÃÂÃÂ¦ÃÂÃÂ¡ÃÂÃÂÃÂÃÂ¨ÃÂÃÂ£ÃÂÃÂÃÂÃÂ©ÃÂÃÂ¥ÃÂÃÂ°ÃÂÃÂ§ÃÂÃÂÃÂÃÂ»", "title_translated": "Instagram Style Dried Flower Photo Frame Wall Art", "price_cny": 42, "orders": 2100, "rating": 4.7, "category": "Home Decor"},
-        {"title": "ÃÂÃÂ¦ÃÂÃÂÃÂÃÂÃÂÃÂ¥ÃÂÃÂÃÂÃÂ ÃÂÃÂ¦ÃÂÃÂÃÂÃÂ¶ÃÂÃÂ§ÃÂÃÂºÃÂÃÂ³ÃÂÃÂ¨ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ¦ÃÂÃÂÃÂÃÂÃÂÃÂ¨ÃÂÃÂ¡ÃÂÃÂÃÂÃÂ¥ÃÂÃÂÃÂÃÂÃÂÃÂ¨ÃÂÃÂ£ÃÂÃÂÃÂÃÂ¨ÃÂÃÂ¢ÃÂÃÂ", "title_translated": "Foldable Storage Bag Travel Organizer", "price_cny": 15, "orders": 7650, "rating": 4.6, "category": "Travel"},
-        {"title": "ÃÂÃÂ¦ÃÂÃÂÃÂÃÂ¹ÃÂÃÂ¥ÃÂÃÂÃÂÃÂÃÂÃÂ¥ÃÂÃÂ·ÃÂÃÂ¥ÃÂÃÂ¥ÃÂÃÂÃÂÃÂÃÂÃÂ§ÃÂÃÂÃÂÃÂ´ÃÂÃÂ©ÃÂÃÂÃÂÃÂÃÂÃÂ¦ÃÂÃÂÃÂÃÂÃÂÃÂ¦ÃÂÃÂÃÂÃÂºÃÂÃÂ©ÃÂÃÂÃÂÃÂÃÂÃÂ¤ÃÂÃÂ»ÃÂÃÂ¶ÃÂÃÂ¤ÃÂÃÂ½ÃÂÃÂÃÂÃÂ¤ÃÂÃÂ»ÃÂÃÂ·", "title_translated": "Wholesale Factory Direct Phone Accessories Cheap", "price_cny": 3, "orders": 50, "rating": 3.8, "category": "Spam"},
-        {"title": "ÃÂÃÂ¦ÃÂÃÂÃÂÃÂ¨ÃÂÃÂ¨ÃÂÃÂ´ÃÂÃÂ¨ÃÂÃÂ¦ÃÂÃÂ¡ÃÂÃÂÃÂÃÂ©ÃÂÃÂÃÂÃÂ¢ÃÂÃÂ¦ÃÂÃÂÃÂÃÂÃÂÃÂ¤ÃÂÃÂ»ÃÂÃÂ¶ÃÂÃÂ¥ÃÂÃÂÃÂÃÂÃÂÃÂ¦ÃÂÃÂÃÂÃÂÃÂÃÂ¨ÃÂÃÂ£ÃÂÃÂÃÂÃÂ©ÃÂÃÂ¥ÃÂÃÂ°ÃÂÃÂ¥ÃÂÃÂÃÂÃÂ", "title_translated": "Wooden Desktop Ornament Creative Decoration", "price_cny": 29, "orders": 4320, "rating": 4.8, "category": "Home Decor"},
-    ]
-    import random
-    for kw in keywords:
-        for s in random.sample(samples, min(len(samples), 8)):
-            p = dict(s)
-            p.update({
-                "source": "1688_mock",
-                "source_id": hashlib.md5(f"{kw}{s['title']}".encode()).hexdigest()[:12],
-                "images": [f"https://picsum.photos/seed/{hashlib.md5(s['title'].encode()).hexdigest()[:6]}/600/600"],
-                "url": "https://1688.com",
-                "keyword": kw,
-            })
-            mock.append(p)
-    return mock
+                reply = instagram.match_reply_rule(text, dm_rules)
+                if not reply:
+                    continue
+
+                success = await instagram.reply_to_dm(sender_id, reply, settings)
+                if success:
+                    await db.log_comment_reply(msg_id, reply[:80], "dm")
+                    log.info("Auto-replied to DM from %s: %.50s", sender_id, reply)
 
 
-async def post_approved_products(product_ids: list[int]):
-    """Placeholder ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ integrate with instagrapi or Buffer API here."""
-    for pid in product_ids:
-        await asyncio.sleep(1)
-        await db.set_stage(pid, "posted")
-        await db.log_post(pid)
+async def _post_and_export(products: list) -> None:
+    if not products:
+        return
+    try:
+        settings = await db.get_settings()
+        results = await instagram.post_batch(products, settings)
+        posted  = sum(1 for r in results if r.status == "posted")
+        mocked  = sum(1 for r in results if r.status == "mock")
+        errors  = [r for r in results if r.status == "error"]
+        log.info("Instagram: posted=%d mock=%d errors=%d", posted, mocked, len(errors))
+        for r in errors:
+            log.warning("Instagram error product=%s: %s", r.product_id, r.error)
+        sheets.export(products)
+    except Exception as e:
+        log.error("Post/export error: %s", e)
