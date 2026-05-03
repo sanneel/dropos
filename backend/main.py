@@ -60,20 +60,26 @@ app.add_middleware(
 )
 
 
-_BACKEND_DIR  = os.path.dirname(os.path.abspath(__file__))
-_FRONTEND     = os.path.join(_BACKEND_DIR, "..", "frontend")
-_FRONTEND_ABS = os.path.abspath(_FRONTEND)
-log.info("Frontend path: %s  exists=%s", _FRONTEND_ABS, os.path.exists(_FRONTEND_ABS))
+_BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+_FRONTEND_ABS = next(
+    (os.path.abspath(p) for p in [
+        os.path.join(_BACKEND_DIR, "frontend"),        # Railway: copied during build
+        os.path.join(_BACKEND_DIR, "..", "frontend"),  # local dev
+    ] if os.path.isdir(os.path.abspath(p))),
+    None,
+)
+log.info("Frontend path: %s", _FRONTEND_ABS)
 
 @app.get("/")
 async def root():
-    index = os.path.join(_FRONTEND_ABS, "index.html")
-    if os.path.exists(index):
-        return FileResponse(index)
+    if _FRONTEND_ABS:
+        index = os.path.join(_FRONTEND_ABS, "index.html")
+        if os.path.exists(index):
+            return FileResponse(index)
     return {"status": "DropOS backend running", "docs": "/docs", "api": "/api/stats"}
 
 # Serve static files from frontend/
-if os.path.isdir(_FRONTEND_ABS):
+if _FRONTEND_ABS and os.path.isdir(_FRONTEND_ABS):
     app.mount("/static", StaticFiles(directory=_FRONTEND_ABS), name="static")
 
 
