@@ -234,6 +234,34 @@ class Database:
             row = await cur.fetchone()
         return _row_to_job(row) if row else None
 
+    async def mark_active_jobs_interrupted(self) -> int:
+        active_statuses = (
+            "queued",
+            "scraping",
+            "filtering",
+            "calculating",
+            "deduping",
+            "ai_review",
+            "saving",
+        )
+        placeholders = ",".join("?" for _ in active_statuses)
+        cur = await self._db.execute(
+            f"UPDATE jobs SET status='interrupted' WHERE status IN ({placeholders})",
+            active_statuses,
+        )
+        await self._db.commit()
+        return cur.rowcount or 0
+
+    async def clear_scan_history(self) -> dict:
+        counts = {}
+        for table in ("pipeline_products", "products_raw", "jobs"):
+            async with self._db.execute(f"SELECT COUNT(*) FROM {table}") as cur:
+                row = await cur.fetchone()
+            counts[table] = row[0] if row else 0
+            await self._db.execute(f"DELETE FROM {table}")
+        await self._db.commit()
+        return counts
+
     # ── Settings ──────────────────────────────────────────────────────────────
 
     async def get_settings(self) -> dict:

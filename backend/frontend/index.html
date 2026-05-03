@@ -2036,6 +2036,7 @@ async function renderPipeline() {
         <select style="background:var(--s2);color:var(--t1);border:1px solid var(--b2);border-radius:var(--r);padding:7px 12px;font-size:12px;flex:1;max-width:420px" onchange="pipelineJobId=+this.value;pipelineActiveStage=null;pipelineData=null;renderPipeline()">
           ${jobOptions}
         </select>
+        <button class="btn btn-sm" onclick="clearScanHistory()">Clear history</button>
         <span style="font-size:11px;color:var(--t3)">${job.created_at ? new Date(job.created_at).toLocaleString() : ''}</span>
       </div>
 
@@ -2085,6 +2086,20 @@ async function renderPipeline() {
 }
 
 // ── Router ─────────────────────────────────────────────────────────────────
+async function clearScanHistory() {
+  if (!confirm('Clear all scan job history? Product queue items will stay.')) return;
+  await api('/jobs', 'DELETE');
+  pipelineJobs = [];
+  pipelineJobId = null;
+  pipelineActiveStage = null;
+  pipelineData = null;
+  activeJob = null;
+  if (activeJobPoll) { clearInterval(activeJobPoll); activeJobPoll = null; }
+  toast('Scan history cleared', 'success');
+  await refreshStats();
+  renderPipeline();
+}
+
 async function renderPage() {
   const map = {
     dashboard: renderDashboard,

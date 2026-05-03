@@ -55,6 +55,9 @@ _SENSITIVE_SETTING_FIELDS = {
 async def lifespan(app: FastAPI):
     global _scheduler
     await init_db()
+    interrupted = await db.mark_active_jobs_interrupted()
+    if interrupted:
+        log.warning("Marked %d stale active job(s) as interrupted on startup", interrupted)
     configure_google_credentials_from_env()
     merged_settings = merge_env_with_settings(await db.get_settings())
     sheets.configure(
@@ -337,6 +340,12 @@ async def start_scan(body: ScanRequest, bg: BackgroundTasks):
 @app.get("/api/jobs")
 async def get_jobs(limit: int = 20):
     return await db.get_jobs(limit)
+
+
+@app.delete("/api/jobs")
+async def clear_jobs():
+    counts = await db.clear_scan_history()
+    return {"ok": True, "deleted": counts}
 
 
 @app.get("/api/jobs/{job_id}")
