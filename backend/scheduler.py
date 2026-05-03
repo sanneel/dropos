@@ -1,14 +1,13 @@
 """
-APScheduler cron — triggers full pipeline twice daily (09:00 and 21:00 UTC).
-Reads scan_keywords from settings; falls back to DEFAULT_KEYWORDS.
+Simple async scheduler loop.
+Runs pipeline continuously with configurable interval.
 """
 
+import asyncio
 import logging
 from typing import Optional
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
-
+from config.runtime import get_config, merge_env_with_settings
 from database import db
 from runner import run_pipeline
 
@@ -21,50 +20,52 @@ DEFAULT_KEYWORDS = [
 ]
 
 
-async def _run_scheduled_scan() -> None:
-    settings = await db.get_settings()
-    raw = settings.get("scan_keywords", DEFAULT_KEYWORDS)
-    keywords: list = raw if isinstance(raw, list) else [raw]
-    if not keywords:
-        keywords = DEFAULT_KEYWORDS
+class PipelineScheduler:
+    def __init__(self):
+        self.running = False
+        self._task: Optional[asyncio.Task] = None
+        self._last_error: Optional[str] = None
+        self._last_run: Optional[str] = None
 
-    log.info("Scheduled scan triggered: %d keywords: %s", len(keywords), keywords)
-    job_id = await db.create_job(keywords=keywords)
-    summary = await run_pipeline(job_id, keywords, max_per_keyword=50, settings=settings)
-    log.info("Scheduled scan complete: %s", summary)
+    async def _loop(self):
+        while self.running:
+            try:
+                settings = merge_env_with_settings(await db.get_settings())
+                raw = get_config("SCAN_KEYWORDS", settings.get("scan_keywords", DEFAULT_KEYWORDS))
+                keywords: list = raw if isinstance(raw, list) else [raw]
+                if not keywords:
+                    keywords = DEFAULT_KEYWORDS
+                summary = await run_pipeline(keywords=keywords, max_per_keyword=50, settings=settings)
+                self._last_run = f"job={summary.get('job_id')} passed_ai={summary.get('passed_ai')}"
+                self._last_error = None
+                log.info("Scheduled pipeline complete: %s", summary)
+            except Exception as exc:
+                self._last_error = str(exc)
+                log.exception("Scheduled pipeline failed")
+
+            interval = int(get_config("SCRAPE_INTERVAL", 3600))
+            await asyncio.sleep(max(interval, 60))
+
+    def start(self):
+        if self.running:
+            return
+        self.running = True
+        self._task = asyncio.create_task(self._loop(), name="pipeline-scheduler")
+
+    def shutdown(self, wait: bool = False):
+        self.running = False
+        if self._task and not self._task.done():
+            self._task.cancel()
+
+    def get_jobs(self):
+        return [{"id": "pipeline_loop", "interval": int(get_config("SCRAPE_INTERVAL", 3600))}]
 
 
-def create_scheduler() -> AsyncIOScheduler:
-    scheduler = AsyncIOScheduler(timezone="UTC")
-
-    scheduler.add_job(
-        _run_scheduled_scan,
-        CronTrigger(hour=9, minute=0, timezone="UTC"),
-        id="morning_scan",
-        replace_existing=True,
-        misfire_grace_time=300,
-    )
-    scheduler.add_job(
-        _run_scheduled_scan,
-        CronTrigger(hour=21, minute=0, timezone="UTC"),
-        id="evening_scan",
-        replace_existing=True,
-        misfire_grace_time=300,
-    )
-
-    return scheduler
+def create_scheduler() -> PipelineScheduler:
+    return PipelineScheduler()
 
 
-def get_scheduler_status(scheduler: Optional[AsyncIOScheduler]) -> dict:
+def get_scheduler_status(scheduler: Optional[PipelineScheduler]) -> dict:
     if not scheduler or not scheduler.running:
         return {"running": False, "jobs": []}
-
-    jobs = []
-    for job in scheduler.get_jobs():
-        jobs.append({
-            "id": job.id,
-            "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
-            "trigger": str(job.trigger),
-        })
-
-    return {"running": True, "jobs": jobs}
+    return {"running": True, "jobs": scheduler.get_jobs()}

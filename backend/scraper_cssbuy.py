@@ -68,7 +68,11 @@ async def scrape(
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
             headless=headless,
-            args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-blink-features=AutomationControlled",
+            ],
         )
         ctx = await _restore_context(browser)
         page = await ctx.new_page()

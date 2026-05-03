@@ -1473,8 +1473,14 @@ function renderRejectedTable() {
 // ── Settings ───────────────────────────────────────────────────────────────
 async function renderSettings() {
   setTitle('Settings');
-  document.getElementById('topbar-actions').innerHTML = `<button class="btn btn-primary" onclick="saveSettings()">Save settings</button>`;
-  settingsData = await api('/settings').catch(() => ({}));
+  document.getElementById('topbar-actions').innerHTML = `<button id="settings-save-btn" class="btn btn-primary" onclick="saveSettings()">Save settings</button>`;
+  document.getElementById('content').innerHTML = '<div style="color:var(--t3);font-size:12px;padding:40px 0;text-align:center">Loading settings…</div>';
+  try {
+    settingsData = await api('/settings');
+  } catch (e) {
+    document.getElementById('content').innerHTML = '<div style="color:var(--red);font-size:12px;padding:40px 0;text-align:center">Could not load settings. Try again.</div>';
+    return;
+  }
   const s = settingsData;
 
   document.getElementById('content').innerHTML = `
@@ -1738,8 +1744,9 @@ async function renderSettings() {
           <div style="font-size:11px;color:var(--t3);margin-top:4px">Found in the sheet URL after /d/</div>
         </div>
         <div class="form-group">
-          <label>Service account credentials path</label>
+          <label>Service account credentials path (optional)</label>
           <input type="text" id="s-sheets-creds" value="${s.google_sheets_credentials || ''}" placeholder="/path/to/service-account.json"/>
+          <div style="font-size:11px;color:var(--t3);margin-top:4px">Prefer server env var <code>GOOGLE_SERVICE_ACCOUNT_JSON</code> in production.</div>
         </div>
         <button class="btn btn-sm" onclick="exportToSheets()">Export to Sheets now</button>
       </div>
@@ -1755,11 +1762,8 @@ async function loadSchedulerStatus() {
     const el = document.getElementById('sched-status');
     if (!el) return;
     if (st.running && st.jobs?.length) {
-      const next = st.jobs.map(j => {
-        const d = j.next_run ? new Date(j.next_run) : null;
-        return `${j.id}: ${d ? d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) + ' UTC' : '—'}`;
-      }).join(' · ');
-      el.textContent = `Next: ${next}`;
+      const next = st.jobs.map(j => `${j.id}: every ${j.interval || 3600}s`).join(' · ');
+      el.textContent = `Running: ${next}`;
     } else {
       el.textContent = 'Scheduler not running';
     }
@@ -1893,19 +1897,31 @@ async function exportToSheets() {
 }
 
 async function saveSettings() {
+  const saveBtn = document.getElementById('settings-save-btn');
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
+  }
   const g = id => document.getElementById(id);
   const kwRaw = g('s-scan-kw')?.value || '';
   const scanKws = kwRaw.split('\n').map(s => s.trim()).filter(Boolean);
+  const includeIfNonEmpty = (obj, key, value) => {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) return;
+      obj[key] = trimmed;
+      return;
+    }
+    if (value !== null && value !== undefined) obj[key] = value;
+  };
   const data = {
     niche:             g('s-niche')?.value,
     instagram_username:          g('s-instagram')?.value,
     instagram_user_id:           g('s-ig-user-id')?.value           || '',
-    instagram_access_token:      g('s-ig-token')?.value             || '',
     instagram_auto_reply_enabled: g('s-autoreply-enabled')?.checked ?? false,
     instagram_reply_rules:        _collectReplyRules(),
     instagram_dm_reply_enabled:   g('s-dm-enabled')?.checked ?? false,
     instagram_dm_rules:           _collectDmRules(),
-    instagram_webhook_token:      g('s-webhook-token')?.value || 'dropos_webhook_secret',
     min_margin:    parseFloat(g('s-margin')?.value    || 60),
     min_score:     parseFloat(g('s-score')?.value     || 7),
     min_orders:    parseInt  (g('s-orders')?.value    || 100),
@@ -1914,21 +1930,32 @@ async function saveSettings() {
     sell_markup_low:  parseFloat(g('s-ml')?.value || 3.5),
     sell_markup_mid:  parseFloat(g('s-mm')?.value || 2.8),
     sell_markup_high: parseFloat(g('s-mh')?.value || 2.2),
-    apify_token:    g('s-apify')?.value     || '',
-    gemini_key:     g('s-gemini')?.value    || '',
-    groq_key:       g('s-groq')?.value      || '',
-    anthropic_key:  g('s-anthropic')?.value || '',
     scan_keywords:  scanKws,
     google_sheets_id:          g('s-sheets-id')?.value    || '',
-    google_sheets_credentials: g('s-sheets-creds')?.value || '',
     cssbuy_username:      g('s-cssbuy-user')?.value    || '',
-    cssbuy_password:      g('s-cssbuy-pass')?.value    || '',
     cssbuy_source:        g('s-cssbuy-source')?.value  || '1688',
-    captcha_2captcha_key: g('s-captcha-key')?.value  || '',
   };
-  await api('/settings', 'PATCH', data);
-  toast('Settings saved', 'success');
-  loadSchedulerStatus();
+  includeIfNonEmpty(data, 'instagram_access_token', g('s-ig-token')?.value);
+  includeIfNonEmpty(data, 'instagram_webhook_token', g('s-webhook-token')?.value);
+  includeIfNonEmpty(data, 'apify_token', g('s-apify')?.value);
+  includeIfNonEmpty(data, 'gemini_key', g('s-gemini')?.value);
+  includeIfNonEmpty(data, 'groq_key', g('s-groq')?.value);
+  includeIfNonEmpty(data, 'anthropic_key', g('s-anthropic')?.value);
+  includeIfNonEmpty(data, 'google_sheets_credentials', g('s-sheets-creds')?.value);
+  includeIfNonEmpty(data, 'cssbuy_password', g('s-cssbuy-pass')?.value);
+  includeIfNonEmpty(data, 'captcha_2captcha_key', g('s-captcha-key')?.value);
+  try {
+    await api('/settings', 'PATCH', data);
+    toast('Settings saved', 'success');
+    loadSchedulerStatus();
+  } catch (e) {
+    toast(`Settings save failed: ${e.message || e}`, 'error');
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save settings';
+    }
+  }
 }
 
 // ── Pipeline ───────────────────────────────────────────────────────────────

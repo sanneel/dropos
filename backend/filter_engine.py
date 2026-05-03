@@ -1,6 +1,8 @@
 import hashlib
 import logging
 
+from config.runtime import get_config
+
 log = logging.getLogger(__name__)
 
 _SPAM_FRAGMENTS = [
@@ -33,7 +35,7 @@ def basic_filter(products: list, settings: dict) -> list:
 
         # For taobao: apply minimum rating filter (1688 has no reliable rating)
         if platform != "1688":
-            min_rating = float(settings.get("min_rating", 4.0))
+            min_rating = float(get_config("MIN_RATING", settings.get("min_rating", 4.0)))
             rating = float(p.get("rating") or 0)
             if rating > 0 and rating < min_rating:
                 continue
@@ -68,17 +70,17 @@ def basic_filter(products: list, settings: dict) -> list:
 def profit_filter(product: dict, settings: dict) -> bool:
     """Calculates cost/sell/margin and mutates product in-place. Returns True if margin passes."""
     price_cny = float(product.get("price_cny", 0))
-    exchange_rate = float(settings.get("exchange_rate", 0.353))
+    exchange_rate = float(get_config("EXCHANGE_RATE", settings.get("exchange_rate", 0.353)))
     shipping_cny = 15.0
 
     cost_eur = (price_cny + shipping_cny) * exchange_rate
 
     if cost_eur < 5:
-        markup = settings.get("sell_markup_low", 3.5)
+        markup = get_config("SELL_MARKUP_LOW", settings.get("sell_markup_low", 3.5))
     elif cost_eur < 15:
-        markup = settings.get("sell_markup_mid", 2.8)
+        markup = get_config("SELL_MARKUP_MID", settings.get("sell_markup_mid", 2.8))
     else:
-        markup = settings.get("sell_markup_high", 2.2)
+        markup = get_config("SELL_MARKUP_HIGH", settings.get("sell_markup_high", 2.2))
 
     sell_price = cost_eur * markup
     margin = ((sell_price - cost_eur) / sell_price) * 100
@@ -87,7 +89,7 @@ def profit_filter(product: dict, settings: dict) -> bool:
     product["sell_price_eur"] = round(sell_price, 2)
     product["margin_pct"] = round(margin, 1)
 
-    return margin >= settings.get("min_margin", 60.0)
+    return margin >= get_config("MIN_MARGIN", settings.get("min_margin", 60.0))
 
 
 def dedup(products: list) -> list:

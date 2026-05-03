@@ -12,11 +12,13 @@ from pydantic import BaseModel
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+from config.runtime import get_config, merge_env_with_settings, sanitize_settings
 from database import db, init_db
 from runner import run_pipeline
 from scheduler import create_scheduler, get_scheduler_status
 import instagram
 import sheets
+from utils.google_auth import configure_google_credentials_from_env
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -36,15 +38,35 @@ def _setup_app_logging():
 _setup_app_logging()
 
 _scheduler = None
+_SENSITIVE_SETTING_FIELDS = {
+    "apify_token",
+    "anthropic_key",
+    "gemini_key",
+    "groq_key",
+    "instagram_access_token",
+    "instagram_webhook_token",
+    "cssbuy_password",
+    "captcha_2captcha_key",
+    "google_sheets_credentials",
+}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _scheduler
     await init_db()
+    configure_google_credentials_from_env()
+    merged_settings = merge_env_with_settings(await db.get_settings())
+    sheets.configure(
+        merged_settings.get("google_sheets_credentials") or os.getenv("GOOGLE_APPLICATION_CREDENTIALS", ""),
+        merged_settings.get("google_sheets_id", ""),
+    )
+    if merged_settings.get("google_sheets_id"):
+        ok = sheets.verify_writable()
+        log.info("Google Sheets writable: %s", ok)
     _scheduler = create_scheduler()
     _scheduler.start()
-    log.info("Scheduler started — jobs: %s", [j.id for j in _scheduler.get_jobs()])
+    log.info("Scheduler started — jobs: %s", [j.get("id") for j in _scheduler.get_jobs()])
     yield
     _scheduler.shutdown(wait=False)
     await db.close()
@@ -142,27 +164,39 @@ class SettingsUpdate(BaseModel):
     scan_keywords: Optional[List[str]] = None
     google_sheets_id: Optional[str] = None
     google_sheets_credentials: Optional[str] = None
+    playwright_timeout: Optional[int] = None
+    scrape_interval: Optional[int] = None
     cssbuy_username: Optional[str] = None
     cssbuy_password: Optional[str] = None
     cssbuy_source: Optional[str] = None
     captcha_2captcha_key: Optional[str] = None
+    gemini_model: Optional[str] = None
+    target_audience: Optional[str] = None
+    sell_price_min: Optional[float] = None
+    sell_price_max: Optional[float] = None
+    example_products: Optional[str] = None
 
 
 # ── Settings ───────────────────────────────────────────────────────────────────
 
 @app.get("/api/settings")
 async def get_settings():
-    return await db.get_settings()
+    settings = merge_env_with_settings(await db.get_settings())
+    return sanitize_settings(settings)
 
 
 @app.patch("/api/settings")
 async def update_settings(body: SettingsUpdate):
     data = body.model_dump(exclude_none=True)
+    for key in list(data.keys()):
+        if key in _SENSITIVE_SETTING_FIELDS and isinstance(data[key], str) and not data[key].strip():
+            data.pop(key)
     await db.update_settings(data)
 
     # Reconfigure sheets exporter if credentials changed
-    gid = data.get("google_sheets_id") or (await db.get_settings()).get("google_sheets_id", "")
-    gcreds = data.get("google_sheets_credentials", "")
+    merged = merge_env_with_settings(await db.get_settings())
+    gid = merged.get("google_sheets_id", "")
+    gcreds = merged.get("google_sheets_credentials") or os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
     if gid and gcreds:
         sheets.configure(gcreds, gid)
 
@@ -321,13 +355,13 @@ async def scheduler_status():
 @app.post("/api/scheduler/trigger")
 async def scheduler_trigger(bg: BackgroundTasks):
     """Manually fire a scheduled scan now (uses stored scan_keywords)."""
-    settings = await db.get_settings()
-    raw = settings.get("scan_keywords", [])
+    settings = merge_env_with_settings(await db.get_settings())
+    raw = get_config("SCAN_KEYWORDS", settings.get("scan_keywords", []))
     keywords: list = raw if isinstance(raw, list) else [raw]
     if not keywords:
         keywords = ["aesthetic home decor"]
     job_id = await db.create_job(keywords=keywords)
-    scan_src = str(settings.get("cssbuy_source", "1688"))
+    scan_src = str(get_config("CSSBUY_SOURCE", settings.get("cssbuy_source", "1688")))
     bg.add_task(_run_scan, job_id, keywords, 50, scan_src)
     return {"ok": True, "job_id": job_id, "keywords": keywords}
 
@@ -342,8 +376,8 @@ async def instagram_accounts():
     Instagram Business Account ID for each page.
     """
     import httpx as _httpx
-    settings = await db.get_settings()
-    token = str(settings.get("instagram_access_token") or "").strip()
+    settings = merge_env_with_settings(await db.get_settings())
+    token = str(get_config("INSTAGRAM_ACCESS_TOKEN", settings.get("instagram_access_token")) or "").strip()
     if not token:
         raise HTTPException(400, "instagram_access_token not configured")
 
@@ -387,8 +421,8 @@ async def ig_webhook_verify(
     hub_challenge: str = Query(None, alias="hub.challenge"),
 ):
     """Meta webhook verification handshake."""
-    settings = await db.get_settings()
-    verify_token = str(settings.get("instagram_webhook_token") or "dropos_webhook_secret")
+    settings = merge_env_with_settings(await db.get_settings())
+    verify_token = str(get_config("INSTAGRAM_WEBHOOK_TOKEN", settings.get("instagram_webhook_token") or "dropos_webhook_secret"))
     if hub_mode == "subscribe" and hub_verify_token == verify_token:
         return PlainTextResponse(hub_challenge)
     raise HTTPException(403, "Webhook verification failed — check your verify token")
@@ -435,10 +469,10 @@ async def _process_ig_webhook(body: dict) -> None:
     if body.get("object") != "instagram":
         return
 
-    settings  = await db.get_settings()
-    ig_uid    = str(settings.get("instagram_user_id") or "")
-    comment_on = bool(settings.get("instagram_auto_reply_enabled"))
-    dm_on      = bool(settings.get("instagram_dm_reply_enabled"))
+    settings  = merge_env_with_settings(await db.get_settings())
+    ig_uid    = str(get_config("INSTAGRAM_USER_ID", settings.get("instagram_user_id")) or "")
+    comment_on = bool(get_config("INSTAGRAM_AUTO_REPLY_ENABLED", settings.get("instagram_auto_reply_enabled")))
+    dm_on      = bool(get_config("INSTAGRAM_DM_REPLY_ENABLED", settings.get("instagram_dm_reply_enabled")))
 
     if not comment_on and not dm_on:
         return
@@ -503,7 +537,7 @@ async def _post_and_export(products: list) -> None:
     if not products:
         return
     try:
-        settings = await db.get_settings()
+        settings = merge_env_with_settings(await db.get_settings())
         results = await instagram.post_batch(products, settings)
         posted  = sum(1 for r in results if r.status == "posted")
         mocked  = sum(1 for r in results if r.status == "mock")
@@ -511,6 +545,29 @@ async def _post_and_export(products: list) -> None:
         log.info("Instagram: posted=%d mock=%d errors=%d", posted, mocked, len(errors))
         for r in errors:
             log.warning("Instagram error product=%s: %s", r.product_id, r.error)
-        sheets.export(products)
+        sheets.append_rows(products)
     except Exception as e:
         log.error("Post/export error: %s", e)
+
+
+@app.get("/test-playwright")
+async def test_playwright():
+    try:
+        from playwright.async_api import async_playwright
+    except Exception as exc:
+        raise HTTPException(500, f"Playwright import failed: {exc}")
+    timeout_ms = int(get_config("PLAYWRIGHT_TIMEOUT", 30000))
+    try:
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-setuid-sandbox"],
+            )
+            page = await browser.new_page()
+            await page.goto("https://example.com", timeout=timeout_ms)
+            title = await page.title()
+            await browser.close()
+            return {"ok": True, "title": title}
+    except Exception as exc:
+        log.exception("Playwright test failed")
+        raise HTTPException(500, f"Playwright test failed: {exc}")

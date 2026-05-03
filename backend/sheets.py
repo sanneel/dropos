@@ -5,6 +5,7 @@ Falls back to mock log export when credentials are missing.
 """
 
 import logging
+import os
 from typing import Optional
 
 log = logging.getLogger(__name__)
@@ -31,7 +32,8 @@ class SheetsExporter:
             return True
         try:
             import gspread
-            gc = gspread.service_account(filename=self.credentials_path)
+            creds_file = self.credentials_path or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+            gc = gspread.service_account(filename=creds_file)
             self._sheet = gc.open_by_key(self.spreadsheet_id).sheet1
             log.info("Connected to Google Sheets: %s", self.spreadsheet_id)
             return True
@@ -40,9 +42,16 @@ class SheetsExporter:
             return False
 
     def export(self, products: list) -> dict:
-        if self.credentials_path and self.spreadsheet_id:
+        if (self.credentials_path or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")) and self.spreadsheet_id:
             return self._export_real(products)
         return self._export_mock(products)
+
+    def append_rows(self, data: list) -> dict:
+        if not data:
+            return {"ok": True, "exported": 0, "mock": False}
+        if (self.credentials_path or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")) and self.spreadsheet_id:
+            return self._export_real(data)
+        return self._export_mock(data)
 
     def _export_real(self, products: list) -> dict:
         if not self._connect():
@@ -96,3 +105,14 @@ def configure(credentials_path: str, spreadsheet_id: str) -> None:
 
 def export(products: list) -> dict:
     return _exporter.export(products)
+
+
+def append_rows(data: list) -> dict:
+    return _exporter.append_rows(data)
+
+
+def verify_writable() -> bool:
+    try:
+        return _exporter._connect()
+    except Exception:
+        return False

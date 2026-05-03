@@ -18,6 +18,8 @@ from typing import Optional
 
 import httpx
 
+from config.runtime import get_config
+
 log = logging.getLogger(__name__)
 
 # Limits concurrent AI calls globally — prevents two simultaneous jobs from
@@ -197,14 +199,14 @@ def _clean_name(product: dict) -> str:
 
 def _build_system_prompt(template: str, settings: dict) -> str:
     return template.format(
-        niche=settings.get("niche", "couple gifts & romantic products").replace("{","").replace("}",""),
-        target_audience=settings.get("target_audience", "couples, people buying gifts for partners, ages 18-35").replace("{","").replace("}",""),
-        price_min=settings.get("sell_price_min", 15),
-        price_max=settings.get("sell_price_max", 80),
-        example_products=settings.get(
+        niche=get_config("NICHE", settings.get("niche", "couple gifts & romantic products")).replace("{","").replace("}",""),
+        target_audience=get_config("TARGET_AUDIENCE", settings.get("target_audience", "couples, people buying gifts for partners, ages 18-35")).replace("{","").replace("}",""),
+        price_min=get_config("SELL_PRICE_MIN", settings.get("sell_price_min", 15)),
+        price_max=get_config("SELL_PRICE_MAX", settings.get("sell_price_max", 80)),
+        example_products=get_config("EXAMPLE_PRODUCTS", settings.get(
             "example_products",
             "matching couple bracelets, personalised photo frames, couple card games, romantic candle sets, love letter boxes, matching phone cases"
-        ).replace("{","").replace("}",""),
+        )).replace("{","").replace("}",""),
     )
 
 
@@ -269,11 +271,11 @@ async def _fetch_image_b64(url: str) -> Optional[tuple]:
 
 
 async def gemini_enrich(product: dict, settings: dict) -> Optional[dict]:
-    api_key = settings.get("gemini_key", "")
+    api_key = get_config("GEMINI_KEY", settings.get("gemini_key", ""))
     if not api_key:
         return None
 
-    model = settings.get("gemini_model", "gemini-2.0-flash")
+    model = get_config("GEMINI_MODEL", settings.get("gemini_model", "gemini-2.0-flash"))
     title   = product.get("title_translated") or product.get("title", "Unknown")
     img_url = (product.get("images") or [""])[0]
 
@@ -362,7 +364,7 @@ async def gemini_enrich(product: dict, settings: dict) -> Optional[dict]:
 # ── Claude Haiku 4.5 (text-only fallback) ─────────────────────────────────────
 
 async def anthropic_enrich(product: dict, settings: dict) -> Optional[dict]:
-    api_key = settings.get("anthropic_key", "")
+    api_key = get_config("ANTHROPIC_KEY", settings.get("anthropic_key", ""))
     if not api_key:
         return None
 
@@ -426,7 +428,7 @@ _GROQ_MODEL = "llama-3.3-70b-versatile"
 
 
 async def groq_enrich(product: dict, settings: dict) -> Optional[dict]:
-    api_key = settings.get("groq_key", "")
+    api_key = get_config("GROQ_KEY", settings.get("groq_key", ""))
     if not api_key:
         return None
 

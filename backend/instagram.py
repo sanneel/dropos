@@ -22,6 +22,8 @@ from typing import Optional
 
 import httpx
 
+from config.runtime import get_config
+
 log = logging.getLogger(__name__)
 
 _GRAPH = "https://graph.facebook.com/v21.0"
@@ -98,8 +100,8 @@ async def _get_post_shortcode(
 
 async def post_product(product: dict, settings: dict) -> PostResult:
     pid       = product.get("id", 0)
-    token     = str(settings.get("instagram_access_token") or "").strip()
-    user_id   = str(settings.get("instagram_user_id")      or "").strip()
+    token = str(get_config("INSTAGRAM_ACCESS_TOKEN", settings.get("instagram_access_token")) or "").strip()
+    user_id = str(get_config("INSTAGRAM_USER_ID", settings.get("instagram_user_id")) or "").strip()
 
     caption_text = (product.get("caption") or "").strip()
     hashtags     = product.get("hashtags") or []
@@ -143,7 +145,7 @@ async def post_product(product: dict, settings: dict) -> PostResult:
 
 async def reply_to_comment(comment_id: str, message: str, settings: dict) -> bool:
     """Reply to an Instagram comment via Graph API. Returns True on success."""
-    token = str(settings.get("instagram_access_token") or "").strip()
+    token = str(get_config("INSTAGRAM_ACCESS_TOKEN", settings.get("instagram_access_token")) or "").strip()
     if not token:
         log.warning("Instagram: no access token — cannot reply to comment")
         return False
@@ -166,8 +168,8 @@ async def reply_to_comment(comment_id: str, message: str, settings: dict) -> boo
 
 async def reply_to_dm(sender_id: str, message: str, settings: dict) -> bool:
     """Send a DM reply via the Instagram Messaging API."""
-    token   = str(settings.get("instagram_access_token") or "").strip()
-    user_id = str(settings.get("instagram_user_id")      or "").strip()
+    token = str(get_config("INSTAGRAM_ACCESS_TOKEN", settings.get("instagram_access_token")) or "").strip()
+    user_id = str(get_config("INSTAGRAM_USER_ID", settings.get("instagram_user_id")) or "").strip()
     if not token or not user_id:
         log.warning("Instagram: no credentials — cannot send DM")
         return False

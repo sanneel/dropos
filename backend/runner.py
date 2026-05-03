@@ -8,10 +8,12 @@ from typing import Optional
 
 import asyncio
 
+from config.runtime import get_config, merge_env_with_settings
 from database import db
 from enrichment import ai_enrich
 from filter_engine import basic_filter, dedup, profit_filter
 from scorer import score_product
+import sheets
 import scraper_1688
 import scraper_taobao
 import scraper_cssbuy
@@ -42,8 +44,8 @@ def _pipeline_rec(job_id: int, product: dict, stage: str, reason: str = "", ai_s
 
 
 async def run_pipeline(
-    job_id: int,
-    keywords: list,
+    job_id: Optional[int] = None,
+    keywords: Optional[list] = None,
     max_per_keyword: int = 50,
     settings: Optional[dict] = None,
     source: Optional[str] = None,
@@ -54,16 +56,25 @@ async def run_pipeline(
     """
     if settings is None:
         settings = await db.get_settings()
+    settings = merge_env_with_settings(settings)
 
-    token: Optional[str] = settings.get("apify_token") or None
+    if keywords is None:
+        raw_kw = get_config("SCAN_KEYWORDS", settings.get("scan_keywords", ["aesthetic home decor"]))
+        keywords = raw_kw if isinstance(raw_kw, list) else [raw_kw]
+    if not keywords:
+        keywords = ["aesthetic home decor"]
+    if job_id is None:
+        job_id = await db.create_job(keywords=keywords)
+
+    token: Optional[str] = get_config("APIFY_TOKEN", settings.get("apify_token")) or None
 
     await db.update_job(job_id, status="scraping", progress=5)
 
     # ── 1. Scrape ──────────────────────────────────────────────────────────────
-    cssbuy_user = settings.get("cssbuy_username", "")
-    cssbuy_pass = settings.get("cssbuy_password", "")
-    captcha_key = settings.get("captcha_2captcha_key", "")
-    scan_source = source or str(settings.get("cssbuy_source", "1688"))
+    cssbuy_user = get_config("CSSBUY_USERNAME", settings.get("cssbuy_username", ""))
+    cssbuy_pass = get_config("CSSBUY_PASSWORD", settings.get("cssbuy_password", ""))
+    captcha_key = get_config("CAPTCHA_2CAPTCHA_KEY", settings.get("captcha_2captcha_key", ""))
+    scan_source = source or str(get_config("CSSBUY_SOURCE", settings.get("cssbuy_source", "1688")))
 
     if cssbuy_user and cssbuy_pass:
         raw_all = await scraper_cssbuy.scrape(
@@ -119,12 +130,12 @@ async def run_pipeline(
     # ── 7. AI enrichment ───────────────────────────────────────────────────────
     passed: list = []
     total = len(candidates)
-    min_ai_score = float(settings.get("min_score", 7.0))
-    if settings.get("gemini_key"):
+    min_ai_score = float(get_config("MIN_SCORE", settings.get("min_score", 7.0)))
+    if get_config("GEMINI_KEY", settings.get("gemini_key")):
         scorer_name = "gemini-2.0-flash"
-    elif settings.get("groq_key"):
+    elif get_config("GROQ_KEY", settings.get("groq_key")):
         scorer_name = "groq/llama-3.3-70b"
-    elif settings.get("anthropic_key"):
+    elif get_config("ANTHROPIC_KEY", settings.get("anthropic_key")):
         scorer_name = "claude-haiku-4-5"
     else:
         scorer_name = "mock/rule-based"
@@ -133,7 +144,7 @@ async def run_pipeline(
         job_id, total, scorer_name, min_ai_score,
     )
 
-    use_gemini = bool(settings.get("gemini_key"))
+    use_gemini = bool(get_config("GEMINI_KEY", settings.get("gemini_key")))
 
     for i, product in enumerate(candidates):
         # Gemini 2.0 Flash: 15 RPM free — 10s gap = 6 RPM, well under limit
@@ -169,6 +180,11 @@ async def run_pipeline(
 
     for product in passed:
         await db.insert_product(product, job_id)
+
+    try:
+        sheets.append_rows(passed)
+    except Exception as exc:
+        log.error("Job %d: sheets append failed: %s", job_id, exc)
 
     try:
         await db.bulk_insert_pipeline(pipeline_recs)

@@ -76,7 +76,11 @@ async def _fetch_cookies_playwright() -> dict:
             # headed=False fails Cloudflare JS challenge — use headed briefly
             browser = await pw.chromium.launch(
                 headless=False,
-                args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-blink-features=AutomationControlled",
+                ],
             )
             ctx = await browser.new_context(
                 user_agent=_HEADERS["User-Agent"],
