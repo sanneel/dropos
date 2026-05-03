@@ -86,6 +86,7 @@ app.add_middleware(
 
 
 _BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+_CSSBUY_DEBUG_DIR = os.getenv("CSSBUY_DEBUG_DIR") or "/tmp/cssbuy_debug"
 _FRONTEND_ABS = next(
     (os.path.abspath(p) for p in [
         os.path.join(_BACKEND_DIR, "frontend"),        # Railway: copied during build
@@ -366,25 +367,33 @@ async def get_job_pipeline(job_id: int):
 
 
 @app.get("/api/debug/cssbuy")
+@app.get("/api/debug/cssbuy/files")
 async def cssbuy_debug_files():
     files = []
-    for name in os.listdir(_BACKEND_DIR):
+    debug_dir = os.path.abspath(_CSSBUY_DEBUG_DIR)
+    if not os.path.isdir(debug_dir):
+        return []
+    for name in os.listdir(debug_dir):
         if name.startswith("cssbuy_") and name.rsplit(".", 1)[-1] in {"png", "html", "txt", "json"}:
-            path = os.path.join(_BACKEND_DIR, name)
+            path = os.path.join(debug_dir, name)
             files.append({
                 "name": name,
                 "size": os.path.getsize(path),
                 "modified": os.path.getmtime(path),
-                "url": f"/api/debug/cssbuy/{name}",
+                "url": f"/api/debug/cssbuy/files/{name}",
             })
     return sorted(files, key=lambda f: f["modified"], reverse=True)
 
 
 @app.get("/api/debug/cssbuy/{filename}")
+@app.get("/api/debug/cssbuy/files/{filename}")
 async def get_cssbuy_debug_file(filename: str):
     if "/" in filename or "\\" in filename or not filename.startswith("cssbuy_"):
         raise HTTPException(400, "Invalid filename")
-    path = os.path.join(_BACKEND_DIR, filename)
+    debug_dir = os.path.abspath(_CSSBUY_DEBUG_DIR)
+    path = os.path.abspath(os.path.join(debug_dir, filename))
+    if os.path.commonpath([debug_dir, path]) != debug_dir:
+        raise HTTPException(400, "Invalid filename")
     if not os.path.isfile(path):
         raise HTTPException(404)
     return FileResponse(path)

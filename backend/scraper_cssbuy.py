@@ -31,6 +31,8 @@ log = logging.getLogger(__name__)
 
 SESSION_FILE      = Path(__file__).parent / "cssbuy_session.json"
 SESSION_ENV       = "CSSBUY_SESSION_JSON"
+DEBUG_DIR_ENV     = "CSSBUY_DEBUG_DIR"
+DEBUG_STEPS_ENV   = "CSSBUY_DEBUG_SCREENSHOTS"
 BASE_URL          = "https://www.cssbuy.com"
 LOGIN_URL         = f"{BASE_URL}/login"
 RECAPTCHA_SITEKEY = "6LeJ_noqAAAAAIOBR2APiofxlH0DQuEsm1qace0t"
@@ -104,9 +106,9 @@ async def scrape(
         except Exception as e:
             log.error("CSSBuy scrape error: %s", e)
             try:
-                await page.screenshot(path=str(Path(__file__).parent / "cssbuy_debug.png"))
-            except Exception:
-                pass
+                await _save_search_debug(page, "scrape", "scrape_error", [])
+            except Exception as exc:
+                log.debug("CSSBuy: scrape error screenshot failed: %s", exc)
             return []
         finally:
             await browser.close()
@@ -154,8 +156,12 @@ async def _search_keyword(
         log.info("CSSBuy: searching keyword=%r", keyword)
         await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
         log.debug("CSSBuy: page loaded url=%s", page.url)
+        if _debug_step_screenshots_enabled():
+            await _save_search_debug(page, keyword, "page_loaded", recent_urls, include_html=False, level=logging.INFO)
 
         await _dismiss_modal(page)
+        if _debug_step_screenshots_enabled():
+            await _save_search_debug(page, keyword, "after_modal_check", recent_urls, include_html=False, level=logging.INFO)
 
         # ── 1688: scroll pages until max_results ──────────────────────────────
         if want_1688:
@@ -205,6 +211,8 @@ async def _search_keyword(
                     })()
                 """)
                 log.debug("CSSBuy: Taobao tab clicked")
+                if _debug_step_screenshots_enabled():
+                    await _save_search_debug(page, keyword, "taobao_tab_clicked", recent_urls, include_html=False, level=logging.INFO)
             except Exception as exc:
                 log.warning("CSSBuy: Taobao tab click error: %s", exc)
 
@@ -354,25 +362,54 @@ async def _dismiss_modal(page) -> None:
                 return
         await asyncio.sleep(0.5)
     try:
-        debug_dir = Path(__file__).parent
-        await page.screenshot(path=str(debug_dir / "cssbuy_modal_debug.png"), full_page=True)
-        await (debug_dir / "cssbuy_modal_debug.html").write_text(await page.content(), encoding="utf-8")
-        log.warning("CSSBuy: modal not dismissed after 15s (screenshot saved)")
-    except Exception:
-        pass
+        await _save_search_debug(page, "modal", "modal_not_dismissed", [], level=logging.WARNING)
+    except Exception as exc:
+        log.debug("CSSBuy: modal debug save failed: %s", exc)
 
 
 # ── Normalizers ────────────────────────────────────────────────────────────────
 
-async def _save_search_debug(page, keyword: str, reason: str, recent_urls: list[str]) -> None:
+def _debug_step_screenshots_enabled() -> bool:
+    return str(os.getenv(DEBUG_STEPS_ENV, "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _debug_dir() -> Path:
+    path = Path(os.getenv(DEBUG_DIR_ENV, "") or "/tmp/cssbuy_debug")
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _safe_debug_name(value: str, fallback: str = "keyword") -> str:
+    return re.sub(r"[^a-zA-Z0-9_-]+", "_", str(value)).strip("_")[:40] or fallback
+
+
+async def _save_search_debug(
+    page,
+    keyword: str,
+    reason: str,
+    recent_urls: list[str],
+    *,
+    include_html: bool = True,
+    level: int = logging.WARNING,
+) -> None:
     try:
-        safe_keyword = re.sub(r"[^a-zA-Z0-9_-]+", "_", keyword).strip("_")[:40] or "keyword"
-        debug_dir = Path(__file__).parent
+        safe_keyword = _safe_debug_name(keyword)
+        debug_dir = _debug_dir()
         prefix = f"cssbuy_{reason}_{safe_keyword}"
-        await page.screenshot(path=str(debug_dir / f"{prefix}.png"), full_page=True)
-        await (debug_dir / f"{prefix}.html").write_text(await page.content(), encoding="utf-8")
-        await (debug_dir / f"{prefix}_urls.txt").write_text("\n".join(recent_urls), encoding="utf-8")
-        log.warning("CSSBuy: saved debug files for %s (%s)", keyword, reason)
+        screenshot_path = debug_dir / f"{prefix}.png"
+        html_path = debug_dir / f"{prefix}.html"
+        urls_path = debug_dir / f"{prefix}_urls.txt"
+
+        log.log(level, "CSSBuy: capturing screenshot for %s (%s)", keyword, reason)
+        await page.screenshot(path=str(screenshot_path), full_page=True)
+        if include_html:
+            html_path.write_text(await page.content(), encoding="utf-8")
+        urls_path.write_text("\n".join(recent_urls), encoding="utf-8")
+
+        saved = [f"screenshot={screenshot_path}", f"urls={urls_path}"]
+        if include_html:
+            saved.insert(1, f"html={html_path}")
+        log.log(level, "CSSBuy: saved debug artifact(s) for %s (%s): %s", keyword, reason, ", ".join(saved))
         if recent_urls:
             log.warning("CSSBuy: recent network URLs before %s: %s", reason, recent_urls[-12:])
     except Exception as exc:
