@@ -307,20 +307,40 @@ async def _scroll_until_enough(page, resp_list: list, max_results: int) -> None:
 
 async def _dismiss_modal(page) -> None:
     for attempt in range(30):
-        btn = await page.query_selector(".fxts span.button:last-child")
-        if btn:
+        modal = page.locator(".fxts").first
+        if await modal.count():
             log.info("CSSBuy: modal found (attempt %d) — dismissing", attempt)
-            await page.evaluate(
-                "document.querySelector('.fxts span.button:last-child')"
-                ".dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}))"
-            )
-            await asyncio.sleep(2)
-            if not await page.query_selector(".fxts"):
+            clicked = False
+            accept = modal.locator("span.button", has_text=re.compile(r"^\s*Accept\s*$")).last
+            try:
+                if await accept.count():
+                    await accept.click(force=True, timeout=3000)
+                    clicked = True
+            except Exception as exc:
+                log.debug("CSSBuy: modal locator click failed: %s", exc)
+
+            if not clicked:
+                await page.evaluate("""
+                    (() => {
+                        const buttons = [...document.querySelectorAll('.fxts span.button')];
+                        const accept = buttons.find(el => /accept/i.test(el.textContent || '')) || buttons.at(-1);
+                        if (accept) accept.click();
+                    })()
+                """)
+
+            try:
+                await page.wait_for_selector(".fxts", state="hidden", timeout=5000)
+            except Exception:
+                pass
+
+            if not await page.locator(".fxts:visible").count():
                 log.info("CSSBuy: modal dismissed OK")
                 return
         await asyncio.sleep(0.5)
     try:
-        await page.screenshot(path=str(Path(__file__).parent / "cssbuy_modal_debug.png"))
+        debug_dir = Path(__file__).parent
+        await page.screenshot(path=str(debug_dir / "cssbuy_modal_debug.png"), full_page=True)
+        await (debug_dir / "cssbuy_modal_debug.html").write_text(await page.content(), encoding="utf-8")
         log.warning("CSSBuy: modal not dismissed after 15s (screenshot saved)")
     except Exception:
         pass
