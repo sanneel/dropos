@@ -20,8 +20,16 @@ COLUMNS = [
 SETTINGS_SHEET = "DropOS Settings"
 PRODUCTS_SHEET = "DropOS Products"
 EXPORT_SHEET = "DropOS Export"
+SCAN_ITEMS_SHEET = "DropOS Scan Items"
 SETTINGS_COLUMNS = ["key", "value_json"]
 PRODUCT_COLUMNS = ["source_id", "data_json"]
+SCAN_ITEM_COLUMNS = [
+    "job_id", "stage", "rejection_reason", "item_name", "item_link", "photo_link",
+    "source", "source_id", "keyword", "category", "price_cny", "cost_eur",
+    "sell_price_eur", "margin_pct", "orders", "rating", "raw_score",
+    "ai_score", "niche_fit", "visual_appeal", "trend_score", "competition_score",
+    "ai_provider", "created_at",
+]
 
 
 class SheetsExporter:
@@ -188,6 +196,43 @@ class SheetsExporter:
                 products.append(product)
         return products
 
+    def save_scan_items(self, job_id: int, items: list) -> dict:
+        ws = self._worksheet(SCAN_ITEMS_SHEET, SCAN_ITEM_COLUMNS)
+        if not ws:
+            return {"ok": False, "mock": True, "saved": 0}
+
+        rows = []
+        for item in items or []:
+            rows.append([
+                job_id,
+                item.get("filter_stage", ""),
+                item.get("filter_reason", ""),
+                item.get("product_name") or item.get("title", ""),
+                item.get("url") or item.get("link", ""),
+                item.get("image_url") or item.get("photo_link", ""),
+                item.get("source", ""),
+                item.get("source_id", ""),
+                item.get("keyword", ""),
+                item.get("category", ""),
+                item.get("price_cny", 0),
+                item.get("cost_eur", 0),
+                item.get("sell_price_eur", 0),
+                item.get("margin_pct", 0),
+                item.get("orders", 0),
+                item.get("rating", 0),
+                item.get("raw_score", 0),
+                item.get("ai_score") or item.get("score", 0),
+                item.get("ai_niche_fit") or item.get("niche_fit", 0),
+                item.get("ai_visual") or item.get("visual_appeal", 0),
+                item.get("trend_score", 0),
+                item.get("competition_score", 0),
+                item.get("ai_provider", ""),
+                item.get("created_at", ""),
+            ])
+        if rows:
+            ws.append_rows(rows, value_input_option="RAW")
+        return {"ok": True, "saved": len(rows), "mock": False}
+
 
 _exporter = SheetsExporter()
 
@@ -219,6 +264,10 @@ def save_products(products: list) -> dict:
 
 def load_products() -> list:
     return _exporter.load_products()
+
+
+def save_scan_items(job_id: int, items: list) -> dict:
+    return _exporter.save_scan_items(job_id, items)
 
 
 def verify_writable() -> bool:

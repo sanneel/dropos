@@ -31,15 +31,23 @@ def _pipeline_rec(job_id: int, product: dict, stage: str, reason: str = "", ai_s
         "job_id":       job_id,
         "source_id":    product.get("source_id", ""),
         "title":        (product.get("title_translated") or product.get("title", ""))[:120],
+        "product_name":  product.get("product_name", ""),
         "image_url":    img,
+        "url":          product.get("url", ""),
         "price_cny":    float(product.get("price_cny", 0)),
+        "cost_eur":     float(product.get("cost_eur", 0)),
+        "sell_price_eur": float(product.get("sell_price_eur", 0)),
         "orders":       int(product.get("orders", 0)),
+        "rating":       float(product.get("rating", 0)),
         "margin_pct":   float(product.get("margin_pct", 0)),
+        "raw_score":    float(product.get("raw_score", 0)),
         "filter_stage": stage,
         "filter_reason": reason,
         "ai_score":     ai_score,
         "ai_niche_fit": ai_niche_fit,
         "ai_visual":    ai_visual,
+        "trend_score":  float(product.get("trend_score", 0)),
+        "competition_score": float(product.get("competition_score", 0)),
         "ai_provider":  product.get("ai_provider", ""),
     }
 
@@ -193,6 +201,7 @@ async def process_scraped_products(job_id: int, raw_all: list, settings: Optiona
                 pipeline_recs.append(_pipeline_rec(job_id, product, "ai_pass", "", ai_score, float(enriched.get("niche_fit", 0)), float(enriched.get("visual_appeal", 0))))
                 log.info("  [PASS] %.1f  visual=%.1f  %s", ai_score, float(enriched.get("visual_appeal", 0)), title)
             else:
+                product.update(enriched)
                 pipeline_recs.append(_pipeline_rec(job_id, product, "ai_reject", enriched.get("rejection_reason", ""), ai_score, float(enriched.get("niche_fit", 0)), float(enriched.get("visual_appeal", 0))))
                 log.info("  [FAIL] %.1f  %s  (%s)", ai_score, title, enriched.get("rejection_reason", ""))
         else:

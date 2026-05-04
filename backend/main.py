@@ -362,6 +362,14 @@ def _pipeline_summary(job: dict, stages: dict) -> dict:
     }
 
 
+def _items_to_stages(items: list) -> dict:
+    stages: dict[str, list] = {}
+    for item in items:
+        stage = item.get("filter_stage") or "raw_fetch"
+        stages.setdefault(stage, []).append(item)
+    return stages
+
+
 async def _create_scan_job(
     bg: BackgroundTasks,
     keywords: list,
@@ -606,11 +614,21 @@ async def get_job_pipeline(job_id: int):
     job = await db.get_job(job_id)
     if not job:
         raise HTTPException(404)
-    stages = await db.get_pipeline(job_id)
-    raw_products = await db.get_raw_products(job_id)
-    if raw_products:
-        stages = {"raw_fetch": raw_products, **stages}
+    items = await db.get_scan_items(job_id)
+    stages: dict[str, list] = {}
+    for item in items:
+        stage = item.get("filter_stage") or "raw_fetch"
+        stages.setdefault(stage, []).append(item)
     return {"job": job, "stages": stages, "summary": _pipeline_summary(job, stages)}
+
+
+@app.get("/api/jobs/{job_id}/items")
+async def get_job_items(job_id: int):
+    job = await db.get_job(job_id)
+    if not job:
+        raise HTTPException(404)
+    items = await db.get_scan_items(job_id)
+    return {"job": job, "items": items, "summary": _pipeline_summary(job, _items_to_stages(items))}
 
 
 @app.get("/api/debug/cssbuy")
@@ -780,6 +798,7 @@ async def _run_scan(job_id: int, keywords: list, max_per_keyword: int, source: s
         log.info("Job %d starting scan: keywords=%s source=%s max_per_keyword=%s", job_id, keywords, source, max_per_keyword)
         await run_pipeline(job_id, keywords, max_per_keyword, source=source)
         await _backup_products_to_sheets()
+        sheets.save_scan_items(job_id, await db.get_scan_items(job_id))
     except Exception as e:
         log.error("Pipeline job %d failed: %s", job_id, e)
         await db.update_job(job_id, status="error")
@@ -790,6 +809,7 @@ async def _run_ingest(job_id: int, products: list) -> None:
         log.info("Job %d starting local ingest: products=%d", job_id, len(products))
         await process_scraped_products(job_id, products)
         await _backup_products_to_sheets()
+        sheets.save_scan_items(job_id, await db.get_scan_items(job_id))
     except Exception as e:
         log.error("Ingest job %d failed: %s", job_id, e)
         await db.update_job(job_id, status="error")

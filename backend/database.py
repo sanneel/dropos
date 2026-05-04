@@ -223,14 +223,19 @@ class Database:
         for r in records:
             await self._db.execute("""
                 INSERT INTO pipeline_products
-                (job_id, source_id, title, image_url, price_cny, orders, margin_pct,
-                 filter_stage, filter_reason, ai_score, ai_niche_fit, ai_visual, ai_provider, created_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                (job_id, source_id, title, product_name, image_url, url, price_cny,
+                 cost_eur, sell_price_eur, orders, rating, margin_pct, raw_score,
+                 filter_stage, filter_reason, ai_score, ai_niche_fit, ai_visual,
+                 trend_score, competition_score, ai_provider, created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, (
-                r["job_id"], r["source_id"], r["title"], r["image_url"],
-                r["price_cny"], r["orders"], r["margin_pct"],
+                r["job_id"], r["source_id"], r["title"], r.get("product_name", ""),
+                r["image_url"], r.get("url", ""), r["price_cny"],
+                r.get("cost_eur", 0), r.get("sell_price_eur", 0),
+                r["orders"], r.get("rating", 0), r["margin_pct"], r.get("raw_score", 0),
                 r["filter_stage"], r.get("filter_reason", ""),
                 r.get("ai_score", 0), r.get("ai_niche_fit", 0), r.get("ai_visual", 0),
+                r.get("trend_score", 0), r.get("competition_score", 0),
                 r.get("ai_provider", ""),
                 _now(),
             ))
@@ -298,12 +303,24 @@ class Database:
             products.append({
                 "id": d.get("id"),
                 "job_id": d.get("job_id"),
+                "source": d.get("source", ""),
                 "source_id": d.get("source_id", ""),
                 "title": d.get("product_name", ""),
+                "product_name": raw.get("product_name", "") or d.get("product_name", ""),
                 "image_url": d.get("image_url", ""),
+                "photo_link": d.get("image_url", ""),
                 "price_cny": d.get("price", 0),
+                "cost_eur": raw.get("cost_eur", 0),
+                "sell_price_eur": raw.get("sell_price_eur", 0),
                 "orders": raw.get("orders", 0),
+                "rating": raw.get("rating", 0),
                 "margin_pct": raw.get("margin_pct", 0),
+                "raw_score": raw.get("raw_score", 0),
+                "score": 0,
+                "niche_fit": 0,
+                "visual_appeal": 0,
+                "trend_score": 0,
+                "competition_score": 0,
                 "filter_stage": "raw_fetch",
                 "filter_reason": "",
                 "ai_score": 0,
@@ -311,10 +328,83 @@ class Database:
                 "ai_visual": 0,
                 "ai_provider": "",
                 "url": raw.get("url", ""),
+                "link": raw.get("url", ""),
+                "category": raw.get("category", ""),
+                "keyword": raw.get("keyword", ""),
                 "merchant": d.get("merchant", ""),
+                "raw_data": raw,
                 "created_at": d.get("created_at", ""),
             })
         return products
+
+    async def get_scan_items(self, job_id: int, limit: int = 2000) -> list:
+        raw_items = await self.get_raw_products(job_id, limit=limit)
+        pipeline = []
+        async with self._db.execute(
+            "SELECT * FROM pipeline_products WHERE job_id=? ORDER BY id",
+            (job_id,),
+        ) as cur:
+            pipeline = [dict(row) for row in await cur.fetchall()]
+
+        merged = []
+        by_source_id = {}
+        by_title = {}
+        seen = set()
+        for item in raw_items:
+            key = item.get("source_id") or f"raw:{item.get('id')}"
+            seen.add(key)
+            row = dict(item)
+            merged.append(row)
+            if row.get("source_id"):
+                by_source_id[str(row.get("source_id"))] = row
+            if row.get("title"):
+                by_title[str(row.get("title"))] = row
+
+        for rec in pipeline:
+            key = rec.get("source_id") or f"pipeline:{rec.get('id')}"
+            item = by_source_id.get(str(rec.get("source_id") or "")) or by_title.get(str(rec.get("title") or ""))
+            if item:
+                item.update({
+                    "filter_stage": rec.get("filter_stage", ""),
+                    "filter_reason": rec.get("filter_reason", ""),
+                    "ai_score": rec.get("ai_score", 0),
+                    "ai_niche_fit": rec.get("ai_niche_fit", 0),
+                    "ai_visual": rec.get("ai_visual", 0),
+                    "score": rec.get("ai_score", 0),
+                    "niche_fit": rec.get("ai_niche_fit", 0),
+                    "visual_appeal": rec.get("ai_visual", 0),
+                    "trend_score": rec.get("trend_score", 0),
+                    "competition_score": rec.get("competition_score", 0),
+                    "raw_score": rec.get("raw_score", item.get("raw_score", 0)),
+                    "ai_provider": rec.get("ai_provider", ""),
+                })
+                continue
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append({
+                **rec,
+                "product_name": rec.get("product_name") or rec.get("title", ""),
+                "photo_link": rec.get("image_url", ""),
+                "link": rec.get("url", ""),
+                "score": rec.get("ai_score", 0),
+                "niche_fit": rec.get("ai_niche_fit", 0),
+                "visual_appeal": rec.get("ai_visual", 0),
+            })
+
+        stage_rank = {
+            "raw_fetch": 0,
+            "basic_reject": 1,
+            "profit_reject": 2,
+            "dedup_reject": 3,
+            "score_reject": 4,
+            "ai_reject": 5,
+            "ai_pass": 6,
+        }
+        return sorted(
+            merged,
+            key=lambda item: (stage_rank.get(item.get("filter_stage", "raw_fetch"), 0), item.get("id") or 0),
+        )[:limit]
 
     # ── Jobs ──────────────────────────────────────────────────────────────────
 
@@ -591,7 +681,7 @@ async def init_db():
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
             job_id       INTEGER,
             source       TEXT,
-            source_id    TEXT UNIQUE,
+            source_id    TEXT,
             product_name TEXT,
             price        REAL,
             image_url    TEXT,
@@ -600,6 +690,10 @@ async def init_db():
             created_at   TEXT
         )
     """)
+    await _migrate_products_raw_unique_per_job(conn)
+    await conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_products_raw_job_source ON products_raw(job_id, source_id) WHERE source_id <> ''"
+    )
 
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS post_log (
@@ -615,20 +709,36 @@ async def init_db():
             job_id       INTEGER,
             source_id    TEXT,
             title        TEXT,
+            product_name TEXT DEFAULT '',
             image_url    TEXT,
+            url          TEXT DEFAULT '',
             price_cny    REAL DEFAULT 0,
+            cost_eur     REAL DEFAULT 0,
+            sell_price_eur REAL DEFAULT 0,
             orders       INTEGER DEFAULT 0,
+            rating       REAL DEFAULT 0,
             margin_pct   REAL DEFAULT 0,
+            raw_score    REAL DEFAULT 0,
             filter_stage TEXT,
             filter_reason TEXT DEFAULT '',
             ai_score     REAL DEFAULT 0,
             ai_niche_fit REAL DEFAULT 0,
             ai_visual    REAL DEFAULT 0,
+            trend_score  REAL DEFAULT 0,
+            competition_score REAL DEFAULT 0,
             ai_provider  TEXT DEFAULT '',
             created_at   TEXT
         )
     """)
     await _add_columns_if_missing(conn, "pipeline_products", [
+        ("product_name", "TEXT DEFAULT ''"),
+        ("url", "TEXT DEFAULT ''"),
+        ("cost_eur", "REAL DEFAULT 0"),
+        ("sell_price_eur", "REAL DEFAULT 0"),
+        ("rating", "REAL DEFAULT 0"),
+        ("raw_score", "REAL DEFAULT 0"),
+        ("trend_score", "REAL DEFAULT 0"),
+        ("competition_score", "REAL DEFAULT 0"),
         ("ai_provider", "TEXT DEFAULT ''"),
     ])
 
@@ -700,4 +810,38 @@ async def _add_columns_if_missing(conn, table: str, columns: list):
     for col_name, col_def in columns:
         if col_name not in existing:
             await conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_def}")
+    await conn.commit()
+
+
+async def _migrate_products_raw_unique_per_job(conn) -> None:
+    async with conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='products_raw'"
+    ) as cur:
+        row = await cur.fetchone()
+    table_sql = (row[0] if row else "") or ""
+    if "source_id    TEXT UNIQUE" not in table_sql and "source_id TEXT UNIQUE" not in table_sql:
+        return
+
+    await conn.execute("ALTER TABLE products_raw RENAME TO products_raw_old")
+    await conn.execute("""
+        CREATE TABLE products_raw (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id       INTEGER,
+            source       TEXT,
+            source_id    TEXT,
+            product_name TEXT,
+            price        REAL,
+            image_url    TEXT,
+            merchant     TEXT,
+            raw_data     TEXT,
+            created_at   TEXT
+        )
+    """)
+    await conn.execute("""
+        INSERT OR IGNORE INTO products_raw
+        (id, job_id, source, source_id, product_name, price, image_url, merchant, raw_data, created_at)
+        SELECT id, job_id, source, source_id, product_name, price, image_url, merchant, raw_data, created_at
+        FROM products_raw_old
+    """)
+    await conn.execute("DROP TABLE products_raw_old")
     await conn.commit()

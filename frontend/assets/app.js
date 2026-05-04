@@ -1651,8 +1651,17 @@ async function renderPipeline() {
                 <div class="pl-card-body">
                   <div class="pl-card-title">${p.title||'—'}</div>
                   ${p.filter_reason ? `<div class="pl-card-reason">${p.filter_reason}</div>` : ''}
-                  ${p.ai_score ? `<div class="pl-card-score">score ${p.ai_score.toFixed(1)}${p.ai_provider ? ' · '+String(p.ai_provider).toUpperCase() : ''}</div>` : ''}
-                  <div class="pl-card-meta">¥${p.price_cny?.toFixed(0)||0}${p.orders ? ' · '+p.orders+' sold' : ''}</div>
+                  <div class="pl-card-score">
+                    raw ${Number(p.raw_score||0).toFixed(0)}
+                    ${p.ai_score ? ` · AI ${Number(p.ai_score||0).toFixed(1)}` : ''}
+                    ${p.ai_provider ? ' · '+String(p.ai_provider).toUpperCase() : ''}
+                  </div>
+                  <div class="pl-card-meta">¥${p.price_cny?.toFixed(0)||0}${p.orders ? ' · '+p.orders+' sold' : ''}${p.rating ? ' · '+Number(p.rating).toFixed(1)+'★' : ''}</div>
+                  <div class="pl-card-meta">niche ${Number(p.ai_niche_fit||p.niche_fit||0).toFixed(1)} · visual ${Number(p.ai_visual||p.visual_appeal||0).toFixed(1)} · trend ${Number(p.trend_score||0).toFixed(1)} · comp ${Number(p.competition_score||0).toFixed(1)}</div>
+                  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+                    ${(p.url||p.link) ? `<a class="btn btn-sm" href="${p.url||p.link}" target="_blank" rel="noopener">Item</a>` : ''}
+                    ${(p.image_url||p.photo_link) ? `<a class="btn btn-sm" href="${p.image_url||p.photo_link}" target="_blank" rel="noopener">Photo</a>` : ''}
+                  </div>
                 </div>
               </div>`).join('')}
           </div>`}
