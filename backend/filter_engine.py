@@ -8,21 +8,46 @@ log = logging.getLogger(__name__)
 
 
 def pretty_price(value: float) -> float:
-    """Round sell prices to store-friendly endings without lowering the price."""
-    if value <= 0:
-        return 0.0
-    if value < 10:
-        return 39.90
-    if value < 30:
-        return 29.99
-    if value < 40:
-        return 39.90
-    if value < 50:
-        return 49.90
-    if value < 60:
-        return 59.90
-    return round(math.ceil(value / 10) * 10 - 0.10, 2)
+    """Fixes the logic gaps to ensure prices always scale upward."""
+    if value <= 0: return 0.0
+    if value < 20: return 29.90
+    if value < 45: return 44.90
+    if value < 65: return 64.90
+    # For expensive items, round to the nearest .90
+    return round(math.ceil(value) - 0.10, 2)
 
+def profit_filter(product: dict, settings: dict) -> bool:
+    price_cny = float(product.get("price_cny", 0))
+    exchange_rate = float(get_config("EXCHANGE_RATE", settings.get("exchange_rate", 0.353)))
+    
+    # 1688 shipping is often cheaper than Taobao per item
+    shipping_cny = 10.0 if product.get("source_platform") == "1688" else 15.0
+    cost_eur = (price_cny + shipping_cny) * exchange_rate
+
+    # Dynamic Markup based on product type
+    # Tech items (like cameras) usually need lower markups than jewelry
+    is_tech = any(x in product.get("title", "").lower() for x in ["camera", "ccd", "electronics"])
+    
+    if cost_eur < 10:
+        markup = 4.0  # High markup for cheap jewelry
+    elif is_tech:
+        markup = 2.0  # Lower markup for expensive tech to stay competitive
+    else:
+        markup = 2.8
+
+    sell_price = pretty_price(cost_eur * markup)
+    margin = ((sell_price - cost_eur) / sell_price) * 100
+
+    # LOWER the margin requirement for high-cost items
+    # If the item costs > €30, we accept a 45% margin because the EUR profit is high
+    min_margin_req = 45.0 if cost_eur > 30 else 60.0
+
+    product["cost_eur"] = round(cost_eur, 2)
+    product["sell_price_eur"] = round(sell_price, 2)
+    product["margin_pct"] = round(margin, 1)
+
+    return margin >= min_margin_req
+    
 _SPAM_FRAGMENTS = [
     "oem", "bulk order", "custom logo", "1000pcs",
     "minimum order", "custom print", "private label",
