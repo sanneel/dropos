@@ -19,6 +19,7 @@ COLUMNS = [
 
 SETTINGS_SHEET = "DropOS Settings"
 PRODUCTS_SHEET = "DropOS Products"
+EXPORT_SHEET = "DropOS Export"
 SETTINGS_COLUMNS = ["key", "value_json"]
 PRODUCT_COLUMNS = ["source_id", "data_json"]
 
@@ -83,9 +84,9 @@ class SheetsExporter:
             return self._export_mock(products)
 
         try:
-            existing = self._sheet.get_all_values()
-            if not existing:
-                self._sheet.append_row(COLUMNS)
+            ws = self._worksheet(EXPORT_SHEET, COLUMNS)
+            if not ws:
+                return self._export_mock(products)
 
             rows = []
             for p in products:
@@ -95,11 +96,13 @@ class SheetsExporter:
                 row = []
                 for col in COLUMNS:
                     val = p.get(col, "")
+                    if col == "hashtags":
+                        val = hashtags
                     row.append(str(val) if val is not None else "")
                 rows.append(row)
 
-            for row in rows:
-                self._sheet.append_row(row)
+            if rows:
+                ws.append_rows(rows, value_input_option="RAW")
 
             log.info("Exported %d products to Google Sheets", len(products))
             return {"ok": True, "exported": len(products), "mock": False}

@@ -281,6 +281,41 @@ class Database:
             row = await cur.fetchone()
         return row[0] if row else 0
 
+    async def get_raw_products(self, job_id: int, limit: int = 2000) -> list:
+        async with self._db.execute(
+            "SELECT * FROM products_raw WHERE job_id=? ORDER BY id LIMIT ?",
+            (job_id, limit),
+        ) as cur:
+            rows = await cur.fetchall()
+
+        products = []
+        for row in rows:
+            d = dict(row)
+            try:
+                raw = json.loads(d.get("raw_data") or "{}")
+            except Exception:
+                raw = {}
+            products.append({
+                "id": d.get("id"),
+                "job_id": d.get("job_id"),
+                "source_id": d.get("source_id", ""),
+                "title": d.get("product_name", ""),
+                "image_url": d.get("image_url", ""),
+                "price_cny": d.get("price", 0),
+                "orders": raw.get("orders", 0),
+                "margin_pct": raw.get("margin_pct", 0),
+                "filter_stage": "raw_fetch",
+                "filter_reason": "",
+                "ai_score": 0,
+                "ai_niche_fit": 0,
+                "ai_visual": 0,
+                "ai_provider": "",
+                "url": raw.get("url", ""),
+                "merchant": d.get("merchant", ""),
+                "created_at": d.get("created_at", ""),
+            })
+        return products
+
     # ── Jobs ──────────────────────────────────────────────────────────────────
 
     async def create_job(self, keywords: list) -> int:

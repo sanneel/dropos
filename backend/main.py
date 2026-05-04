@@ -305,6 +305,63 @@ async def _backup_database_to_sheets() -> dict:
     }
 
 
+def _pipeline_summary(job: dict, stages: dict) -> dict:
+    raw = stages.get("raw_fetch", [])
+    ai_pass = stages.get("ai_pass", [])
+    rejected = [
+        item
+        for stage, items in stages.items()
+        if stage != "ai_pass" and stage != "raw_fetch"
+        for item in items
+    ]
+    ai_reject = stages.get("ai_reject", [])
+
+    reason_counts: dict[str, int] = {}
+    for item in rejected:
+        reason = (item.get("filter_reason") or item.get("filter_stage") or "Filtered out").strip()
+        reason_counts[reason] = reason_counts.get(reason, 0) + 1
+    top_reasons = [
+        {"reason": reason, "count": count}
+        for reason, count in sorted(reason_counts.items(), key=lambda kv: kv[1], reverse=True)[:6]
+    ]
+
+    recommendations = []
+    scraped = int(job.get("scraped") or len(raw) or 0)
+    pass_rate = (len(ai_pass) / scraped * 100) if scraped else 0
+    ai_reject_rate = (len(ai_reject) / max(len(ai_reject) + len(ai_pass), 1) * 100)
+
+    if scraped and pass_rate < 3:
+        recommendations.append("Very few fetched products reached review. Broaden keywords or lower MIN_SCORE slightly.")
+    if ai_reject_rate > 70:
+        recommendations.append("AI is rejecting most reviewed candidates. Lower MIN_SCORE by 0.5 or make the niche prompt more generous.")
+    if reason_counts.get("margin too low", 0) > len(rejected) * 0.35:
+        recommendations.append("Many products fail margin. Lower MIN_MARGIN or increase sell markup for cheaper items.")
+    if reason_counts.get("spam/no-image/low-orders", 0) > len(rejected) * 0.35:
+        recommendations.append("Many products fail basic quality filters. Try keywords closer to gift intent, like 'couple bracelet' or 'love letter gift'.")
+    if reason_counts.get("duplicate product", 0) > len(rejected) * 0.25:
+        recommendations.append("Duplicate rate is high. Add more varied keywords or reduce max products per keyword.")
+    if not recommendations:
+        recommendations.append("Filters look balanced. Improve results by adding more specific couple-gift keywords.")
+
+    accepted_examples = [
+        {
+            "title": item.get("title", ""),
+            "score": item.get("ai_score", 0),
+            "visual": item.get("ai_visual", 0),
+        }
+        for item in sorted(ai_pass, key=lambda p: float(p.get("ai_score") or 0), reverse=True)[:5]
+    ]
+
+    return {
+        "headline": f"{len(ai_pass)} products accepted for review from {scraped} fetched items.",
+        "pass_rate": round(pass_rate, 1),
+        "rejected": len(rejected),
+        "top_reasons": top_reasons,
+        "accepted_examples": accepted_examples,
+        "recommendations": recommendations,
+    }
+
+
 async def _create_scan_job(
     bg: BackgroundTasks,
     keywords: list,
@@ -550,7 +607,10 @@ async def get_job_pipeline(job_id: int):
     if not job:
         raise HTTPException(404)
     stages = await db.get_pipeline(job_id)
-    return {"job": job, "stages": stages}
+    raw_products = await db.get_raw_products(job_id)
+    if raw_products:
+        stages = {"raw_fetch": raw_products, **stages}
+    return {"job": job, "stages": stages, "summary": _pipeline_summary(job, stages)}
 
 
 @app.get("/api/debug/cssbuy")

@@ -1520,8 +1520,9 @@ let pipelineJobId = null;
 let pipelineActiveStage = null;
 let pipelineData = null;
 
-const STAGE_ORDER = ['basic_reject','profit_reject','dedup_reject','score_reject','ai_reject','ai_pass'];
+const STAGE_ORDER = ['raw_fetch','basic_reject','profit_reject','dedup_reject','score_reject','ai_reject','ai_pass'];
 const STAGE_LABELS = {
+  raw_fetch:      'Fetched',
   basic_reject:  'Spam / No image',
   profit_reject: 'Low margin',
   dedup_reject:  'Duplicate',
@@ -1530,6 +1531,7 @@ const STAGE_LABELS = {
   ai_pass:       'AI passed',
 };
 const STAGE_TYPE = {
+  raw_fetch:'neutral',
   basic_reject:'reject', profit_reject:'reject', dedup_reject:'reject',
   score_reject:'reject', ai_reject:'reject', ai_pass:'pass',
 };
@@ -1553,6 +1555,7 @@ async function renderPipeline() {
   const raw = await api(`/jobs/${pipelineJobId}/pipeline`).catch(() => null);
   pipelineData = raw?.stages || {};
   const job = raw?.job || {};
+  const summary = raw?.summary || {};
 
   // Compute AI summary
   const aiPass = pipelineData['ai_pass'] || [];
@@ -1596,6 +1599,29 @@ async function renderPipeline() {
         <div class="pl-sum-card"><div class="pl-sum-label">Avg niche fit</div><div class="pl-sum-val">${avgNiche}</div><div class="pl-sum-sub">niche relevance</div></div>
         <div class="pl-sum-card"><div class="pl-sum-label">Avg visual</div><div class="pl-sum-val">${avgVisual}</div><div class="pl-sum-sub">photo quality</div></div>
         <div class="pl-sum-card"><div class="pl-sum-label">Top AI rejection</div><div class="pl-sum-val" style="font-size:13px;line-height:1.3">${topReason.substring(0,30)}</div><div class="pl-sum-sub">most common reason</div></div>
+      </div>
+
+      <div style="border:1px solid var(--b1);background:var(--s1);border-radius:var(--r);padding:16px;margin-bottom:24px">
+        <div style="font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;font-family:var(--ff-m);margin-bottom:8px">AI scan analysis</div>
+        <div style="font-size:15px;color:var(--t1);font-weight:600;margin-bottom:10px">${summary.headline || `${aiPass.length} products accepted for review.`}</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px">
+          <div>
+            <div style="font-size:12px;color:var(--t3);margin-bottom:6px">Rejected mostly because</div>
+            ${(summary.top_reasons||[]).length
+              ? (summary.top_reasons||[]).map(r => `<div style="font-size:12px;color:var(--t2);margin-bottom:4px">${r.reason} <span style="color:var(--t4)">(${r.count})</span></div>`).join('')
+              : `<div style="font-size:12px;color:var(--t4)">No rejection pattern yet</div>`}
+          </div>
+          <div>
+            <div style="font-size:12px;color:var(--t3);margin-bottom:6px">Accepted examples</div>
+            ${(summary.accepted_examples||[]).length
+              ? (summary.accepted_examples||[]).map(p => `<div style="font-size:12px;color:var(--t2);margin-bottom:4px">${(p.title||'').substring(0,42)} <span style="color:var(--green)">${Number(p.score||0).toFixed(1)}</span></div>`).join('')
+              : `<div style="font-size:12px;color:var(--t4)">No accepted products yet</div>`}
+          </div>
+          <div>
+            <div style="font-size:12px;color:var(--t3);margin-bottom:6px">Filter improvements</div>
+            ${(summary.recommendations||[]).map(t => `<div style="font-size:12px;color:var(--t2);margin-bottom:4px">${t}</div>`).join('')}
+          </div>
+        </div>
       </div>
 
       <div style="font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;font-family:var(--ff-m);margin-bottom:10px">Filter stages</div>
