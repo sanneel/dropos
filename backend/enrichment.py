@@ -280,7 +280,7 @@ async def gemini_enrich(product: dict, settings: dict) -> Optional[dict]:
     if _GEMINI_QUOTA_EXHAUSTED:
         return None
 
-    model = get_config("GEMINI_MODEL", settings.get("gemini_model", "gemini-2.0-flash"))
+    model = get_config("GEMINI_MODEL", settings.get("gemini_model", "gemini-2.0-flash-lite"))
     title   = product.get("title_translated") or product.get("title", "Unknown")
     img_url = (product.get("images") or [""])[0]
 
@@ -507,12 +507,12 @@ async def groq_enrich(product: dict, settings: dict) -> Optional[dict]:
 # ── Public entry point ─────────────────────────────────────────────────────────
 
 async def ai_enrich(product: dict, settings: dict) -> Optional[dict]:
-    """Groq first, then Gemini, Anthropic, and mock."""
+    """Gemini first for image analysis, then text-only fallbacks."""
     async with _get_semaphore():
-        result = await groq_enrich(product, settings)
+        result = await gemini_enrich(product, settings)
         if result:
             return result
-        result = await gemini_enrich(product, settings)
+        result = await groq_enrich(product, settings)
         if result:
             return result
         result = await anthropic_enrich(product, settings)

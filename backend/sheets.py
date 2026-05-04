@@ -40,6 +40,9 @@ class SheetsExporter:
         try:
             import gspread
             creds_file = self.credentials_path or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+            if not creds_file:
+                log.warning("Google Sheets credentials are not configured (mock mode)")
+                return False
             gc = gspread.service_account(filename=creds_file)
             self._spreadsheet = gc.open_by_key(self.spreadsheet_id)
             self._sheet = self._spreadsheet.sheet1
