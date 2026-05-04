@@ -26,12 +26,6 @@ ENV_TO_SETTING = {
     "GOOGLE_SHEETS_CREDENTIALS": "google_sheets_credentials",
     "PUBLIC_BASE_URL": "public_base_url",
     "APP_URL": "public_base_url",
-    "INSTAGRAM_ACCESS_TOKEN": "instagram_access_token",
-    "INSTAGRAM_USER_ID": "instagram_user_id",
-    "INSTAGRAM_USERNAME": "instagram_username",
-    "INSTAGRAM_WEBHOOK_TOKEN": "instagram_webhook_token",
-    "INSTAGRAM_AUTO_REPLY_ENABLED": "instagram_auto_reply_enabled",
-    "INSTAGRAM_DM_REPLY_ENABLED": "instagram_dm_reply_enabled",
     "CSSBUY_USERNAME": "cssbuy_username",
     "CSSBUY_PASSWORD": "cssbuy_password",
     "CSSBUY_SESSION_JSON": "cssbuy_session_json",
@@ -96,7 +90,10 @@ def get_config(key: str, fallback: Any = None) -> Any:
 def merge_env_with_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     merged = dict(settings or {})
     for env_key, setting_key in ENV_TO_SETTING.items():
-        merged[setting_key] = get_config(env_key, merged.get(setting_key))
+        current = merged.get(setting_key)
+        if current not in (None, "", [], {}):
+            continue
+        merged[setting_key] = get_config(env_key, current)
     return merged
 
 

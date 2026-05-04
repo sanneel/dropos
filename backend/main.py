@@ -715,7 +715,7 @@ async def instagram_accounts():
     """
     import httpx as _httpx
     settings = await _settings()
-    token = "".join(str(get_config("INSTAGRAM_ACCESS_TOKEN", settings.get("instagram_access_token")) or "").split())
+    token = "".join(str(settings.get("instagram_access_token") or "").split())
     if not token:
         raise HTTPException(400, "instagram_access_token not configured")
 
@@ -758,8 +758,8 @@ async def instagram_accounts():
 @app.get("/api/instagram/diagnostics")
 async def instagram_diagnostics(product_id: Optional[int] = None):
     settings = await _settings()
-    token = "".join(str(get_config("INSTAGRAM_ACCESS_TOKEN", settings.get("instagram_access_token")) or "").split())
-    user_id = str(get_config("INSTAGRAM_USER_ID", settings.get("instagram_user_id")) or "").strip()
+    token = "".join(str(settings.get("instagram_access_token") or "").split())
+    user_id = str(settings.get("instagram_user_id") or "").strip()
     version = str(get_config("META_GRAPH_VERSION", settings.get("meta_graph_version", "v23.0")) or "v23.0")
     if not version.startswith("v"):
         version = f"v{version}"
@@ -773,7 +773,7 @@ async def instagram_diagnostics(product_id: Optional[int] = None):
         "errors": [],
     }
     if not token or not user_id:
-        result["errors"].append("INSTAGRAM_ACCESS_TOKEN or INSTAGRAM_USER_ID is missing")
+        result["errors"].append("Instagram access token or user ID is missing from settings")
         return result
 
     try:
@@ -814,7 +814,7 @@ async def ig_webhook_verify(
 ):
     """Meta webhook verification handshake."""
     settings = await _settings()
-    verify_token = str(get_config("INSTAGRAM_WEBHOOK_TOKEN", settings.get("instagram_webhook_token") or "dropos_webhook_secret"))
+    verify_token = str(settings.get("instagram_webhook_token") or "dropos_webhook_secret")
     if hub_mode == "subscribe" and hub_verify_token == verify_token:
         return PlainTextResponse(hub_challenge)
     raise HTTPException(403, "Webhook verification failed - check your verify token")
@@ -907,9 +907,9 @@ async def _process_ig_webhook(body: dict) -> None:
         return
 
     settings = await _settings()
-    ig_uid = str(get_config("INSTAGRAM_USER_ID", settings.get("instagram_user_id")) or "")
-    comment_on = bool(get_config("INSTAGRAM_AUTO_REPLY_ENABLED", settings.get("instagram_auto_reply_enabled")))
-    dm_on      = bool(get_config("INSTAGRAM_DM_REPLY_ENABLED", settings.get("instagram_dm_reply_enabled")))
+    ig_uid = str(settings.get("instagram_user_id") or "")
+    comment_on = bool(settings.get("instagram_auto_reply_enabled"))
+    dm_on      = bool(settings.get("instagram_dm_reply_enabled"))
 
     if not comment_on and not dm_on:
         return

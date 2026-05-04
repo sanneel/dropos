@@ -38,13 +38,14 @@ def _graph(settings: dict = None) -> str:
 
 
 def _token(settings: dict) -> str:
-    raw = str(get_config("INSTAGRAM_ACCESS_TOKEN", settings.get("instagram_access_token")) or "")
+    raw = str((settings or {}).get("instagram_access_token") or "")
     return "".join(raw.split())
 
 
 def _public_base_url(settings: dict) -> str:
     raw = (
-        get_config("PUBLIC_BASE_URL", settings.get("public_base_url", ""))
+        (settings or {}).get("public_base_url")
+        or get_config("PUBLIC_BASE_URL", "")
         or get_config("APP_URL", "")
         or get_config("RAILWAY_PUBLIC_DOMAIN", "")
     )
@@ -154,7 +155,7 @@ async def _wait_until_container_ready(
 async def post_product(product: dict, settings: dict) -> PostResult:
     pid       = product.get("id", 0)
     token = _token(settings)
-    user_id = str(get_config("INSTAGRAM_USER_ID", settings.get("instagram_user_id")) or "").strip()
+    user_id = str((settings or {}).get("instagram_user_id") or "").strip()
 
     caption_text = (product.get("caption") or "").strip()
     hashtags     = product.get("hashtags") or []
@@ -223,7 +224,7 @@ async def reply_to_comment(comment_id: str, message: str, settings: dict) -> boo
 async def reply_to_dm(sender_id: str, message: str, settings: dict) -> bool:
     """Send a DM reply via the Instagram Messaging API."""
     token = _token(settings)
-    user_id = str(get_config("INSTAGRAM_USER_ID", settings.get("instagram_user_id")) or "").strip()
+    user_id = str((settings or {}).get("instagram_user_id") or "").strip()
     if not token or not user_id:
         log.warning("Instagram: no credentials — cannot send DM")
         return False
