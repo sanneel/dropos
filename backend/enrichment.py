@@ -112,9 +112,13 @@ true if niche_fit >= 6 OR score >= 6.5
 If product is cute, emotional, aesthetic, giftable, cozy, or likely to be bought casually for a partner:
 BE GENEROUS.
 
+Write product_name and caption in Georgian language for a Georgian Instagram shop.
+Use natural Georgian, not robotic translation. Captions should feel cute, emotional,
+and sales-friendly for girlfriend/boyfriend gift buyers in Georgia.
+
 Respond with a single JSON object containing these exact keys:
 score, niche_fit, visual_appeal, trend_score, competition_score (all numbers 1-10),
-store_match (boolean), product_name (string, 3-5 words), caption (string, 2-3 sentences),
+store_match (boolean), product_name (string, 3-5 Georgian words), caption (string, 2-3 Georgian sentences),
 hashtags (array of 15 strings without # symbol), audience (one of: male female unisex kids),
 rejection_reason (string, empty if store_match is true).
 """     
@@ -143,8 +147,8 @@ Score each field from 1 to 10:
 
 Also provide:
 - store_match: true if niche_fit >= 7 AND product works as a couple gift, false otherwise
-- product_name: 3-5 word English name, no brand
-- caption: 2-3 sentence romantic Instagram caption as if tagging your partner
+- product_name: 3-5 word Georgian name, no brand
+- caption: 2-3 sentence Georgian Instagram caption as if tagging your partner
 - hashtags: exactly 15 hashtag strings (no # symbol) — couple, gift, and relationship tags
 - audience: one of male, female, unisex, kids
 - rejection_reason: if store_match is false, explain specifically why it does not work as a couple gift. Otherwise empty string.
@@ -239,13 +243,11 @@ def mock_enrich(product: dict) -> dict:
 
 
 _CAPTION_TEMPLATES = [
-    "Because they deserve to feel loved every single day. The perfect gift for the person who has your whole heart. ❤️",
-    "Some people come into your life and make everything better. Get them something that says exactly that. 🥹",
-    "Tag the one who makes every day worth it. This one's for them. 💌",
-    "It's the little things that mean the most. Surprise your person with something they'll never forget. 🎁",
-    "For the one who deserves the world — start here. Because love is worth celebrating every day. 💍",
-    "The gift that says 'I was thinking of you' without saying a word. Perfect for your favourite person. 🌹",
-    "Love isn't just a feeling, it's the little moments you create together. Make this one count. ✨",
+    "პატარა საჩუქარია, მაგრამ ძალიან თბილი ემოცია აქვს. გაუკეთე სიურპრიზი ადამიანს, ვინც ყველაზე მეტად გიყვარს.",
+    "ზოგი ნივთი უბრალოდ ამბობს: შენზე ვფიქრობდი. იდეალური პატარა საჩუქარია საყვარელი ადამიანისთვის.",
+    "მონიშნე ის ადამიანი, ვისაც ეს აუცილებლად გაუხარდება. ასეთი დეტალები სიყვარულს კიდევ უფრო ტკბილს ხდის.",
+    "საჩუქარი, რომელიც ყოველდღიურ დღეს პატარა დღესასწაულად აქცევს. იდეალურია წყვილებისთვის და გულწრფელი სიურპრიზისთვის.",
+    "როცა გინდა უთხრა მიყვარხარ, მაგრამ უფრო საყვარლად. ეს ნივთი ზუსტად ამისთვისაა.",
 ]
 
 

@@ -24,6 +24,8 @@ ENV_TO_SETTING = {
     "GROQ_KEY": "groq_key",
     "GOOGLE_SHEETS_ID": "google_sheets_id",
     "GOOGLE_SHEETS_CREDENTIALS": "google_sheets_credentials",
+    "PUBLIC_BASE_URL": "public_base_url",
+    "APP_URL": "public_base_url",
     "INSTAGRAM_ACCESS_TOKEN": "instagram_access_token",
     "INSTAGRAM_USER_ID": "instagram_user_id",
     "INSTAGRAM_USERNAME": "instagram_username",

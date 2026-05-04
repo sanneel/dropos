@@ -28,8 +28,8 @@ class Database:
              price_cny, cost_eur, sell_price_eur, margin_pct, orders, rating,
              images_json, url, category, keyword,
              score, niche_fit, visual_appeal, trend_score, competition_score,
-             caption, hashtags_json, ai_provider, stage, created_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             caption, description, hashtags_json, ai_provider, stage, created_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             job_id,
             p.get("source", ""),
@@ -53,6 +53,7 @@ class Database:
             p.get("trend_score", 0),
             p.get("competition_score", 0),
             p.get("caption", ""),
+            p.get("description", ""),
             json.dumps(p.get("hashtags", [])),
             p.get("ai_provider", ""),
             "pending",
@@ -108,9 +109,9 @@ class Database:
              price_cny, cost_eur, sell_price_eur, margin_pct, orders, rating,
              images_json, url, category, keyword,
              score, niche_fit, visual_appeal, trend_score, competition_score,
-             caption, hashtags_json, ai_provider, stage, rejection_reason, review_note,
+             caption, description, hashtags_json, ai_provider, stage, rejection_reason, review_note,
              approved_at, rejected_at, posted_at, created_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(source_id) DO UPDATE SET
              job_id=excluded.job_id,
              source=excluded.source,
@@ -133,6 +134,7 @@ class Database:
              trend_score=excluded.trend_score,
              competition_score=excluded.competition_score,
              caption=excluded.caption,
+             description=excluded.description,
              hashtags_json=excluded.hashtags_json,
              ai_provider=excluded.ai_provider,
              stage=excluded.stage,
@@ -164,6 +166,7 @@ class Database:
             p.get("trend_score", 0),
             p.get("competition_score", 0),
             p.get("caption", ""),
+            p.get("description", ""),
             json.dumps(p.get("hashtags", [])),
             p.get("ai_provider", ""),
             p.get("stage", "pending"),
@@ -210,6 +213,32 @@ class Database:
             "UPDATE products SET review_note=? WHERE id=?", (note, pid)
         )
         await self._db.commit()
+
+    async def update_product_fields(self, pid: int, data: dict) -> Optional[dict]:
+        allowed = {
+            "product_name",
+            "title_translated",
+            "description",
+            "sell_price_eur",
+            "caption",
+            "hashtags_json",
+            "category",
+            "url",
+        }
+        updates = {k: v for k, v in (data or {}).items() if k in allowed}
+        if "sell_price_eur" in updates:
+            product = await self.get_product(pid)
+            cost = float(product.get("cost_eur") or 0) if product else 0
+            sell = float(updates["sell_price_eur"] or 0)
+            if sell > 0 and cost > 0:
+                updates["margin_pct"] = round(((sell - cost) / sell) * 100, 1)
+        if not updates:
+            return await self.get_product(pid)
+        sets = ", ".join(f"{k}=?" for k in updates)
+        vals = list(updates.values()) + [pid]
+        await self._db.execute(f"UPDATE products SET {sets} WHERE id=?", vals)
+        await self._db.commit()
+        return await self.get_product(pid)
 
     async def log_post(self, pid: int):
         await self._db.execute(
@@ -638,6 +667,7 @@ async def init_db():
             trend_score       REAL,
             competition_score REAL DEFAULT 0,
             caption           TEXT,
+            description       TEXT DEFAULT '',
             hashtags_json     TEXT,
             ai_provider       TEXT DEFAULT '',
             stage             TEXT DEFAULT 'pending',
@@ -659,6 +689,7 @@ async def init_db():
         ("rejected_at", "TEXT"),
         ("posted_at", "TEXT"),
         ("ai_provider", "TEXT DEFAULT ''"),
+        ("description", "TEXT DEFAULT ''"),
     ])
 
     await conn.execute("""
@@ -784,6 +815,7 @@ async def init_db():
         "scan_keywords": ["couple gifts", "romantic gifts for her", "gifts for boyfriend", "gifts for girlfriend", "anniversary gifts"],
         "google_sheets_id": "",
         "google_sheets_credentials": "",
+        "public_base_url": "",
         "cssbuy_username": "",
         "cssbuy_password": "",
         "cssbuy_source": "1688",

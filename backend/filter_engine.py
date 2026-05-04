@@ -1,9 +1,27 @@
 import hashlib
 import logging
+import math
 
 from config.runtime import get_config
 
 log = logging.getLogger(__name__)
+
+
+def pretty_price(value: float) -> float:
+    """Round sell prices to store-friendly endings without lowering the price."""
+    if value <= 0:
+        return 0.0
+    if value < 10:
+        return 39.90
+    if value < 30:
+        return 29.99
+    if value < 40:
+        return 39.90
+    if value < 50:
+        return 49.90
+    if value < 60:
+        return 59.90
+    return round(math.ceil(value / 10) * 10 - 0.10, 2)
 
 _SPAM_FRAGMENTS = [
     "oem", "bulk order", "custom logo", "1000pcs",
@@ -82,7 +100,7 @@ def profit_filter(product: dict, settings: dict) -> bool:
     else:
         markup = get_config("SELL_MARKUP_HIGH", settings.get("sell_markup_high", 2.2))
 
-    sell_price = cost_eur * markup
+    sell_price = pretty_price(cost_eur * markup)
     margin = ((sell_price - cost_eur) / sell_price) * 100
 
     product["cost_eur"] = round(cost_eur, 2)

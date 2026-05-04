@@ -162,6 +162,17 @@ class NoteUpdate(BaseModel):
     note: str
 
 
+class ProductUpdate(BaseModel):
+    product_name: Optional[str] = None
+    title_translated: Optional[str] = None
+    description: Optional[str] = None
+    sell_price_eur: Optional[float] = None
+    caption: Optional[str] = None
+    hashtags: Optional[List[str]] = None
+    category: Optional[str] = None
+    url: Optional[str] = None
+
+
 class SettingsUpdate(BaseModel):
     niche: Optional[str] = None
     min_margin: Optional[float] = None
@@ -187,6 +198,7 @@ class SettingsUpdate(BaseModel):
     scan_keywords: Optional[List[str]] = None
     google_sheets_id: Optional[str] = None
     google_sheets_credentials: Optional[str] = None
+    public_base_url: Optional[str] = None
     playwright_timeout: Optional[int] = None
     scrape_interval: Optional[int] = None
     cssbuy_username: Optional[str] = None
@@ -444,6 +456,17 @@ async def get_product(product_id: int):
     return await _get_product_or_404(product_id)
 
 
+@app.patch("/api/products/{product_id}")
+async def update_product(product_id: int, body: ProductUpdate):
+    await _get_product_or_404(product_id)
+    data = body.model_dump(exclude_none=True)
+    if "hashtags" in data:
+        data["hashtags_json"] = json.dumps(data.pop("hashtags") or [])
+    updated = await db.update_product_fields(product_id, data)
+    await _backup_products_to_sheets()
+    return {"ok": True, "product": updated}
+
+
 @app.get("/api/image")
 async def proxy_image(url: str):
     src = unquote(url or "").strip()
@@ -511,11 +534,8 @@ async def reject_products(body: BatchRejectRequest):
 async def post_product(product_id: int, bg: BackgroundTasks):
     p = await _get_product_or_404(product_id)
     _require_stage(p, "approved", "Can only post approved products (stage: '{stage}')")
-    await db.set_stage(product_id, "posted")
-    await db.log_post(product_id)
-    await _backup_products_to_sheets()
     bg.add_task(_post_and_export, [p])
-    return {"ok": True}
+    return {"ok": True, "queued": 1}
 
 
 @app.post("/api/post")
@@ -523,12 +543,8 @@ async def post_products(body: PostRequest, bg: BackgroundTasks):
     if len(body.product_ids) > 10:
         raise HTTPException(400, "Max 10 products at once")
     to_post = await _stage_products(
-        body.product_ids,
-        "posted",
-        required_stage="approved",
-        log_posts=True,
+        body.product_ids, "approved", required_stage="approved"
     )
-    await _backup_products_to_sheets()
     bg.add_task(_post_and_export, to_post)
     return {"ok": True, "queued": len(to_post)}
 
@@ -699,11 +715,14 @@ async def instagram_accounts():
     """
     import httpx as _httpx
     settings = await _settings()
-    token = str(get_config("INSTAGRAM_ACCESS_TOKEN", settings.get("instagram_access_token")) or "").strip()
+    token = "".join(str(get_config("INSTAGRAM_ACCESS_TOKEN", settings.get("instagram_access_token")) or "").split())
     if not token:
         raise HTTPException(400, "instagram_access_token not configured")
 
-    graph = "https://graph.facebook.com/v21.0"
+    version = str(get_config("META_GRAPH_VERSION", settings.get("meta_graph_version", "v23.0")) or "v23.0")
+    if not version.startswith("v"):
+        version = f"v{version}"
+    graph = f"https://graph.facebook.com/{version}"
     try:
         async with _httpx.AsyncClient(timeout=15) as client:
             # 1. List all Facebook Pages the token has access to
@@ -734,6 +753,57 @@ async def instagram_accounts():
         raise
     except Exception as exc:
         raise HTTPException(500, str(exc))
+
+
+@app.get("/api/instagram/diagnostics")
+async def instagram_diagnostics(product_id: Optional[int] = None):
+    settings = await _settings()
+    token = "".join(str(get_config("INSTAGRAM_ACCESS_TOKEN", settings.get("instagram_access_token")) or "").split())
+    user_id = str(get_config("INSTAGRAM_USER_ID", settings.get("instagram_user_id")) or "").strip()
+    version = str(get_config("META_GRAPH_VERSION", settings.get("meta_graph_version", "v23.0")) or "v23.0")
+    if not version.startswith("v"):
+        version = f"v{version}"
+    graph = f"https://graph.facebook.com/{version}"
+    result = {
+        "token_configured": bool(token),
+        "instagram_user_id": user_id,
+        "graph_version": version,
+        "account_ok": False,
+        "image_ok": None,
+        "errors": [],
+    }
+    if not token or not user_id:
+        result["errors"].append("INSTAGRAM_ACCESS_TOKEN or INSTAGRAM_USER_ID is missing")
+        return result
+
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            account_resp = await client.get(
+                f"{graph}/{user_id}",
+                params={"fields": "id,username,account_type", "access_token": token},
+            )
+            account_body = account_resp.json()
+            if "error" in account_body:
+                result["errors"].append(account_body["error"].get("message", str(account_body["error"])))
+            else:
+                result["account_ok"] = True
+                result["account"] = account_body
+
+            if product_id:
+                product = await _get_product_or_404(product_id)
+                src = (product.get("images") or [""])[0]
+                if src:
+                    image_resp = await client.get(src, headers={"User-Agent": "Mozilla/5.0"})
+                    content_type = image_resp.headers.get("content-type", "")
+                    result["image_ok"] = image_resp.status_code == 200 and content_type.startswith("image/")
+                    result["image_status"] = image_resp.status_code
+                    result["image_content_type"] = content_type
+                else:
+                    result["image_ok"] = False
+                    result["errors"].append("Product has no image URL")
+    except Exception as exc:
+        result["errors"].append(str(exc))
+    return result
 
 
 @app.get("/api/instagram/webhook")
@@ -910,9 +980,20 @@ async def _post_and_export(products: list) -> None:
         mocked  = sum(1 for r in results if r.status == "mock")
         errors  = [r for r in results if r.status == "error"]
         log.info("Instagram: posted=%d mock=%d errors=%d", posted, mocked, len(errors))
+        result_by_id = {r.product_id: r for r in results}
+        for product in products:
+            result = result_by_id.get(product.get("id"))
+            if not result:
+                continue
+            if result.status in {"posted", "mock"}:
+                await db.set_stage(product["id"], "posted")
+                await db.log_post(product["id"])
+            else:
+                await db.update_product_note(product["id"], f"Instagram post failed: {result.error or 'unknown error'}")
         for r in errors:
             log.warning("Instagram error product=%s: %s", r.product_id, r.error)
         sheets.append_rows(products)
+        await _backup_products_to_sheets()
     except Exception as e:
         log.error("Post/export error: %s", e)
 

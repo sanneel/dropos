@@ -19,6 +19,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Optional
+from urllib.parse import quote
 
 import httpx
 
@@ -26,8 +27,38 @@ from config.runtime import get_config
 
 log = logging.getLogger(__name__)
 
-_GRAPH = "https://graph.facebook.com/v21.0"
 _BETWEEN_POSTS_DELAY = 30  # seconds between posts in a batch
+
+
+def _graph(settings: dict = None) -> str:
+    version = str(get_config("META_GRAPH_VERSION", (settings or {}).get("meta_graph_version", "v23.0")) or "v23.0").strip()
+    if not version.startswith("v"):
+        version = f"v{version}"
+    return f"https://graph.facebook.com/{version}"
+
+
+def _token(settings: dict) -> str:
+    raw = str(get_config("INSTAGRAM_ACCESS_TOKEN", settings.get("instagram_access_token")) or "")
+    return "".join(raw.split())
+
+
+def _public_base_url(settings: dict) -> str:
+    raw = (
+        get_config("PUBLIC_BASE_URL", settings.get("public_base_url", ""))
+        or get_config("APP_URL", "")
+        or get_config("RAILWAY_PUBLIC_DOMAIN", "")
+    )
+    base = str(raw or "").strip().rstrip("/")
+    if base and not base.startswith(("http://", "https://")):
+        base = f"https://{base}"
+    return base
+
+
+def _publishable_image_url(image_url: str, settings: dict) -> str:
+    base = _public_base_url(settings)
+    if not base:
+        return image_url
+    return f"{base}/api/image?url={quote(image_url, safe='')}"
 
 
 @dataclass
@@ -49,7 +80,7 @@ async def _create_container(
 ) -> str:
     """Step 1: create a media container. Returns creation_id."""
     resp = await client.post(
-        f"{_GRAPH}/{ig_user_id}/media",
+        f"{_graph()}/{ig_user_id}/media",
         params={
             "image_url":    image_url,
             "caption":      caption,
@@ -70,7 +101,7 @@ async def _publish_container(
 ) -> str:
     """Step 2: publish the container. Returns the media ID."""
     resp = await client.post(
-        f"{_GRAPH}/{ig_user_id}/media_publish",
+        f"{_graph()}/{ig_user_id}/media_publish",
         params={
             "creation_id":  creation_id,
             "access_token": token,
@@ -89,18 +120,40 @@ async def _get_post_shortcode(
 ) -> str:
     """Fetch the shortcode so we can build the post URL."""
     resp = await client.get(
-        f"{_GRAPH}/{media_id}",
+        f"{_graph()}/{media_id}",
         params={"fields": "shortcode", "access_token": token},
     )
     body = resp.json()
     return body.get("shortcode", media_id)
 
 
+async def _wait_until_container_ready(
+    client: httpx.AsyncClient,
+    creation_id: str,
+    token: str,
+    settings: dict,
+) -> None:
+    for _ in range(8):
+        resp = await client.get(
+            f"{_graph(settings)}/{creation_id}",
+            params={"fields": "status_code,status", "access_token": token},
+        )
+        body = resp.json()
+        if "error" in body:
+            raise RuntimeError(body["error"].get("message", str(body["error"])))
+        status = str(body.get("status_code") or "").upper()
+        if status in {"FINISHED", "PUBLISHED"}:
+            return
+        if status == "ERROR":
+            raise RuntimeError(body.get("status") or "Instagram media container failed")
+        await asyncio.sleep(3)
+
+
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 async def post_product(product: dict, settings: dict) -> PostResult:
     pid       = product.get("id", 0)
-    token = str(get_config("INSTAGRAM_ACCESS_TOKEN", settings.get("instagram_access_token")) or "").strip()
+    token = _token(settings)
     user_id = str(get_config("INSTAGRAM_USER_ID", settings.get("instagram_user_id")) or "").strip()
 
     caption_text = (product.get("caption") or "").strip()
@@ -108,7 +161,7 @@ async def post_product(product: dict, settings: dict) -> PostResult:
     hashtag_str  = " ".join(f"#{t}" for t in hashtags if t)
     full_caption = f"{caption_text}\n\n{hashtag_str}".strip()
 
-    image_url = (product.get("images") or [""])[0]
+    image_url = _publishable_image_url((product.get("images") or [""])[0], settings)
 
     if not token or not user_id:
         log.info("Instagram: no API credentials — simulating post for product %s", pid)
@@ -125,6 +178,7 @@ async def post_product(product: dict, settings: dict) -> PostResult:
             creation_id = await _create_container(
                 client, user_id, token, image_url, full_caption
             )
+            await _wait_until_container_ready(client, creation_id, token, settings)
 
             log.info("Instagram: publishing container %s", creation_id)
             media_id = await _publish_container(client, user_id, token, creation_id)
@@ -145,14 +199,14 @@ async def post_product(product: dict, settings: dict) -> PostResult:
 
 async def reply_to_comment(comment_id: str, message: str, settings: dict) -> bool:
     """Reply to an Instagram comment via Graph API. Returns True on success."""
-    token = str(get_config("INSTAGRAM_ACCESS_TOKEN", settings.get("instagram_access_token")) or "").strip()
+    token = _token(settings)
     if not token:
         log.warning("Instagram: no access token — cannot reply to comment")
         return False
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(
-                f"{_GRAPH}/{comment_id}/replies",
+                f"{_graph(settings)}/{comment_id}/replies",
                 params={"message": message, "access_token": token},
             )
         body = resp.json()
@@ -168,7 +222,7 @@ async def reply_to_comment(comment_id: str, message: str, settings: dict) -> boo
 
 async def reply_to_dm(sender_id: str, message: str, settings: dict) -> bool:
     """Send a DM reply via the Instagram Messaging API."""
-    token = str(get_config("INSTAGRAM_ACCESS_TOKEN", settings.get("instagram_access_token")) or "").strip()
+    token = _token(settings)
     user_id = str(get_config("INSTAGRAM_USER_ID", settings.get("instagram_user_id")) or "").strip()
     if not token or not user_id:
         log.warning("Instagram: no credentials — cannot send DM")
@@ -176,7 +230,7 @@ async def reply_to_dm(sender_id: str, message: str, settings: dict) -> bool:
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(
-                f"{_GRAPH}/{user_id}/messages",
+                f"{_graph(settings)}/{user_id}/messages",
                 params={"access_token": token},
                 json={
                     "recipient": {"id": sender_id},

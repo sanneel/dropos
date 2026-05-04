@@ -634,7 +634,7 @@ async function batchPost() {
   const ids = [...selectedProducts];
   try {
     await api('/post', 'POST', { product_ids: ids });
-    toast(`${ids.length} queued for posting`, 'success');
+    toast(`${ids.length} queued for Instagram posting`, 'success');
     selectedProducts.clear();
     await refreshStats();
     await loadApproved();
@@ -657,7 +657,7 @@ async function quickApprove(id) {
 async function quickPost(id) {
   try {
     await api(`/products/${id}/post`, 'POST');
-    toast('Posted!', 'success');
+    toast('Queued for Instagram posting', 'success');
     closeDetail();
     approvedProducts = approvedProducts.filter(p => p.id !== id);
     selectedProducts.delete(id);
@@ -828,6 +828,31 @@ async function showDetail(id) {
           <div class="card-sm" style="font-size:12.5px;color:var(--t2);line-height:1.7">${p.caption}</div>
         </div>` : ''}
 
+        <div class="detail-sec">
+          <span class="detail-sec-lbl">Edit product</span>
+          <div class="form-group">
+            <label>Store name</label>
+            <input type="text" id="edit-name" value="${(p.product_name || '').replace(/"/g,'&quot;')}"/>
+          </div>
+          <div class="form-group">
+            <label>Short description</label>
+            <textarea id="edit-description" rows="3" style="width:100%;resize:vertical">${p.description || ''}</textarea>
+          </div>
+          <div class="form-group">
+            <label>Sell price</label>
+            <input type="number" id="edit-price" value="${p.sell_price_eur ?? 0}" step="0.01" min="0"/>
+          </div>
+          <div class="form-group">
+            <label>Caption</label>
+            <textarea id="edit-caption" rows="5" style="width:100%;resize:vertical">${p.caption || ''}</textarea>
+          </div>
+          <div class="form-group">
+            <label>Hashtags</label>
+            <input type="text" id="edit-tags" value="${tags.join(', ')}"/>
+          </div>
+          <button class="btn btn-green" onclick="saveProductEdit(${p.id})">Save product changes</button>
+        </div>
+
         ${tags.length ? `
         <div class="detail-sec">
           <span class="detail-sec-lbl">Hashtags</span>
@@ -874,6 +899,35 @@ function closeDetail() { document.getElementById('detail-overlay')?.remove(); }
 async function saveNote(id) {
   const note = document.getElementById('review-note-input')?.value || '';
   try { await api(`/products/${id}/note`, 'PATCH', { note }); toast('Note saved', 'success'); } catch(e) {}
+}
+
+async function saveProductEdit(id) {
+  const payload = {
+    product_name: document.getElementById('edit-name')?.value || '',
+    description: document.getElementById('edit-description')?.value || '',
+    sell_price_eur: parseFloat(document.getElementById('edit-price')?.value || '0'),
+    caption: document.getElementById('edit-caption')?.value || '',
+    hashtags: (document.getElementById('edit-tags')?.value || '')
+      .split(',')
+      .map(s => s.trim().replace(/^#/, ''))
+      .filter(Boolean),
+  };
+  try {
+    const res = await api(`/products/${id}`, 'PATCH', payload);
+    toast('Product updated', 'success');
+    const updated = res.product;
+    const lists = [queueProducts, approvedProducts, rejectedProducts];
+    lists.forEach(list => {
+      const idx = list.findIndex(p => p.id === id);
+      if (idx >= 0) list[idx] = updated;
+    });
+    showDetail(id);
+    if (currentPage === 'queue') renderQueueGrid();
+    if (currentPage === 'approved') renderApprovedGrid();
+    if (currentPage === 'rejected') renderRejectedTable();
+  } catch(e) {
+    toast(`Save failed: ${e.message || e}`, 'error');
+  }
 }
 
 async function reconsider(id) {
@@ -1028,6 +1082,11 @@ async function renderSettings() {
               ? '✓ Graph API configured — posts will publish directly to Instagram'
               : 'Not set — posts will be simulated'}
           </div>
+        </div>
+        <div class="form-group">
+          <label>Public app URL</label>
+          <input type="text" id="s-public-url" value="${s.public_base_url || ''}" placeholder="https://your-app.up.railway.app"/>
+          <div style="font-size:11px;color:var(--t3);margin-top:5px">Used as an image proxy for Instagram if supplier image URLs block Meta.</div>
         </div>
         <div class="card-sm" style="margin-top:4px">
           <div style="font-size:11px;color:var(--t3);line-height:1.6">
@@ -1486,6 +1545,7 @@ async function saveSettings() {
     sell_markup_high: parseFloat(g('s-mh')?.value || 2.2),
     scan_keywords:  scanKws,
     google_sheets_id:          g('s-sheets-id')?.value    || '',
+    public_base_url:           g('s-public-url')?.value    || '',
     cssbuy_username:      g('s-cssbuy-user')?.value    || '',
     cssbuy_source:        g('s-cssbuy-source')?.value  || '1688',
     local_scraping_only:  g('s-local-only')?.checked ?? false,
