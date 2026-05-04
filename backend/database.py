@@ -77,6 +77,13 @@ class Database:
             rows = await cur.fetchall()
         return [_row_to_product(r) for r in rows]
 
+    async def get_all_products(self, limit: int = 5000) -> list:
+        async with self._db.execute(
+            "SELECT * FROM products ORDER BY id DESC LIMIT ?", (limit,)
+        ) as cur:
+            rows = await cur.fetchall()
+        return [_row_to_product(r) for r in rows]
+
     async def count_products(self, stage: str = "pending") -> int:
         async with self._db.execute(
             "SELECT COUNT(*) FROM products WHERE stage=?", (stage,)
@@ -90,6 +97,93 @@ class Database:
         ) as cur:
             row = await cur.fetchone()
         return _row_to_product(row) if row else None
+
+    async def upsert_product_backup(self, p: dict) -> None:
+        source_id = str(p.get("source_id") or "").strip()
+        if not source_id:
+            return
+        await self._db.execute("""
+            INSERT INTO products
+            (job_id, source, source_id, title, title_translated, product_name,
+             price_cny, cost_eur, sell_price_eur, margin_pct, orders, rating,
+             images_json, url, category, keyword,
+             score, niche_fit, visual_appeal, trend_score, competition_score,
+             caption, hashtags_json, ai_provider, stage, rejection_reason, review_note,
+             approved_at, rejected_at, posted_at, created_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(source_id) DO UPDATE SET
+             job_id=excluded.job_id,
+             source=excluded.source,
+             title=excluded.title,
+             title_translated=excluded.title_translated,
+             product_name=excluded.product_name,
+             price_cny=excluded.price_cny,
+             cost_eur=excluded.cost_eur,
+             sell_price_eur=excluded.sell_price_eur,
+             margin_pct=excluded.margin_pct,
+             orders=excluded.orders,
+             rating=excluded.rating,
+             images_json=excluded.images_json,
+             url=excluded.url,
+             category=excluded.category,
+             keyword=excluded.keyword,
+             score=excluded.score,
+             niche_fit=excluded.niche_fit,
+             visual_appeal=excluded.visual_appeal,
+             trend_score=excluded.trend_score,
+             competition_score=excluded.competition_score,
+             caption=excluded.caption,
+             hashtags_json=excluded.hashtags_json,
+             ai_provider=excluded.ai_provider,
+             stage=excluded.stage,
+             rejection_reason=excluded.rejection_reason,
+             review_note=excluded.review_note,
+             approved_at=excluded.approved_at,
+             rejected_at=excluded.rejected_at,
+             posted_at=excluded.posted_at
+        """, (
+            p.get("job_id", 0),
+            p.get("source", ""),
+            source_id,
+            p.get("title", ""),
+            p.get("title_translated", ""),
+            p.get("product_name", ""),
+            p.get("price_cny", 0),
+            p.get("cost_eur", 0),
+            p.get("sell_price_eur", 0),
+            p.get("margin_pct", 0),
+            p.get("orders", 0),
+            p.get("rating", 0),
+            json.dumps(p.get("images", [])),
+            p.get("url", ""),
+            p.get("category", ""),
+            p.get("keyword", ""),
+            p.get("score", 0),
+            p.get("niche_fit", 0),
+            p.get("visual_appeal", 0),
+            p.get("trend_score", 0),
+            p.get("competition_score", 0),
+            p.get("caption", ""),
+            json.dumps(p.get("hashtags", [])),
+            p.get("ai_provider", ""),
+            p.get("stage", "pending"),
+            p.get("rejection_reason"),
+            p.get("review_note"),
+            p.get("approved_at"),
+            p.get("rejected_at"),
+            p.get("posted_at"),
+            p.get("created_at") or _now(),
+        ))
+        await self._db.commit()
+
+    async def upsert_product_backups(self, products: list) -> int:
+        count = 0
+        for product in products or []:
+            before = count
+            await self.upsert_product_backup(product)
+            if product.get("source_id") and count == before:
+                count += 1
+        return count
 
     async def set_stage(self, pid: int, stage: str, reason: str = None, note: str = None):
         ts_field = {
