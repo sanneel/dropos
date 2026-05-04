@@ -2,7 +2,7 @@
 AI enrichment layer.
 
 Priority:
-  1. Gemini 2.0 Flash  (gemini_key set)    — image analysis, 15 RPM free
+  1. Gemini 2.5 Flash-Lite  (gemini_key set) — image analysis
   2. Groq Llama 3.3    (groq_key set)      — 14,400 RPD free, text-only
   3. Claude Haiku 4.5  (anthropic_key set) — text-only scoring
   4. Mock rule-based   (no keys)           — deterministic, free
@@ -252,6 +252,20 @@ _CAPTION_TEMPLATES = [
 # ── Gemini 2.5 Flash-Lite ──────────────────────────────────────────────────────
 
 _GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+_GEMINI_MODEL_ALIASES = {
+    "gemini-2.0-flash": "gemini-2.5-flash-lite",
+    "gemini-2.0-flash-lite": "gemini-2.5-flash-lite",
+}
+
+
+def _gemini_model(settings: dict) -> str:
+    configured = get_config("GEMINI_MODEL", settings.get("gemini_model", "gemini-2.5-flash-lite"))
+    model = str(configured or "gemini-2.5-flash-lite").strip()
+    replacement = _GEMINI_MODEL_ALIASES.get(model)
+    if replacement:
+        log.warning("Gemini model %s is deprecated; using %s", model, replacement)
+        return replacement
+    return model
 
 
 async def _fetch_image_b64(url: str) -> Optional[tuple]:
@@ -280,7 +294,7 @@ async def gemini_enrich(product: dict, settings: dict) -> Optional[dict]:
     if _GEMINI_QUOTA_EXHAUSTED:
         return None
 
-    model = get_config("GEMINI_MODEL", settings.get("gemini_model", "gemini-2.0-flash-lite"))
+    model = _gemini_model(settings)
     title   = product.get("title_translated") or product.get("title", "Unknown")
     img_url = (product.get("images") or [""])[0]
 

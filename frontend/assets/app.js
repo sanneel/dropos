@@ -1173,7 +1173,7 @@ async function renderSettings() {
           <label>Gemini key <span style="color:var(--green);font-weight:400">— recommended (cheapest + image analysis)</span></label>
           <input type="password" id="s-gemini" value="${s.gemini_key || ''}" placeholder="AIza…"/>
           <div style="font-size:11px;margin-top:5px;color:${s.gemini_key ? 'var(--green)' : 'var(--t3)'}">
-            ${s.gemini_key ? '✓ Gemini 2.0 Flash active — image analysis enabled' : 'Not set — get free key at aistudio.google.com'}
+            ${s.gemini_key ? '✓ Gemini 2.5 Flash-Lite active — image analysis enabled' : 'Not set — get free key at aistudio.google.com'}
           </div>
         </div>
         <div class="form-group">

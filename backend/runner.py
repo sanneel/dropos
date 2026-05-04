@@ -159,7 +159,7 @@ async def process_scraped_products(job_id: int, raw_all: list, settings: Optiona
     total = len(candidates)
     min_ai_score = float(get_config("MIN_SCORE", settings.get("min_score", 7.0)))
     if get_config("GEMINI_KEY", settings.get("gemini_key")):
-        scorer_name = "gemini-2.0-flash"
+        scorer_name = "gemini-2.5-flash-lite"
     elif get_config("GROQ_KEY", settings.get("groq_key")):
         scorer_name = "groq/llama-3.3-70b"
     elif get_config("ANTHROPIC_KEY", settings.get("anthropic_key")):
@@ -174,7 +174,7 @@ async def process_scraped_products(job_id: int, raw_all: list, settings: Optiona
     use_gemini = bool(get_config("GEMINI_KEY", settings.get("gemini_key")))
 
     for i, product in enumerate(candidates):
-        # Gemini 2.0 Flash: 15 RPM free — 10s gap = 6 RPM, well under limit
+        # Keep Gemini visual analysis comfortably below rate limits.
         if use_gemini and i > 0:
             await asyncio.sleep(10)
 
