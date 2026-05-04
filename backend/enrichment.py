@@ -81,8 +81,20 @@ ONLY reject if product is:
 - industrial/tool item
 - bulk/business item
 - unrelated ugly random item
+- generic gift for mother, father, parent, teacher, child, baby, family, coworker, or friend unless it clearly also works as a romantic partner gift
+- mom/dad/family text products (for example "gift for mom", "mother", "dad") because this store is for partners and couples
 - clothing unless clearly gift-worthy
 - unsafe or low quality junk
+
+HARD STORE MATCH RULE:
+A product must plausibly be bought for a boyfriend, girlfriend, wife, husband, crush, or romantic partner.
+If it is mainly a gift for mother/father/parent/family/baby/children, store_match must be false even if it is cute.
+
+IMAGE TEXT CHECK:
+Look carefully at the product photo. If any visible Chinese characters or Chinese words appear anywhere on the product, packaging, label, sticker, instruction card, or photo background:
+- set has_chinese_text to true
+- write chinese_text_note as a short explanation of where the Chinese text appears
+If there is no visible Chinese text, set has_chinese_text to false and chinese_text_note to "".
 
 SCORING (1-10):
 
@@ -120,6 +132,7 @@ Respond with a single JSON object containing these exact keys:
 score, niche_fit, visual_appeal, trend_score, competition_score (all numbers 1-10),
 store_match (boolean), product_name (string, 3-5 Georgian words), caption (string, 2-3 Georgian sentences),
 hashtags (array of 15 strings without # symbol), audience (one of: male female unisex kids),
+has_chinese_text (boolean), chinese_text_note (string),
 rejection_reason (string, empty if store_match is true).
 """     
 
@@ -133,6 +146,7 @@ STORE PROFILE:
 - Sell price range: ₾{price_min}–₾{price_max}
 - Examples of products we sell: {example_products}
 - What we NEVER sell: generic household items with no romantic angle, industrial/bulk items, clothing, anything that could not plausibly be a gift between partners
+- Also reject gifts mainly for mother, father, parents, family, babies, children, teachers, coworkers, or friends unless they clearly work as a romantic partner gift
 
 A product MUST pass this test: "Would someone buy this for their boyfriend, girlfriend, husband, or wife?" If no, it does not belong in our store.
 
@@ -151,6 +165,8 @@ Also provide:
 - caption: 2-3 sentence Georgian Instagram caption as if tagging your partner
 - hashtags: exactly 15 hashtag strings (no # symbol) — couple, gift, and relationship tags
 - audience: one of male, female, unisex, kids
+- has_chinese_text: false for text-only analysis
+- chinese_text_note: empty string for text-only analysis
 - rejection_reason: if store_match is false, explain specifically why it does not work as a couple gift. Otherwise empty string.
 
 Respond with a single JSON object and nothing else.\
@@ -237,6 +253,8 @@ def mock_enrich(product: dict) -> dict:
         "caption":           random.choice(_CAPTION_TEMPLATES),
         "hashtags":          _get_tags(product),
         "audience":          infer_audience(product),
+        "has_chinese_text":  False,
+        "chinese_text_note": "",
         "rejection_reason":  "" if store_match else "Score below threshold for niche",
         "ai_provider":       "mock",
     }
@@ -358,6 +376,8 @@ async def gemini_enrich(product: dict, settings: dict) -> Optional[dict]:
                 result["store_match"] = float(result.get("niche_fit", 0)) >= 6.0
             if "audience" not in result:
                 result["audience"] = infer_audience(product)
+            result["has_chinese_text"] = bool(result.get("has_chinese_text", False))
+            result["chinese_text_note"] = str(result.get("chinese_text_note") or "")
             result["ai_provider"] = "gemini"
 
             log.info(
@@ -432,6 +452,8 @@ async def anthropic_enrich(product: dict, settings: dict) -> Optional[dict]:
             result["store_match"] = float(result.get("niche_fit", 0)) >= 7.0
         if "audience" not in result:
             result["audience"] = infer_audience(product)
+        result["has_chinese_text"] = False
+        result["chinese_text_note"] = ""
         result["ai_provider"] = "anthropic"
         return result
 
@@ -501,6 +523,8 @@ async def groq_enrich(product: dict, settings: dict) -> Optional[dict]:
             result["store_match"] = float(result.get("niche_fit", 0)) >= 7.0
         if "audience" not in result:
             result["audience"] = infer_audience(product)
+        result["has_chinese_text"] = False
+        result["chinese_text_note"] = ""
         result["ai_provider"] = "groq"
 
         log.info(

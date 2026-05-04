@@ -15,13 +15,14 @@ const IC = {
 };
 
 // ── State ──────────────────────────────────────────────────────────────────
-let currentPage = 'dashboard';
+let currentPage = 'queue';
 let stats = {};
 let selectedProducts = new Set();
 let activeJobPoll = null;
 
 let queueProducts = [], queueTotal = 0, queueSort = 'score';
 let approvedProducts = [], approvedTotal = 0;
+let textEditProducts = [], textEditTotal = 0;
 let rejectedProducts = [], rejectedTotal = 0;
 let scanKeywords = ['romantic gift'];
 let scanSource   = 'taobao';
@@ -31,10 +32,11 @@ let rejectTargetId = null;
 
 // ── Nav ────────────────────────────────────────────────────────────────────
 const NAV_PAGES = [
-  { id:'dashboard', label:'Dashboard',    icon:'dashboard', section:'Overview' },
-  { id:'scan',      label:'Scan',         icon:'scan'                          },
+  { id:'dashboard', label:'Today',        icon:'dashboard', section:'Overview' },
+  { id:'scan',      label:'Find',         icon:'scan'                          },
   { id:'pipeline',  label:'Pipeline',     icon:'scan',      section:undefined  },
-  { id:'queue',     label:'Review queue', icon:'queue',     section:'Pipeline', stageKey:'pending'  },
+  { id:'queue',     label:'Review',       icon:'queue',     section:'Pipeline', stageKey:'pending'  },
+  { id:'textEdit',  label:'Text edit',    icon:'settings',  stageKey:'text_edit' },
   { id:'approved',  label:'Approved',     icon:'approved',  stageKey:'approved' },
   { id:'posted',    label:'Posted',       icon:'posted'     },
   { id:'rejected',  label:'Rejected',     icon:'rejected'   },
@@ -48,6 +50,7 @@ function resetSelectionState() {
 function resetCatalogState() {
   queueProducts = [];
   approvedProducts = [];
+  textEditProducts = [];
 }
 
 function resetPipelineState() {
@@ -136,7 +139,7 @@ function refreshStats() {
 
 // ── Dashboard ──────────────────────────────────────────────────────────────
 async function renderDashboard() {
-  setTitle('Dashboard');
+  setTitle('Today');
   document.getElementById('topbar-actions').innerHTML = '';
   document.getElementById('content').innerHTML = '<div style="color:var(--t3);font-size:12px;padding:40px 0;text-align:center">Loading…</div>';
 
@@ -164,18 +167,18 @@ async function renderDashboard() {
   document.getElementById('content').innerHTML = `
     <div class="dash-stat-grid">
       <div class="dash-stat-card">
-        <div class="dash-stat-label">Review queue</div>
+        <div class="dash-stat-label">Ready to review</div>
         <div class="dash-stat-val" style="color:var(--blue)">${s.pending ?? 0}</div>
         <div class="dash-stat-actions">
-          <button class="dash-stat-btn" onclick="navigate('queue')">View pending</button>
-          <button class="dash-stat-btn" onclick="navigate('scan')">Start scan</button>
+          <button class="dash-stat-btn" onclick="navigate('queue')">Review now</button>
+          <button class="dash-stat-btn" onclick="navigate('scan')">Find products</button>
         </div>
       </div>
       <div class="dash-stat-card">
         <div class="dash-stat-label">Approved</div>
         <div class="dash-stat-val" style="color:var(--green)">${s.approved ?? 0}</div>
         <div class="dash-stat-actions">
-          <button class="dash-stat-btn" onclick="navigate('approved')">View approved</button>
+          <button class="dash-stat-btn" onclick="navigate('approved')">Post next</button>
           <button class="dash-stat-btn" onclick="navigate('posted')">Posted: ${s.posted ?? 0}</button>
         </div>
       </div>
@@ -413,7 +416,7 @@ async function startScan() {
 
 // ── Queue ──────────────────────────────────────────────────────────────────
 async function renderQueue() {
-  setTitle('Review queue');
+  setTitle('Review', 'approve winners, reject the rest');
   document.getElementById('topbar-actions').innerHTML = `
     <select onchange="queueSort=this.value;loadQueue()" style="width:auto;font-size:12px;padding:6px 10px">
       <option value="score"   ${queueSort==='score'  ?'selected':''}>Score ↓</option>
@@ -448,10 +451,10 @@ function renderQueueGrid() {
   const canMore = queueProducts.length < queueTotal;
   document.getElementById('content').innerHTML = `
     <div class="queue-toolbar">
-      <span style="font-size:12px;color:var(--t3)">${queueTotal} products</span>
+      <span style="font-size:12px;color:var(--t3)">${queueTotal} products waiting</span>
       <button class="btn btn-sm" onclick="selectAll()">Select all</button>
-      <button class="btn btn-sm btn-green" onclick="selectAll();batchApprove()">Approve all</button>
-      <button class="btn btn-sm btn-danger" onclick="selectAll();batchReject()">Reject all</button>
+      <button class="btn btn-sm btn-green" onclick="selectAll();batchApprove()">Approve visible</button>
+      <button class="btn btn-sm btn-danger" onclick="selectAll();batchReject()">Reject visible</button>
       <button class="btn btn-sm" onclick="clearSel()">Clear</button>
     </div>
     <div class="product-grid" id="product-grid">
@@ -506,6 +509,44 @@ function renderApprovedGrid() {
   updateSelBar('post');
 }
 
+async function renderTextEdit() {
+  setTitle('Text edit', 'approved products with Chinese text in the photo');
+  document.getElementById('topbar-actions').innerHTML = `<button class="btn btn-sm" onclick="loadTextEdit()">↻</button>`;
+  await loadTextEdit();
+}
+
+async function loadTextEdit(append = false) {
+  const offset = append ? textEditProducts.length : 0;
+  if (!append) textEditProducts = [];
+  const data = await api(`/products?stage=text_edit&limit=50&offset=${offset}&sort=score`).catch(() => ({ products: [], total: 0 }));
+  textEditProducts = append ? textEditProducts.concat(data.products) : data.products;
+  textEditTotal = data.total;
+  renderTextEditGrid();
+}
+
+function renderTextEditGrid() {
+  if (!textEditProducts.length) {
+    document.getElementById('content').innerHTML = `
+      <div class="empty" style="margin-top:48px">
+        <span class="empty-icon">文</span>
+        <h3>No products need text cleanup</h3>
+        <p>Products with Chinese text appear here after you approve them</p>
+      </div>`;
+    return;
+  }
+  const canMore = textEditProducts.length < textEditTotal;
+  document.getElementById('content').innerHTML = `
+    <div class="queue-toolbar">
+      <span style="font-size:12px;color:var(--t3)">${textEditTotal} need image text cleanup</span>
+    </div>
+    <div class="product-grid" id="product-grid">
+      ${textEditProducts.map(p => productCard(p, 'text_edit')).join('')}
+    </div>
+    ${canMore ? `<div style="text-align:center;margin-top:20px">
+      <button class="btn" onclick="loadTextEdit(true)">Load more (${textEditTotal - textEditProducts.length} remaining)</button>
+    </div>` : ''}`;
+}
+
 // ── Product card ───────────────────────────────────────────────────────────
 function productCard(p, mode) {
   const sel = selectedProducts.has(p.id);
@@ -522,8 +563,14 @@ function productCard(p, mode) {
                <button class="pca-reject" onclick="event.stopPropagation();showRejectModal(${p.id})">✕</button>`;
   }
 
+  if (mode === 'text_edit') {
+    actions = `<button class="pca-post" onclick="event.stopPropagation();markTextEdited(${p.id})">Cleaned</button>
+               <button class="pca-reject" onclick="event.stopPropagation();showRejectModal(${p.id})">Reject</button>`;
+  }
+
   const name = p.product_name || p.title_translated || p.title || 'Unknown';
   const provider = p.ai_provider ? String(p.ai_provider).toUpperCase() : '';
+  const ordersLabel = p.source_platform === 'taobao' ? 'sales unknown' : `${(p.orders ?? 0).toLocaleString()} sold`;
   const cat  = [p.keyword ? `#${p.keyword}` : '', p.category].filter(Boolean).join(' · ');
 
   return `
@@ -541,6 +588,7 @@ function productCard(p, mode) {
       </div>
       <div class="pcard-body">
         <div class="pcard-name">${name}</div>
+        ${p.has_chinese_text ? `<span class="badge badge-amber" style="align-self:flex-start">Chinese text</span>` : ''}
         <div class="pcard-cat">${cat || '—'}</div>
         <div class="pcard-pricing">
           <span class="p-cost">₾${p.cost_eur ?? '?'}</span>
@@ -550,7 +598,7 @@ function productCard(p, mode) {
         </div>
         <div class="pcard-social">
           <span>★ ${p.rating ?? 0}</span>
-          <span>${(p.orders ?? 0).toLocaleString()} sold</span>
+          <span>${ordersLabel}</span>
         </div>
       </div>
       ${actions ? `<div class="pcard-actions">${actions}</div>` : ''}
@@ -561,6 +609,8 @@ function productCard(p, mode) {
 function toggleSel(id) {
   if (selectedProducts.has(id)) {
     selectedProducts.delete(id);
+  } else if (mode === 'text_edit') {
+    actions = `<button class="btn btn-green" onclick="batchMarkTextEdited()">Mark cleaned ${n}</button>`;
   } else {
     if (selectedProducts.size >= 10) { toast('Max 10 at once', 'error'); return; }
     selectedProducts.add(id);
@@ -569,18 +619,22 @@ function toggleSel(id) {
   if (card) {
     card.className = `product-card${selectedProducts.has(id) ? ' selected' : ''}`;
   }
-  updateSelBar(currentPage === 'approved' ? 'post' : 'approve');
+  updateSelBar(currentPage === 'approved' ? 'post' : currentPage === 'textEdit' ? 'text_edit' : 'approve');
 }
 
 function selectAll() {
-  const list = currentPage === 'approved' ? approvedProducts : queueProducts;
+  const list = currentPage === 'approved' ? approvedProducts : currentPage === 'textEdit' ? textEditProducts : queueProducts;
   list.slice(0, 10).forEach(p => selectedProducts.add(p.id));
-  if (currentPage === 'approved') renderApprovedGrid(); else renderQueueGrid();
+  if (currentPage === 'approved') renderApprovedGrid();
+  else if (currentPage === 'textEdit') renderTextEditGrid();
+  else renderQueueGrid();
 }
 
 function clearSel() {
   selectedProducts.clear();
-  if (currentPage === 'approved') renderApprovedGrid(); else renderQueueGrid();
+  if (currentPage === 'approved') renderApprovedGrid();
+  else if (currentPage === 'textEdit') renderTextEditGrid();
+  else renderQueueGrid();
 }
 
 function updateSelBar(mode = 'approve') {
@@ -609,16 +663,32 @@ function updateSelBar(mode = 'approve') {
 async function batchApprove() {
   const ids = [...selectedProducts];
   try {
-    await api('/approve', 'POST', { product_ids: ids });
-    toast(`${ids.length} approved`, 'success');
+    const res = await api('/approve', 'POST', { product_ids: ids });
+    const textEdit = res.text_edit || 0;
+    const approved = res.approved || 0;
+    toast(textEdit ? `${approved} approved · ${textEdit} moved to Text edit` : `${approved || ids.length} approved`, 'success');
     selectedProducts.clear();
     await refreshStats();
     await loadQueue();
   } catch(e) {}
 }
 
+async function batchMarkTextEdited() {
+  const ids = [...selectedProducts];
+  if (!ids.length) return;
+  try {
+    await Promise.all(ids.map(id => api(`/products/${id}/text-edited`, 'POST')));
+    toast(`${ids.length} moved to Approved`, 'success');
+    selectedProducts.clear();
+    await refreshStats();
+    await loadTextEdit();
+  } catch(e) {}
+}
+
 async function batchReject() {
   const ids = [...selectedProducts];
+  if (!ids.length) return;
+  if (!confirm(`Reject ${ids.length} selected product${ids.length === 1 ? '' : 's'}?`)) return;
   try {
     await api('/reject', 'POST', { product_ids: ids });
     toast(`${ids.length} rejected`, 'success');
@@ -632,6 +702,8 @@ async function batchReject() {
 
 async function batchPost() {
   const ids = [...selectedProducts];
+  if (!ids.length) return;
+  if (!confirm(`Queue ${ids.length} product${ids.length === 1 ? '' : 's'} for Instagram posting?`)) return;
   try {
     await api('/post', 'POST', { product_ids: ids });
     toast(`${ids.length} queued for Instagram posting`, 'success');
@@ -643,13 +715,26 @@ async function batchPost() {
 
 async function quickApprove(id) {
   try {
-    await api(`/products/${id}/approve`, 'POST');
-    toast('Approved', 'success');
+    const res = await api(`/products/${id}/approve`, 'POST');
+    toast(res.stage === 'text_edit' ? 'Moved to Text edit' : 'Approved', 'success');
     closeDetail();
     queueProducts = queueProducts.filter(p => p.id !== id);
     selectedProducts.delete(id);
     queueTotal = Math.max(0, queueTotal - 1);
     renderQueueGrid();
+    refreshStats();
+  } catch(e) {}
+}
+
+async function markTextEdited(id) {
+  try {
+    await api(`/products/${id}/text-edited`, 'POST');
+    toast('Moved to Approved', 'success');
+    closeDetail();
+    textEditProducts = textEditProducts.filter(p => p.id !== id);
+    selectedProducts.delete(id);
+    textEditTotal = Math.max(0, textEditTotal - 1);
+    renderTextEditGrid();
     refreshStats();
   } catch(e) {}
 }
@@ -713,9 +798,11 @@ async function confirmReject() {
     closeDetail();
     queueProducts = queueProducts.filter(p => p.id !== id);
     approvedProducts = approvedProducts.filter(p => p.id !== id);
+    textEditProducts = textEditProducts.filter(p => p.id !== id);
     selectedProducts.delete(id);
     if (currentPage === 'queue') { queueTotal = Math.max(0, queueTotal - 1); renderQueueGrid(); }
     else if (currentPage === 'approved') { approvedTotal = Math.max(0, approvedTotal - 1); renderApprovedGrid(); }
+    else if (currentPage === 'textEdit') { textEditTotal = Math.max(0, textEditTotal - 1); renderTextEditGrid(); }
     refreshStats();
   } catch(e) {}
 }
@@ -740,8 +827,8 @@ async function showDetail(id) {
     </div>`;
   };
 
-  const stageBadge = { pending:'badge-amber', approved:'badge-green', posted:'badge-blue', rejected:'badge-red' }[stage] || 'badge-gray';
-  const stageLabel = { pending:'Pending', approved:'Approved', posted:'Posted', rejected:'Rejected' }[stage] || stage;
+  const stageBadge = { pending:'badge-amber', approved:'badge-green', text_edit:'badge-amber', posted:'badge-blue', rejected:'badge-red' }[stage] || 'badge-gray';
+  const stageLabel = { pending:'Pending', approved:'Approved', text_edit:'Text edit', posted:'Posted', rejected:'Rejected' }[stage] || stage;
 
   let actionHtml = '';
   if (stage === 'pending')
@@ -749,6 +836,9 @@ async function showDetail(id) {
                   <button class="btn btn-danger" onclick="showRejectModal(${p.id})">Reject</button>`;
   else if (stage === 'approved')
     actionHtml = `<button class="btn btn-primary" style="flex:1" onclick="quickPost(${p.id})">Post to Instagram →</button>
+                  <button class="btn btn-danger" onclick="showRejectModal(${p.id})">Reject</button>`;
+  else if (stage === 'text_edit')
+    actionHtml = `<button class="btn btn-green" style="flex:1" onclick="markTextEdited(${p.id})">Mark cleaned</button>
                   <button class="btn btn-danger" onclick="showRejectModal(${p.id})">Reject</button>`;
   else if (stage === 'rejected')
     actionHtml = `<button class="btn btn-amber" style="flex:1" onclick="reconsider(${p.id})">Move back to queue</button>`;
@@ -764,7 +854,10 @@ async function showDetail(id) {
           <span class="badge ${stageBadge}">${stageLabel}</span>
           ${p.source ? `<span class="badge badge-gray">${p.source.replace('_mock','')}</span>` : ''}
         </div>
-        <button class="btn btn-sm" onclick="closeDetail()">✕</button>
+        <div class="detail-actions">
+          ${actionHtml}
+          <button class="btn btn-sm" onclick="closeDetail()">Close</button>
+        </div>
       </div>
       <div class="detail-body">
         ${img ? `<img class="detail-img" src="${img}" onerror="this.style.display='none'">` : ''}
@@ -772,6 +865,12 @@ async function showDetail(id) {
         <div style="font-family:var(--ff-d);font-size:19px;font-weight:800;line-height:1.2;margin-bottom:4px">${p.product_name || '—'}</div>
         <div style="font-size:11px;color:var(--t3);font-family:var(--ff-m);margin-bottom:${p.keyword ? '3px' : '14px'};line-height:1.5">${p.title_translated || p.title || ''}</div>
         ${p.keyword ? `<div style="font-size:11px;color:var(--t3);margin-bottom:14px">Keyword: <span style="color:var(--accent)">${p.keyword}</span></div>` : ''}
+
+        ${p.has_chinese_text ? `
+        <div class="detail-sec">
+          <span class="detail-sec-lbl">Chinese text detected</span>
+          <div class="card-sm" style="font-size:12px;color:var(--amber);line-height:1.6">${p.chinese_text_note || 'Chinese text is visible in the product image.'}</div>
+        </div>` : ''}
 
         <div class="detail-sec">
           <span class="detail-sec-lbl">Pricing</span>
@@ -828,8 +927,8 @@ async function showDetail(id) {
           <div class="card-sm" style="font-size:12.5px;color:var(--t2);line-height:1.7">${p.caption}</div>
         </div>` : ''}
 
-        <div class="detail-sec">
-          <span class="detail-sec-lbl">Edit product</span>
+        <details class="detail-sec edit-box">
+          <summary>Edit product</summary>
           <div class="form-group">
             <label>Store name</label>
             <input type="text" id="edit-name" value="${(p.product_name || '').replace(/"/g,'&quot;')}"/>
@@ -851,7 +950,7 @@ async function showDetail(id) {
             <input type="text" id="edit-tags" value="${tags.join(', ')}"/>
           </div>
           <button class="btn btn-green" onclick="saveProductEdit(${p.id})">Save product changes</button>
-        </div>
+        </details>
 
         ${tags.length ? `
         <div class="detail-sec">
@@ -882,11 +981,6 @@ async function showDetail(id) {
             ${p.posted_at   ? `<div style="color:var(--blue)">Posted: ${fmtDate(p.posted_at)}</div>` : ''}
           </div>
         </div>
-
-        ${actionHtml ? `
-        <div style="display:flex;gap:8px;padding-top:16px;border-top:1px solid var(--b1)">
-          ${actionHtml}
-        </div>` : ''}
 
         ${p.url ? `<a href="${p.url}" target="_blank" style="display:block;text-align:center;color:var(--t3);font-size:11px;margin-top:14px;text-decoration:none;font-family:var(--ff-m)">View on source ↗</a>` : ''}
       </div>
@@ -1745,6 +1839,7 @@ const PAGE_RENDERERS = {
   scan:      renderScan,
   pipeline:  renderPipeline,
   queue:     renderQueue,
+  textEdit:  renderTextEdit,
   approved:  renderApproved,
   posted:    renderPosted,
   rejected:  renderRejected,
@@ -1760,6 +1855,19 @@ async function renderPage() {
 }
 
 // ── Boot ───────────────────────────────────────────────────────────────────
-refreshStats().then(() => { buildNav(); renderPage(); });
+function chooseStartPage() {
+  if ((stats.pending || 0) > 0) return 'queue';
+  if ((stats.text_edit || 0) > 0) return 'textEdit';
+  if ((stats.approved || 0) > 0) return 'approved';
+  return 'dashboard';
+}
+
+refreshStats().then(() => {
+  currentPage = chooseStartPage();
+  buildNav();
+  renderPage();
+});
 setInterval(refreshStats, 20000);
 api('/settings').then(s => { scanSource = String(s.cssbuy_source || '1688'); }).catch(() => {});
+
+

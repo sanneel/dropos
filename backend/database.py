@@ -28,8 +28,9 @@ class Database:
              price_cny, cost_eur, sell_price_eur, margin_pct, orders, rating,
              images_json, url, category, keyword,
              score, niche_fit, visual_appeal, trend_score, competition_score,
-             caption, description, hashtags_json, ai_provider, stage, created_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             caption, description, hashtags_json, ai_provider, has_chinese_text,
+             chinese_text_note, stage, created_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             job_id,
             p.get("source", ""),
@@ -56,6 +57,8 @@ class Database:
             p.get("description", ""),
             json.dumps(p.get("hashtags", [])),
             p.get("ai_provider", ""),
+            1 if p.get("has_chinese_text") else 0,
+            p.get("chinese_text_note", ""),
             "pending",
             _now(),
         ))
@@ -109,9 +112,10 @@ class Database:
              price_cny, cost_eur, sell_price_eur, margin_pct, orders, rating,
              images_json, url, category, keyword,
              score, niche_fit, visual_appeal, trend_score, competition_score,
-             caption, description, hashtags_json, ai_provider, stage, rejection_reason, review_note,
+             caption, description, hashtags_json, ai_provider, has_chinese_text, chinese_text_note,
+             stage, rejection_reason, review_note,
              approved_at, rejected_at, posted_at, created_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(source_id) DO UPDATE SET
              job_id=excluded.job_id,
              source=excluded.source,
@@ -137,6 +141,8 @@ class Database:
              description=excluded.description,
              hashtags_json=excluded.hashtags_json,
              ai_provider=excluded.ai_provider,
+             has_chinese_text=excluded.has_chinese_text,
+             chinese_text_note=excluded.chinese_text_note,
              stage=excluded.stage,
              rejection_reason=excluded.rejection_reason,
              review_note=excluded.review_note,
@@ -169,6 +175,8 @@ class Database:
             p.get("description", ""),
             json.dumps(p.get("hashtags", [])),
             p.get("ai_provider", ""),
+            1 if p.get("has_chinese_text") else 0,
+            p.get("chinese_text_note", ""),
             p.get("stage", "pending"),
             p.get("rejection_reason"),
             p.get("review_note"),
@@ -191,6 +199,7 @@ class Database:
     async def set_stage(self, pid: int, stage: str, reason: str = None, note: str = None):
         ts_field = {
             "approved": "approved_at",
+            "text_edit": "approved_at",
             "rejected": "rejected_at",
             "posted": "posted_at",
         }.get(stage)
@@ -224,6 +233,8 @@ class Database:
             "hashtags_json",
             "category",
             "url",
+            "has_chinese_text",
+            "chinese_text_note",
         }
         updates = {k: v for k, v in (data or {}).items() if k in allowed}
         if "sell_price_eur" in updates:
@@ -560,7 +571,7 @@ class Database:
 
     async def get_stats(self) -> dict:
         stats: dict = {}
-        for stage in ("pending", "approved", "posted", "rejected"):
+        for stage in ("pending", "approved", "text_edit", "posted", "rejected"):
             async with self._db.execute(
                 "SELECT COUNT(*) FROM products WHERE stage=?", (stage,)
             ) as cur:
@@ -589,9 +600,9 @@ class Database:
             row = await cur.fetchone()
         stats["avg_score_pending"] = round(row[0] or 0, 1)
 
-        total_reviewed = stats["approved"] + stats["rejected"]
+        total_reviewed = stats["approved"] + stats["text_edit"] + stats["rejected"]
         stats["approval_rate"] = (
-            round(stats["approved"] / total_reviewed * 100, 1) if total_reviewed else 0
+            round((stats["approved"] + stats["text_edit"]) / total_reviewed * 100, 1) if total_reviewed else 0
         )
 
         return stats
@@ -627,6 +638,8 @@ def _row_to_product(row) -> dict:
             except Exception:
                 d[k.replace("_json", "")] = []
             del d[k]
+    if "has_chinese_text" in d:
+        d["has_chinese_text"] = bool(d["has_chinese_text"])
     return d
 
 
@@ -670,6 +683,8 @@ async def init_db():
             description       TEXT DEFAULT '',
             hashtags_json     TEXT,
             ai_provider       TEXT DEFAULT '',
+            has_chinese_text  INTEGER DEFAULT 0,
+            chinese_text_note TEXT DEFAULT '',
             stage             TEXT DEFAULT 'pending',
             rejection_reason  TEXT,
             review_note       TEXT,
@@ -690,6 +705,8 @@ async def init_db():
         ("posted_at", "TEXT"),
         ("ai_provider", "TEXT DEFAULT ''"),
         ("description", "TEXT DEFAULT ''"),
+        ("has_chinese_text", "INTEGER DEFAULT 0"),
+        ("chinese_text_note", "TEXT DEFAULT ''"),
     ])
 
     await conn.execute("""

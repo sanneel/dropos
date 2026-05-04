@@ -377,6 +377,8 @@ label { display: block; font-size: 11px; color: var(--t3); font-family: var(--ff
   display: flex; align-items: center; justify-content: space-between;
   position: sticky; top: 0; background: var(--s1); z-index: 1; gap: 10px;
 }
+.detail-actions { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
+.detail-actions .btn { flex: 0 0 auto !important; }
 .detail-body { padding: 20px; flex: 1; }
 .detail-img { width: 100%; aspect-ratio: 4/3; object-fit: cover; border-radius: var(--r); background: var(--s2); margin-bottom: 16px; display: block; }
 .detail-sec { margin-bottom: 18px; }
@@ -385,6 +387,25 @@ label { display: block; font-size: 11px; color: var(--t3); font-family: var(--ff
   font-family: var(--ff-m); margin-bottom: 10px; padding-bottom: 6px;
   border-bottom: 1px solid var(--b1); display: block;
 }
+.edit-box {
+  background: var(--s2);
+  border: 1px solid var(--b1);
+  border-radius: var(--r);
+  padding: 0;
+}
+.edit-box summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 12px 14px;
+  color: var(--t2);
+  font-size: 11px;
+  font-family: var(--ff-m);
+  text-transform: uppercase;
+  letter-spacing: .7px;
+}
+.edit-box summary::-webkit-details-marker { display: none; }
+.edit-box[open] { padding: 0 14px 14px; }
+.edit-box[open] summary { padding-left: 0; padding-right: 0; margin-bottom: 12px; border-bottom: 1px solid var(--b1); }
 .m3 { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
 .mbox { background: var(--s3); border: 1px solid var(--b1); border-radius: var(--r); padding: 11px 13px; }
 .mbox-lbl { font-size: 10px; color: var(--t3); font-family: var(--ff-m); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 5px; }

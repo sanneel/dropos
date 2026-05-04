@@ -2,6 +2,7 @@ import logging
 import os
 import sys
 import hmac
+import asyncio
 from contextlib import asynccontextmanager
 from typing import List, Optional
 from urllib.parse import unquote, urlparse
@@ -64,15 +65,13 @@ async def lifespan(app: FastAPI):
         log.warning("Marked %d stale active job(s) as interrupted on startup", interrupted)
     configure_google_credentials_from_env()
     await _configure_sheets_from_settings()
-    await _restore_database_from_sheets()
     merged_settings = merge_env_with_settings(await db.get_settings())
     sheets.configure(
         merged_settings.get("google_sheets_credentials") or os.getenv("GOOGLE_APPLICATION_CREDENTIALS", ""),
         merged_settings.get("google_sheets_id", ""),
     )
     if merged_settings.get("google_sheets_id"):
-        ok = sheets.verify_writable()
-        log.info("Google Sheets writable: %s", ok)
+        asyncio.create_task(_sync_sheets_after_startup())
     if merged_settings.get("local_scraping_only"):
         log.info("Scheduler disabled: local scraping only mode is enabled")
     else:
@@ -171,6 +170,8 @@ class ProductUpdate(BaseModel):
     hashtags: Optional[List[str]] = None
     category: Optional[str] = None
     url: Optional[str] = None
+    has_chinese_text: Optional[bool] = None
+    chinese_text_note: Optional[str] = None
 
 
 class SettingsUpdate(BaseModel):
@@ -273,11 +274,11 @@ async def _configure_sheets_from_settings(settings: Optional[dict] = None) -> No
 
 async def _restore_database_from_sheets() -> dict:
     try:
-        remote_settings = sheets.load_settings()
+        remote_settings = await asyncio.to_thread(sheets.load_settings)
         if remote_settings:
             await db.update_settings(remote_settings)
 
-        remote_products = sheets.load_products()
+        remote_products = await asyncio.to_thread(sheets.load_products)
         imported = await db.upsert_product_backups(remote_products)
         if remote_settings or imported:
             log.info(
@@ -291,9 +292,22 @@ async def _restore_database_from_sheets() -> dict:
         return {"ok": False, "error": str(exc), "settings": 0, "products": 0}
 
 
+async def _sync_sheets_after_startup() -> None:
+    """Run slow Google Sheets checks after the web server is already healthy."""
+    try:
+        ok = await asyncio.to_thread(sheets.verify_writable)
+        log.info("Google Sheets writable: %s", ok)
+    except Exception as exc:
+        log.warning("Google Sheets writable check skipped: %s", exc)
+    result = await _restore_database_from_sheets()
+    if result.get("ok") and (result.get("settings") or result.get("products")):
+        await _configure_sheets_from_settings()
+
+
 async def _backup_settings_to_sheets() -> dict:
     try:
-        return sheets.save_settings(await db.get_settings())
+        settings_snapshot = await db.get_settings()
+        return await asyncio.to_thread(sheets.save_settings, settings_snapshot)
     except Exception as exc:
         log.warning("Google Sheets settings backup failed: %s", exc)
         return {"ok": False, "error": str(exc)}
@@ -301,7 +315,8 @@ async def _backup_settings_to_sheets() -> dict:
 
 async def _backup_products_to_sheets() -> dict:
     try:
-        return sheets.save_products(await db.get_all_products())
+        products_snapshot = await db.get_all_products()
+        return await asyncio.to_thread(sheets.save_products, products_snapshot)
     except Exception as exc:
         log.warning("Google Sheets products backup failed: %s", exc)
         return {"ok": False, "error": str(exc)}
@@ -416,6 +431,10 @@ async def _stage_products(
     return changed
 
 
+def _approval_stage(product: dict) -> str:
+    return "text_edit" if product.get("has_chinese_text") else "approved"
+
+
 # Settings
 
 @app.get("/api/settings")
@@ -506,18 +525,30 @@ async def proxy_image(url: str):
 async def approve_product(product_id: int):
     p = await _get_product_or_404(product_id)
     _require_stage(p, "pending", "Cannot approve product in stage '{stage}'")
-    await db.set_stage(product_id, "approved")
+    stage = _approval_stage(p)
+    await db.set_stage(product_id, stage)
     await _backup_products_to_sheets()
-    return {"ok": True}
+    return {"ok": True, "stage": stage}
 
 
 @app.post("/api/approve")
 async def approve_products(body: ApproveRequest):
     if len(body.product_ids) > 50:
         raise HTTPException(400, "Max 50 products at once")
-    await _stage_products(body.product_ids, "approved", required_stage="pending")
+    approved = 0
+    text_edit = 0
+    for pid in body.product_ids:
+        product = await db.get_product(pid)
+        if not product or product.get("stage") != "pending":
+            continue
+        stage = _approval_stage(product)
+        await db.set_stage(pid, stage)
+        if stage == "text_edit":
+            text_edit += 1
+        else:
+            approved += 1
     await _backup_products_to_sheets()
-    return {"ok": True, "approved": len(body.product_ids)}
+    return {"ok": True, "approved": approved, "text_edit": text_edit}
 
 
 @app.post("/api/reject")
@@ -562,6 +593,19 @@ async def reject_product(product_id: int, body: RejectRequest = None):
 async def reconsider_product(product_id: int):
     await _get_product_or_404(product_id)
     await db.set_stage(product_id, "pending")
+    await _backup_products_to_sheets()
+    return {"ok": True}
+
+
+@app.post("/api/products/{product_id}/text-edited")
+async def mark_text_edited(product_id: int):
+    p = await _get_product_or_404(product_id)
+    _require_stage(p, "text_edit", "Can only mark text-edited products from stage '{stage}'")
+    await db.update_product_fields(product_id, {
+        "has_chinese_text": False,
+        "chinese_text_note": "",
+    })
+    await db.set_stage(product_id, "approved")
     await _backup_products_to_sheets()
     return {"ok": True}
 
@@ -843,7 +887,7 @@ async def export_to_sheets():
     all_products = approved + posted
     if not all_products:
         return {"ok": True, "exported": 0, "message": "No products to export"}
-    result = sheets.export(all_products)
+    result = await asyncio.to_thread(sheets.export, all_products)
     return result
 
 
@@ -868,7 +912,8 @@ async def _run_scan(job_id: int, keywords: list, max_per_keyword: int, source: s
         log.info("Job %d starting scan: keywords=%s source=%s max_per_keyword=%s", job_id, keywords, source, max_per_keyword)
         await run_pipeline(job_id, keywords, max_per_keyword, source=source)
         await _backup_products_to_sheets()
-        sheets.save_scan_items(job_id, await db.get_scan_items(job_id))
+        scan_items = await db.get_scan_items(job_id)
+        await asyncio.to_thread(sheets.save_scan_items, job_id, scan_items)
     except Exception as e:
         log.error("Pipeline job %d failed: %s", job_id, e)
         await db.update_job(job_id, status="error")
@@ -879,7 +924,8 @@ async def _run_ingest(job_id: int, products: list) -> None:
         log.info("Job %d starting local ingest: products=%d", job_id, len(products))
         await process_scraped_products(job_id, products)
         await _backup_products_to_sheets()
-        sheets.save_scan_items(job_id, await db.get_scan_items(job_id))
+        scan_items = await db.get_scan_items(job_id)
+        await asyncio.to_thread(sheets.save_scan_items, job_id, scan_items)
     except Exception as e:
         log.error("Ingest job %d failed: %s", job_id, e)
         await db.update_job(job_id, status="error")
@@ -992,7 +1038,7 @@ async def _post_and_export(products: list) -> None:
                 await db.update_product_note(product["id"], f"Instagram post failed: {result.error or 'unknown error'}")
         for r in errors:
             log.warning("Instagram error product=%s: %s", r.product_id, r.error)
-        sheets.append_rows(products)
+        await asyncio.to_thread(sheets.append_rows, products)
         await _backup_products_to_sheets()
     except Exception as e:
         log.error("Post/export error: %s", e)
