@@ -21,6 +21,7 @@ from runner import process_scraped_products, run_pipeline
 from scheduler import create_scheduler, get_scheduler_status
 import instagram
 import sheets
+from posting_scheduler import create_posting_scheduler, get_posting_scheduler_status
 import httpx
 from utils.google_auth import configure_google_credentials_from_env
 
@@ -42,6 +43,7 @@ def _setup_app_logging():
 _setup_app_logging()
 
 _scheduler = None
+_posting_scheduler = None
 _SENSITIVE_SETTING_FIELDS = {
     "apify_token",
     "anthropic_key",
@@ -53,6 +55,7 @@ _SENSITIVE_SETTING_FIELDS = {
     "captcha_2captcha_key",
     "google_sheets_credentials",
     "ingest_api_token",
+    "clipdrop_key",
 }
 
 
@@ -78,9 +81,16 @@ async def lifespan(app: FastAPI):
         _scheduler = create_scheduler()
         _scheduler.start()
         log.info("Scheduler started - jobs: %s", [j.get("id") for j in _scheduler.get_jobs()])
+    # Peak-hour posting scheduler (runs regardless of local_scraping_only)
+    _posting_scheduler = create_posting_scheduler(_settings)
+    _posting_scheduler.start()
+    asyncio.create_task(_posting_scheduler._dropos_init_jobs())
+    log.info("Peak-hour posting scheduler started")
     yield
     if _scheduler:
         _scheduler.shutdown(wait=False)
+    if _posting_scheduler:
+        _posting_scheduler.shutdown(wait=False)
     await db.close()
 
 
@@ -213,6 +223,12 @@ class SettingsUpdate(BaseModel):
     sell_price_min: Optional[float] = None
     sell_price_max: Optional[float] = None
     example_products: Optional[str] = None
+    clipdrop_key: Optional[str] = None
+    post_schedule_enabled: Optional[bool] = None
+    post_times: Optional[List[str]] = None
+    post_timezone: Optional[str] = None
+    posts_per_slot: Optional[int] = None
+
 
 
 async def _settings() -> dict:
@@ -903,6 +919,69 @@ async def restore_from_sheets():
     result = await _restore_database_from_sheets()
     await _configure_sheets_from_settings()
     return result
+
+
+# ── Image editing (Chinese text removal) ──────────────────────────────────────
+
+@app.post("/api/products/{product_id}/remove-text")
+async def remove_product_text(product_id: int, image_idx: int = 0):
+    """
+    Remove text (e.g. Chinese watermarks) from a product image using Clipdrop API.
+    The cleaned image is stored in the DB and served via /api/products/{id}/processed-image/{idx}.
+
+    Requires clipdrop_key to be configured in Settings.
+    """
+    from image_editor import remove_text as clipdrop_remove_text
+
+    product = await _get_product_or_404(product_id)
+    images = product.get("images") or []
+    if image_idx >= len(images):
+        raise HTTPException(400, f"Product has {len(images)} image(s); index {image_idx} is out of range")
+
+    settings = await _settings()
+    api_key = str(settings.get("clipdrop_key") or "").strip()
+    if not api_key:
+        raise HTTPException(400, "clipdrop_key is not configured in Settings — add it to use text removal")
+
+    image_url = images[image_idx]
+    cleaned_bytes = await clipdrop_remove_text(image_url, api_key)
+    if not cleaned_bytes:
+        raise HTTPException(502, "Clipdrop text removal failed — check clipdrop_key and try again")
+
+    await db.save_processed_image(product_id, image_idx, cleaned_bytes, "image/jpeg")
+    return {
+        "ok": True,
+        "product_id": product_id,
+        "image_idx": image_idx,
+        "size_bytes": len(cleaned_bytes),
+        "url": f"/api/products/{product_id}/processed-image/{image_idx}",
+    }
+
+
+@app.get("/api/products/{product_id}/processed-image/{image_idx}")
+async def get_processed_image_endpoint(product_id: int, image_idx: int):
+    """
+    Serve a processed (text-removed) product image.
+    Used by Instagram posting when public_base_url is configured.
+    """
+    result = await db.get_processed_image(product_id, image_idx)
+    if not result:
+        raise HTTPException(404, "No processed image found — use POST /remove-text first")
+    image_bytes, content_type = result
+    return Response(
+        content=image_bytes,
+        media_type=content_type,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+# ── Posting scheduler status ───────────────────────────────────────────────────
+
+@app.get("/api/posting-scheduler/status")
+async def posting_scheduler_status_endpoint():
+    """Return the current status of the peak-hour posting scheduler."""
+    return get_posting_scheduler_status(_posting_scheduler)
+
 
 
 # ── Background helpers ─────────────────────────────────────────────────────────
