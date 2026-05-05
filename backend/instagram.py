@@ -1,9 +1,14 @@
 """
 Instagram posting via the official Meta Graph API.
 
-Flow per post:
+Flow for single-image post:
   1. POST /{ig_user_id}/media   → create media container (image_url + caption)
   2. POST /{ig_user_id}/media_publish → publish the container
+
+Flow for carousel post (2–10 images):
+  1. POST /{ig_user_id}/media (is_carousel_item=true) × N → create item containers
+  2. POST /{ig_user_id}/media (media_type=CAROUSEL, children=...) → create album container
+  3. POST /{ig_user_id}/media_publish → publish the album
 
 Requirements:
   - Instagram Business or Creator account
@@ -28,6 +33,7 @@ from config.runtime import get_config
 log = logging.getLogger(__name__)
 
 _BETWEEN_POSTS_DELAY = 30  # seconds between posts in a batch
+_MAX_CAROUSEL_IMAGES = 10  # Instagram hard limit for carousel items
 
 
 def _graph(settings: dict = None) -> str:
@@ -79,11 +85,62 @@ async def _create_container(
     image_url: str,
     caption: str,
 ) -> str:
-    """Step 1: create a media container. Returns creation_id."""
+    """Step 1: create a single-image media container. Returns creation_id."""
     resp = await client.post(
         f"{_graph()}/{ig_user_id}/media",
         params={
             "image_url":    image_url,
+            "caption":      caption,
+            "access_token": token,
+        },
+    )
+    body = resp.json()
+    if "error" in body:
+        raise RuntimeError(body["error"].get("message", str(body["error"])))
+    return body["id"]
+
+
+async def _create_carousel_item_container(
+    client: httpx.AsyncClient,
+    ig_user_id: str,
+    token: str,
+    image_url: str,
+    settings: dict,
+) -> Optional[str]:
+    """Create a single carousel item container. Returns container_id or None on failure."""
+    resp = await client.post(
+        f"{_graph(settings)}/{ig_user_id}/media",
+        params={
+            "image_url":        image_url,
+            "is_carousel_item": "true",
+            "access_token":     token,
+        },
+    )
+    body = resp.json()
+    if "error" in body:
+        log.warning(
+            "Carousel item creation failed for %s: %s",
+            image_url[:60],
+            body["error"].get("message", body["error"]),
+        )
+        return None
+    return body.get("id")
+
+
+async def _create_carousel_album(
+    client: httpx.AsyncClient,
+    ig_user_id: str,
+    token: str,
+    children: list,
+    caption: str,
+    settings: dict,
+) -> str:
+    """Create a CAROUSEL (album) container referencing child containers. Returns creation_id."""
+    resp = await client.post(
+        f"{_graph(settings)}/{ig_user_id}/media",
+        params={
+            "media_type":   "CAROUSEL",
+            "children":     ",".join(children),
             "caption":      caption,
             "access_token": token,
         },
@@ -154,31 +211,67 @@ async def _wait_until_container_ready(
 
 async def post_product(product: dict, settings: dict) -> PostResult:
     pid       = product.get("id", 0)
-    token = _token(settings)
-    user_id = str((settings or {}).get("instagram_user_id") or "").strip()
+    token     = _token(settings)
+    user_id   = str((settings or {}).get("instagram_user_id") or "").strip()
 
     caption_text = (product.get("caption") or "").strip()
     hashtags     = product.get("hashtags") or []
     hashtag_str  = " ".join(f"#{t}" for t in hashtags if t)
     full_caption = f"{caption_text}\n\n{hashtag_str}".strip()
 
-    image_url = _publishable_image_url((product.get("images") or [""])[0], settings)
+    # Build publishable image URLs (max carousel limit)
+    raw_images   = product.get("images") or []
+    image_urls   = [
+        _publishable_image_url(img, settings)
+        for img in raw_images if img
+    ][:_MAX_CAROUSEL_IMAGES]
 
     if not token or not user_id:
         log.info("Instagram: no API credentials — simulating post for product %s", pid)
         return PostResult(product_id=pid, status="mock",
                           post_url=f"https://instagram.com/p/mock_{pid}")
 
-    if not image_url:
+    if not image_urls:
         return PostResult(product_id=pid, status="error",
                           error="Product has no image URL")
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            log.info("Instagram: creating media container for product %s", pid)
-            creation_id = await _create_container(
-                client, user_id, token, image_url, full_caption
-            )
+            if len(image_urls) >= 2:
+                # ── Carousel post ──────────────────────────────────────────────
+                log.info(
+                    "Instagram: creating carousel (%d images) for product %s",
+                    len(image_urls), pid,
+                )
+                children = []
+                for img_url in image_urls:
+                    cid = await _create_carousel_item_container(
+                        client, user_id, token, img_url, settings
+                    )
+                    if cid:
+                        children.append(cid)
+
+                if len(children) < 2:
+                    # Not enough valid items — fall back to single image
+                    log.warning(
+                        "Instagram: too few carousel items succeeded (%d), "
+                        "falling back to single image for product %s",
+                        len(children), pid,
+                    )
+                    creation_id = await _create_container(
+                        client, user_id, token, image_urls[0], full_caption
+                    )
+                else:
+                    creation_id = await _create_carousel_album(
+                        client, user_id, token, children, full_caption, settings
+                    )
+            else:
+                # ── Single image post ──────────────────────────────────────────
+                log.info("Instagram: creating media container for product %s", pid)
+                creation_id = await _create_container(
+                    client, user_id, token, image_urls[0], full_caption
+                )
+
             await _wait_until_container_ready(client, creation_id, token, settings)
 
             log.info("Instagram: publishing container %s", creation_id)
