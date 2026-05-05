@@ -55,6 +55,21 @@ _SPAM_FRAGMENTS = [
     "100pcs", "50pcs", "per lot", "lot of",
 ]
 
+# Material-level signals for products that look cheap and off-brand for a
+# premium couple gift shop — caught here before scoring wastes AI tokens.
+_CHEAP_MATERIAL_FRAGMENTS = [
+    "plastic bracelet", "plastic necklace", "plastic ring",
+    "rubber bracelet", "rubber keychain",
+    "silicone bracelet", "silicone wristband",
+    "acrylic keychain", "acrylic ring", "acrylic necklace",
+    "resin bracelet", "resin necklace", "resin ring",
+    "eva foam", "pvc keychain",
+]
+
+# Products below this CNY price are almost always low quality.
+# ~€3–4 cost before shipping — genuinely premium items rarely cost less.
+_MIN_PRICE_CNY = 8.0
+
 
 def basic_filter(products: list, settings: dict) -> list:
     out = []
@@ -74,6 +89,15 @@ def basic_filter(products: list, settings: dict) -> list:
 
         title_lower = (p.get("title_translated") or p.get("title", "")).lower()
         if any(frag in title_lower for frag in _SPAM_FRAGMENTS):
+            continue
+
+        # Reject products that clearly use cheap materials — won't fit premium brand
+        if any(frag in title_lower for frag in _CHEAP_MATERIAL_FRAGMENTS):
+            continue
+
+        # Price floor — very cheap items signal poor quality for premium positioning
+        price_cny = float(p.get("price_cny", 0))
+        if price_cny < _MIN_PRICE_CNY:
             continue
 
         # For taobao: apply minimum rating filter (1688 has no reliable rating)
