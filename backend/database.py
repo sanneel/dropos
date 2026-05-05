@@ -608,6 +608,51 @@ class Database:
         return stats
 
 
+    async def save_processed_image(
+        self, product_id: int, image_idx: int, image_bytes: bytes, content_type: str = "image/jpeg"
+    ) -> None:
+        """Store a Clipdrop-cleaned image in the DB."""
+        await self._db.execute(
+            """
+            INSERT OR REPLACE INTO processed_images
+            (product_id, image_idx, image_data, content_type, processed_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (product_id, image_idx, image_bytes, content_type, _now()),
+        )
+        await self._db.commit()
+
+    async def get_processed_image(
+        self, product_id: int, image_idx: int
+    ):
+        """Return (image_bytes, content_type) for a processed image, or None."""
+        async with self._db.execute(
+            "SELECT image_data, content_type FROM processed_images WHERE product_id=? AND image_idx=?",
+            (product_id, image_idx),
+        ) as cur:
+            row = await cur.fetchone()
+        if row:
+            return bytes(row[0]), str(row[1])
+        return None
+
+    async def has_processed_images(self, product_id: int) -> bool:
+        """True if at least one processed image exists for this product."""
+        async with self._db.execute(
+            "SELECT COUNT(*) FROM processed_images WHERE product_id=?", (product_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        return (row[0] if row else 0) > 0
+
+    async def get_processed_image_indices(self, product_id: int) -> list:
+        """Return sorted list of image indices that have been processed."""
+        async with self._db.execute(
+            "SELECT image_idx FROM processed_images WHERE product_id=? ORDER BY image_idx",
+            (product_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [r[0] for r in rows]
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _now() -> str:
@@ -790,6 +835,22 @@ async def init_db():
         ("ai_provider", "TEXT DEFAULT ''"),
     ])
 
+
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS processed_images (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id   INTEGER NOT NULL,
+            image_idx    INTEGER NOT NULL DEFAULT 0,
+            image_data   BLOB NOT NULL,
+            content_type TEXT DEFAULT 'image/jpeg',
+            processed_at TEXT,
+            UNIQUE(product_id, image_idx)
+        )
+    """)
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_processed_images_product ON processed_images(product_id)"
+    )
+
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             key   TEXT PRIMARY KEY,
@@ -844,6 +905,11 @@ async def init_db():
         "sell_price_min": 15,
         "sell_price_max": 80,
         "example_products": "matching couple bracelets, personalised photo frames, couple card games, romantic candle sets, love letter boxes, matching phone cases",
+        "clipdrop_key": "",
+        "post_schedule_enabled": True,
+        "post_times": ["19:00", "21:00"],
+        "post_timezone": "Asia/Tbilisi",
+        "posts_per_slot": 1,
     }
     for k, v in defaults.items():
         await conn.execute(
