@@ -12,6 +12,8 @@ const IC = {
   rejected: `<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`,
   settings: `<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
   check: `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
+  analytics: `<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>`,
+  chat: `<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
 };
 
 // ── State ──────────────────────────────────────────────────────────────────
@@ -41,6 +43,8 @@ const NAV_PAGES = [
   { id:'posted',    label:'Posted',       icon:'posted'     },
   { id:'rejected',  label:'Rejected',     icon:'rejected'   },
   { id:'settings',  label:'Settings',     icon:'settings',  section:'Config'    },
+  { id:'analytics', label:'Analytics',   icon:'analytics', section:'Tools'    },
+  { id:'chat',      label:'AI Assistant',icon:'chat'                           },
 ];
 
 function resetSelectionState() {
@@ -1844,6 +1848,8 @@ const PAGE_RENDERERS = {
   posted:    renderPosted,
   rejected:  renderRejected,
   settings:  renderSettings,
+  analytics: renderAnalytics,
+  chat:      renderChat,
 };
 
 async function renderPage() {
@@ -1853,6 +1859,288 @@ async function renderPage() {
       `<div style="color:var(--red);padding:20px;font-family:var(--ff-m);font-size:12px">Error: ${e.message}</div>`;
   });
 }
+
+
+// ── Analytics ────────────────────────────────────────────────────────────────
+
+async function renderAnalytics() {
+  setTitle('Analytics');
+  document.getElementById('topbar-actions').innerHTML = '';
+  const el = document.getElementById('content');
+  el.innerHTML = '<div style="color:var(--t3);font-size:12px;padding:40px 0;text-align:center">Loading analytics…</div>';
+
+  const [data] = await Promise.all([
+    api('/analytics').catch(() => ({}))
+  ]);
+
+  const stats = data.stats || {};
+  const timeline = data.timeline || [];
+  const categories = data.categories || [];
+  const rejections = data.top_rejections || [];
+  const keywords = data.keywords || [];
+  const scoreDist = data.score_distribution || [];
+  const providers = data.ai_providers || [];
+
+  const total = (stats.pending||0)+(stats.approved||0)+(stats.posted||0)+(stats.rejected||0);
+  const approvalRate = total ? Math.round(((stats.approved||0)+(stats.posted||0))/total*100) : 0;
+
+  // Timeline sparkline (simple)
+  const tlMax = Math.max(...timeline.map(d => d.total), 1);
+  const tlBars = timeline.slice(-14).map(d => {
+    const h = Math.max(4, Math.round((d.total / tlMax) * 48));
+    const hA = Math.max(0, Math.round((d.approved / tlMax) * 48));
+    return `<div class="an-bar-wrap" title="${d.day}: ${d.total} added, ${d.approved} approved">
+      <div class="an-bar-total" style="height:${h}px"></div>
+      <div class="an-bar-approved" style="height:${hA}px"></div>
+    </div>`;
+  }).join('');
+
+  // Score distribution
+  const sdMax = Math.max(...scoreDist.map(d => d.cnt), 1);
+  const sdBars = scoreDist.map(d => {
+    const w = Math.max(4, Math.round((d.cnt / sdMax) * 100));
+    return `<div class="an-hbar-row">
+      <span class="an-hbar-label">${d.bucket}</span>
+      <div class="an-hbar-track"><div class="an-hbar-fill" style="width:${w}%"></div></div>
+      <span class="an-hbar-val">${d.cnt}</span>
+    </div>`;
+  }).join('');
+
+  // Rejection reasons
+  const rejMax = Math.max(...rejections.map(r => r.cnt), 1);
+  const rejRows = rejections.map(r => {
+    const w = Math.max(4, Math.round((r.cnt / rejMax) * 100));
+    return `<div class="an-hbar-row">
+      <span class="an-hbar-label" title="${r.reason}">${r.reason.length>28?r.reason.slice(0,28)+'…':r.reason}</span>
+      <div class="an-hbar-track"><div class="an-hbar-fill" style="width:${w}%;background:var(--red)"></div></div>
+      <span class="an-hbar-val">${r.cnt}</span>
+    </div>`;
+  }).join('');
+
+  // Category rows
+  const catMax = Math.max(...categories.map(c => c.cnt), 1);
+  const catRows = categories.map(c => {
+    const w = Math.max(4, Math.round((c.cnt / catMax) * 100));
+    return `<div class="an-hbar-row">
+      <span class="an-hbar-label">${c.category||'Unknown'}</span>
+      <div class="an-hbar-track"><div class="an-hbar-fill" style="width:${w}%;background:var(--blue)"></div></div>
+      <span class="an-hbar-val">${c.cnt}</span>
+    </div>`;
+  }).join('');
+
+  // Keywords table
+  const kwRows = keywords.map(k => `
+    <tr>
+      <td>${k.keyword||'—'}</td>
+      <td style="color:var(--t2)">${k.total}</td>
+      <td style="color:var(--green)">${k.approved}</td>
+      <td style="color:var(--amber)">${k.avg_score??'—'}</td>
+      <td style="color:var(--t3)">${k.total?Math.round((k.approved/k.total)*100):0}%</td>
+    </tr>`).join('');
+
+  // AI Provider badges
+  const provBadges = providers.map(p => `
+    <div class="an-badge">
+      <span style="color:var(--t1)">${p.provider}</span>
+      <span style="color:var(--t3)">${p.cnt}</span>
+    </div>`).join('');
+
+  el.innerHTML = `
+    <div class="an-page">
+
+      <div class="dash-stat-grid" style="margin-bottom:16px">
+        <div class="dash-stat-card">
+          <div class="dash-stat-label">Total products</div>
+          <div class="dash-stat-val">${total}</div>
+          <div class="dash-stat-actions">
+            <span style="color:var(--t3);font-size:11px">${approvalRate}% approval rate</span>
+          </div>
+        </div>
+        <div class="dash-stat-card">
+          <div class="dash-stat-label">Pending → Approved → Posted</div>
+          <div class="dash-stat-val" style="font-size:20px;color:var(--t1)">
+            <span style="color:var(--blue)">${stats.pending||0}</span>
+            <span style="color:var(--t3);font-size:14px">→</span>
+            <span style="color:var(--green)">${stats.approved||0}</span>
+            <span style="color:var(--t3);font-size:14px">→</span>
+            <span style="color:var(--amber)">${stats.posted||0}</span>
+          </div>
+          <div class="dash-stat-actions">
+            <span style="color:var(--t3);font-size:11px">${stats.rejected||0} rejected total</span>
+          </div>
+        </div>
+        <div class="dash-stat-card">
+          <div class="dash-stat-label">AI Providers</div>
+          <div class="an-badge-row">${provBadges||'<span style="color:var(--t3);font-size:11px">No data yet</span>'}</div>
+        </div>
+      </div>
+
+      ${timeline.length ? `
+      <div class="an-section">
+        <div class="an-section-title">📈 Last 14 days (grey=total, green=approved)</div>
+        <div class="an-sparkline">${tlBars}</div>
+      </div>` : ''}
+
+      <div class="an-two-col">
+
+        <div class="an-section">
+          <div class="an-section-title">🎯 Score distribution</div>
+          ${sdBars || '<div class="an-empty">No scored products yet</div>'}
+        </div>
+
+        <div class="an-section">
+          <div class="an-section-title">❌ Top rejection reasons</div>
+          ${rejRows || '<div class="an-empty">No rejection data yet</div>'}
+        </div>
+
+        <div class="an-section">
+          <div class="an-section-title">📦 Category breakdown</div>
+          ${catRows || '<div class="an-empty">No category data yet</div>'}
+        </div>
+
+        <div class="an-section">
+          <div class="an-section-title">🔑 Keyword performance</div>
+          ${keywords.length ? `
+          <div class="an-table-wrap">
+            <table class="an-table">
+              <thead><tr><th>Keyword</th><th>Total</th><th>Approved</th><th>Avg score</th><th>Rate</th></tr></thead>
+              <tbody>${kwRows}</tbody>
+            </table>
+          </div>` : '<div class="an-empty">No keyword data yet</div>'}
+        </div>
+
+      </div>
+    </div>`;
+}
+
+
+// ── AI Chat Assistant ─────────────────────────────────────────────────────────
+
+let chatHistory = [];
+let chatPending = false;
+
+const QUICK_ACTIONS = [
+  { label: '🔍 Find rejected gems', msg: 'Review all rejected products and find any that were wrongly rejected or have borderline scores worth reconsidering.' },
+  { label: '📊 Today's summary', msg: 'Give me a brief summary of the current pipeline status and any recommendations.' },
+  { label: '🔑 Keyword advice', msg: 'Based on keyword performance, what keywords should I add, remove or prioritise?' },
+  { label: '✨ Best candidates', msg: 'From the rejected products, which 5-10 are the best candidates to reconsider? List them with IDs.' },
+];
+
+function chatAppend(role, text, meta = {}) {
+  chatHistory.push({ role, text, meta, ts: Date.now() });
+  renderChatMessages();
+}
+
+function renderChatMessages() {
+  const el = document.getElementById('chat-messages');
+  if (!el) return;
+  el.innerHTML = chatHistory.map(m => {
+    if (m.role === 'user') {
+      return `<div class="chat-msg user"><div class="chat-bubble">${escHtml(m.text)}</div></div>`;
+    }
+    // Assistant message
+    let actions = '';
+    if (m.meta?.action === 'reconsider' && (m.meta?.product_ids||[]).length) {
+      actions = `<button class="chat-action-btn" onclick="chatReconsider(${JSON.stringify(m.meta.product_ids)})">
+        ♻️ Reconsider ${m.meta.product_ids.length} products
+      </button>`;
+    }
+    if (m.meta?.action === 'show_products' && (m.meta?.product_ids||[]).length) {
+      actions = `<button class="chat-action-btn" onclick="navigate('rejected')">
+        👀 View rejected products
+      </button>`;
+    }
+    const suggestion = m.meta?.suggestion ? `<div class="chat-suggestion">${escHtml(m.meta.suggestion)}</div>` : '';
+    return `<div class="chat-msg assistant">
+      <div class="chat-avatar">AI</div>
+      <div class="chat-bubble">${escHtml(m.text)}${suggestion}${actions}</div>
+    </div>`;
+  }).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+function escHtml(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+}
+
+async function chatSend(msg) {
+  if (!msg || !msg.trim() || chatPending) return;
+  const input = document.getElementById('chat-input');
+  if (input) input.value = '';
+  chatAppend('user', msg);
+  chatPending = true;
+  document.getElementById('chat-send-btn')?.setAttribute('disabled','1');
+  try {
+    const result = await api('/ai/chat', 'POST', { message: msg });
+    chatAppend('assistant', result.reply || 'No response.', {
+      action: result.action,
+      product_ids: result.product_ids,
+      suggestion: result.suggestion,
+    });
+  } catch(e) {
+    chatAppend('assistant', '⚠️ Error: ' + (e.message || 'Unknown error'));
+  } finally {
+    chatPending = false;
+    document.getElementById('chat-send-btn')?.removeAttribute('disabled');
+    document.getElementById('chat-input')?.focus();
+  }
+}
+
+async function chatReconsider(ids) {
+  if (!ids?.length) return;
+  if (!confirm(`Move ${ids.length} products back to Pending for review?`)) return;
+  try {
+    await api('/ai/chat', 'POST', { message: 'confirm reconsider', reconsider: true });
+    // Actually call reconsider for each
+    for (const id of ids.slice(0,20)) {
+      await api(`/products/${id}/reconsider`, 'POST').catch(()=>{});
+    }
+    await refreshStats();
+    toast(`♻️ ${ids.length} products moved to Pending`, 'success');
+    chatAppend('assistant', `Done! Moved ${ids.length} products back to Pending. Go to the Review queue to check them.`);
+  } catch(e) {
+    toast('Reconsider failed: ' + e.message, 'error');
+  }
+}
+
+async function renderChat() {
+  setTitle('AI Assistant', 'Chat with your store AI');
+  document.getElementById('topbar-actions').innerHTML = `
+    <button class="btn-sm" onclick="chatHistory=[];renderChatMessages()">Clear chat</button>`;
+
+  document.getElementById('content').innerHTML = `
+    <div class="chat-page">
+      <div class="chat-quick-row">
+        ${QUICK_ACTIONS.map(a => `<button class="chat-quick-btn" onclick="chatSend(${JSON.stringify(a.msg)})">${a.label}</button>`).join('')}
+      </div>
+      <div class="chat-messages" id="chat-messages"></div>
+      <div class="chat-input-row">
+        <textarea class="chat-input" id="chat-input" placeholder="Ask anything about your store, or say 'find me rejected gems'…" rows="2"
+          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();chatSend(this.value)}"></textarea>
+        <button class="chat-send-btn" id="chat-send-btn" onclick="chatSend(document.getElementById('chat-input').value)">Send</button>
+      </div>
+    </div>`;
+
+  renderChatMessages();
+
+  // Welcome message on first open
+  if (chatHistory.length === 0) {
+    chatAppend('assistant', 'Hey! 👋 I\'m your store AI. I can review rejected products and find hidden gems, summarise your pipeline, or give keyword advice. What do you need?');
+  }
+}
+
+
+// ── Mobile hamburger toggle ───────────────────────────────────────────────────
+function toggleMobileNav() {
+  document.getElementById('sidebar').classList.toggle('mobile-open');
+}
+
+// Close mobile nav when page is selected
+const _origNavigate = navigate;
+// Already defined above, patch via override
+const _navClickClose = (page) => {
+  document.getElementById('sidebar')?.classList.remove('mobile-open');
+};
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 function chooseStartPage() {
@@ -1871,3 +2159,5 @@ setInterval(refreshStats, 20000);
 api('/settings').then(s => { scanSource = String(s.cssbuy_source || '1688'); }).catch(() => {});
 
 
+
+// v8 build 1777996588
