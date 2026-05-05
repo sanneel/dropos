@@ -929,9 +929,18 @@ async def get_analytics():
 
 # ── AI Chat Assistant ──────────────────────────────────────────────────────────
 
+class AIChatEditItem(BaseModel):
+    id: int
+    title: Optional[str] = None
+    price: Optional[float] = None
+    caption: Optional[str] = None
+
+
 class ChatRequest(BaseModel):
     message: str
     reconsider: Optional[bool] = False
+    execute_edits: Optional[bool] = False
+    execute_approvals: Optional[bool] = False
 
 
 @app.post("/api/ai/chat")
@@ -946,6 +955,16 @@ async def ai_chat(body: ChatRequest):
     last_job = jobs[0] if jobs else {}
     rejected_sample = await db.get_rejected_sample(30)
 
+    # Fetch approved and pending samples for richer context
+    approved_raw = await db.get_products(stage="approved", limit=20, offset=0)
+    pending_raw = await db.get_products(stage="pending", limit=20, offset=0)
+    approved_sample = approved_raw.get("items", []) if isinstance(approved_raw, dict) else approved_raw[:20]
+    pending_sample = pending_raw.get("items", []) if isinstance(pending_raw, dict) else pending_raw[:20]
+
+    # Slim down the samples to reduce token usage
+    def slim(products, fields=("id","title_translated","sell_price_eur","score","category","stage","caption")):
+        return [{k: p.get(k) for k in fields if p.get(k) is not None} for p in products]
+
     # Compute top rejection reasons from sample
     reason_counts: dict = {}
     for p in rejected_sample:
@@ -959,16 +978,18 @@ async def ai_chat(body: ChatRequest):
     context = {
         "stats": stats_data,
         "last_job": last_job,
-        "rejected_sample": rejected_sample,
+        "rejected_sample": slim(rejected_sample),
+        "approved_sample": slim(approved_sample),
+        "pending_sample": slim(pending_sample),
         "recent_rejection_reasons": recent_rejection_reasons,
     }
 
     result = await ai_assistant.chat(body.message, context, settings)
 
-    # If AI suggests reconsidering products and user confirmed, do it
+    # Execute: reconsider
     if body.reconsider and result.get("action") == "reconsider" and result.get("product_ids"):
         reconsidered = 0
-        for pid in result["product_ids"][:20]:  # max 20 at once
+        for pid in result["product_ids"][:20]:
             try:
                 await db.set_stage(int(pid), "pending")
                 reconsidered += 1
@@ -977,6 +998,46 @@ async def ai_chat(body: ChatRequest):
         if reconsidered:
             await _backup_products_to_sheets()
             result["reconsidered"] = reconsidered
+
+    # Execute: approve_products
+    if body.execute_approvals and result.get("action") == "approve_products" and result.get("product_ids"):
+        approved_count = 0
+        for pid in result["product_ids"][:20]:
+            try:
+                product = await db.get_product(int(pid))
+                if product and product.get("stage") == "pending":
+                    stage = _approval_stage(product)
+                    await db.set_stage(int(pid), stage)
+                    approved_count += 1
+            except Exception:
+                pass
+        if approved_count:
+            await _backup_products_to_sheets()
+            result["approved_count"] = approved_count
+
+    # Execute: edit_products
+    if body.execute_edits and result.get("action") == "edit_products" and result.get("edits"):
+        edited_count = 0
+        for edit in result["edits"][:20]:
+            try:
+                pid = int(edit.get("id", 0))
+                if not pid:
+                    continue
+                fields = {}
+                if edit.get("title"):
+                    fields["title_translated"] = edit["title"]
+                if edit.get("price") is not None:
+                    fields["sell_price_eur"] = float(edit["price"])
+                if edit.get("caption"):
+                    fields["caption"] = edit["caption"]
+                if fields:
+                    await db.update_product_fields(pid, fields)
+                    edited_count += 1
+            except Exception:
+                pass
+        if edited_count:
+            await _backup_products_to_sheets()
+            result["edited_count"] = edited_count
 
     return result
 

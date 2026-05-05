@@ -124,6 +124,37 @@ function apiErrorMessage(text, status) {
 }
 
 // ── API ────────────────────────────────────────────────────────────────────
+// ── Client-side cache ─────────────────────────────────────────────────────────
+const _cache = {};
+const CACHE_TTL = { stats: 30000, products: 60000, analytics: 45000, default: 30000 };
+
+function _cacheKey(path) { return path; }
+function _cacheTtl(path) {
+  if (path.includes('/stats')) return CACHE_TTL.stats;
+  if (path.includes('/products')) return CACHE_TTL.products;
+  if (path.includes('/analytics')) return CACHE_TTL.analytics;
+  return CACHE_TTL.default;
+}
+function _cacheGet(path) {
+  const e = _cache[_cacheKey(path)];
+  if (!e) return null;
+  if (Date.now() - e.ts > _cacheTtl(path)) { delete _cache[_cacheKey(path)]; return null; }
+  return e.data;
+}
+function _cacheSet(path, data) { _cache[_cacheKey(path)] = { ts: Date.now(), data }; }
+function _cacheInvalidate(...patterns) {
+  for (const pat of patterns)
+    Object.keys(_cache).forEach(k => { if (k.includes(pat)) delete _cache[k]; });
+}
+
+async function cachedApi(path) {
+  const hit = _cacheGet(path);
+  if (hit !== null) return hit;
+  const data = await api(path);
+  _cacheSet(path, data);
+  return data;
+}
+
 async function api(path, method = 'GET', body = null) {
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
   if (body !== null) opts.body = JSON.stringify(body);
@@ -665,6 +696,7 @@ function updateSelBar(mode = 'approve') {
 }
 
 async function batchApprove() {
+  _cacheInvalidate('/products', '/stats');
   const ids = [...selectedProducts];
   try {
     const res = await api('/approve', 'POST', { product_ids: ids });
@@ -718,6 +750,7 @@ async function batchPost() {
 }
 
 async function quickApprove(id) {
+  _cacheInvalidate('/products', '/stats');
   try {
     const res = await api(`/products/${id}/approve`, 'POST');
     toast(res.stage === 'text_edit' ? 'Moved to Text edit' : 'Approved', 'success');
@@ -1852,6 +1885,14 @@ const PAGE_RENDERERS = {
   chat:      renderChat,
 };
 
+function _fadeIn() {
+  const c = document.getElementById('content');
+  if (!c) return;
+  c.style.opacity = '0';
+  c.style.transition = 'opacity 0.15s ease';
+  requestAnimationFrame(() => { c.style.opacity = '1'; });
+}
+
 async function renderPage() {
   const fn = PAGE_RENDERERS[currentPage];
   if (fn) await fn().catch(e => {
@@ -2021,7 +2062,9 @@ let chatPending = false;
 
 const QUICK_ACTIONS = [
   { label: '🔍 Find rejected gems', msg: 'Review all rejected products and find any that were wrongly rejected or have borderline scores worth reconsidering.' },
-  { label: "📊 Today's summary", msg: 'Give me a brief summary of the current pipeline status and any recommendations.' },
+  { label: "📊 Today's summary", msg: "Give me a brief summary of the current pipeline status and any recommendations." },
+  { label: '✅ Show approved', msg: 'Show me all currently approved products so I can review them.' },
+  { label: '📝 Edit pending titles', msg: 'Look at my pending products and suggest better, more premium English titles and prices for them.' },
   { label: '🔑 Keyword advice', msg: 'Based on keyword performance, what keywords should I add, remove or prioritise?' },
   { label: '✨ Best candidates', msg: 'From the rejected products, which 5-10 are the best candidates to reconsider? List them with IDs.' },
 ];
@@ -2034,29 +2077,76 @@ function chatAppend(role, text, meta = {}) {
 function renderChatMessages() {
   const el = document.getElementById('chat-messages');
   if (!el) return;
-  el.innerHTML = chatHistory.map(m => {
+  el.innerHTML = chatHistory.map((m, idx) => {
     if (m.role === 'user') {
       return `<div class="chat-msg user"><div class="chat-bubble">${escHtml(m.text)}</div></div>`;
     }
     // Assistant message
     let actions = '';
-    if (m.meta?.action === 'reconsider' && (m.meta?.product_ids||[]).length) {
-      actions = `<button class="chat-action-btn" onclick="chatReconsider(${JSON.stringify(m.meta.product_ids)})">
-        ♻️ Reconsider ${m.meta.product_ids.length} products
-      </button>`;
+    const meta = m.meta || {};
+
+    if (meta.action === 'reconsider' && (meta.product_ids||[]).length) {
+      actions += `<button class="chat-action-btn" onclick="chatReconsider(${JSON.stringify(meta.product_ids)})">♻️ Reconsider ${meta.product_ids.length} products</button>`;
     }
-    if (m.meta?.action === 'show_products' && (m.meta?.product_ids||[]).length) {
-      actions = `<button class="chat-action-btn" onclick="navigate('rejected')">
-        👀 View rejected products
-      </button>`;
+    if (meta.action === 'show_products' && (meta.product_ids||[]).length) {
+      actions += `<button class="chat-action-btn" onclick="navigate('rejected')">👀 View rejected products</button>`;
     }
-    const suggestion = m.meta?.suggestion ? `<div class="chat-suggestion">${escHtml(m.meta.suggestion)}</div>` : '';
+    if (meta.action === 'approve_products' && (meta.product_ids||[]).length) {
+      actions += `<button class="chat-action-btn approve-btn" onclick="chatApproveProducts(${JSON.stringify(meta.product_ids)})">✅ Approve ${meta.product_ids.length} products</button>`;
+    }
+    if (meta.action === 'edit_products' && (meta.edits||[]).length) {
+      actions += `<button class="chat-action-btn" onclick="chatApplyEdits(${idx})">💾 Apply ${meta.edits.length} edits</button>`;
+    }
+
+    // Inline product cards for list_products
+    let productCards = '';
+    if ((meta.action === 'list_products' || meta.action === 'show_products') && (meta.products||[]).length) {
+      productCards = `<div class="chat-product-grid">${(meta.products||[]).map(p => renderChatProductCard(p)).join('')}</div>`;
+    }
+
+    // Edit preview cards for edit_products
+    let editCards = '';
+    if (meta.action === 'edit_products' && (meta.edits||[]).length) {
+      editCards = `<div class="chat-edit-list">${(meta.edits||[]).map(e => `
+        <div class="chat-edit-item">
+          <span class="chat-edit-id">#${e.id}</span>
+          ${e.title ? `<span class="chat-edit-field">📝 ${escHtml(e.title)}</span>` : ''}
+          ${e.price != null ? `<span class="chat-edit-field">💶 €${e.price}</span>` : ''}
+          ${e.caption ? `<span class="chat-edit-field caption-preview">💬 ${escHtml(e.caption.substring(0,60))}…</span>` : ''}
+        </div>`).join('')}</div>`;
+    }
+
+    const suggestion = meta.suggestion ? `<div class="chat-suggestion">${escHtml(meta.suggestion)}</div>` : '';
     return `<div class="chat-msg assistant">
       <div class="chat-avatar">AI</div>
-      <div class="chat-bubble">${escHtml(m.text)}${suggestion}${actions}</div>
+      <div class="chat-bubble">${escHtml(m.text)}${editCards}${productCards}${suggestion}${actions}</div>
     </div>`;
   }).join('');
   el.scrollTop = el.scrollHeight;
+}
+
+function renderChatProductCard(p) {
+  const img = p.image_url || p.images?.[0] || '';
+  const title = p.title_translated || p.product_name || 'Product';
+  const price = p.sell_price_eur ? `€${Number(p.sell_price_eur).toFixed(2)}` : '';
+  const score = p.score ? `${p.score}` : '';
+  const stage = p.stage || '';
+  const stageColor = {approved:'#22c55e',pending:'#f59e0b',rejected:'#ef4444',posted:'#3b82f6'}[stage]||'#888';
+  const imgEl = img
+    ? `<img src="${API.replace('/api','')}/api/image?url=${encodeURIComponent(img)}" onerror="this.style.display='none'" loading="lazy">`
+    : `<div class="chat-card-no-img">📦</div>`;
+  return `<div class="chat-product-card">
+    <div class="chat-card-img">${imgEl}</div>
+    <div class="chat-card-info">
+      <div class="chat-card-title">${escHtml(title)}</div>
+      <div class="chat-card-meta">
+        ${price ? `<span class="chat-card-price">${price}</span>` : ''}
+        ${score ? `<span class="chat-card-score">${score}</span>` : ''}
+        <span class="chat-card-stage" style="color:${stageColor}">${stage}</span>
+      </div>
+      ${p.id && stage === 'pending' ? `<button class="chat-card-approve-btn" onclick="chatQuickApprove(${p.id})">✅ Approve</button>` : ''}
+    </div>
+  </div>`;
 }
 
 function escHtml(s) {
@@ -2074,7 +2164,9 @@ async function chatSend(msg) {
     const result = await api('/ai/chat', 'POST', { message: msg });
     chatAppend('assistant', result.reply || 'No response.', {
       action: result.action,
-      product_ids: result.product_ids,
+      product_ids: result.product_ids || [],
+      products: result.products || [],
+      edits: result.edits || [],
       suggestion: result.suggestion,
     });
   } catch(e) {
@@ -2083,6 +2175,64 @@ async function chatSend(msg) {
     chatPending = false;
     document.getElementById('chat-send-btn')?.removeAttribute('disabled');
     document.getElementById('chat-input')?.focus();
+  }
+}
+
+async function chatQuickApprove(id) {
+  try {
+    await api(`/products/${id}/approve`, 'POST');
+    _cacheInvalidate('/products', '/stats');
+    await refreshStats();
+    toast('✅ Product approved!', 'success');
+    // Refresh chat to update card state
+    const p = await api(`/products/${id}`).catch(() => null);
+    renderChatMessages();
+  } catch(e) {
+    toast('Approve failed: ' + e.message, 'error');
+  }
+}
+
+async function chatApproveProducts(ids) {
+  if (!ids?.length) return;
+  if (!confirm(`Approve ${ids.length} products?`)) return;
+  try {
+    let count = 0;
+    for (const id of ids.slice(0, 20)) {
+      await api(`/products/${id}/approve`, 'POST').catch(() => {});
+      count++;
+    }
+    _cacheInvalidate('/products', '/stats');
+    await refreshStats();
+    toast(`✅ ${count} products approved!`, 'success');
+    chatAppend('assistant', `Done! Approved ${count} products. Check the Approved tab to see them.`);
+  } catch(e) {
+    toast('Approve failed: ' + e.message, 'error');
+  }
+}
+
+async function chatApplyEdits(msgIdx) {
+  const m = chatHistory[msgIdx];
+  if (!m?.meta?.edits?.length) return;
+  if (!confirm(`Apply ${m.meta.edits.length} AI-suggested edits to product titles/prices?`)) return;
+  try {
+    const result = await api('/ai/chat', 'POST', { message: '_execute_edits_', execute_edits: true, ...{edits: m.meta.edits} });
+    // Actually call PATCH directly for each edit
+    let count = 0;
+    for (const edit of m.meta.edits.slice(0, 20)) {
+      const fields = {};
+      if (edit.title) fields.title_translated = edit.title;
+      if (edit.price != null) fields.sell_price_eur = edit.price;
+      if (edit.caption) fields.caption = edit.caption;
+      if (Object.keys(fields).length) {
+        await api(`/products/${edit.id}`, 'PATCH', fields).catch(() => {});
+        count++;
+      }
+    }
+    _cacheInvalidate('/products', '/stats');
+    toast(`💾 ${count} products edited!`, 'success');
+    chatAppend('assistant', `Done! Updated ${count} products. Refresh the Review queue to see the changes.`);
+  } catch(e) {
+    toast('Edit failed: ' + e.message, 'error');
   }
 }
 
