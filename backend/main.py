@@ -957,12 +957,12 @@ async def ai_chat(body: ChatRequest):
 
     # Fetch approved and pending samples for richer context
     approved_raw = await db.get_products(stage="approved", limit=20, offset=0)
-    pending_raw = await db.get_products(stage="pending", limit=20, offset=0)
+    pending_raw = await db.get_products(stage="pending", limit=50, offset=0)
     approved_sample = approved_raw.get("items", []) if isinstance(approved_raw, dict) else approved_raw[:20]
-    pending_sample = pending_raw.get("items", []) if isinstance(pending_raw, dict) else pending_raw[:20]
+    pending_sample = pending_raw.get("items", []) if isinstance(pending_raw, dict) else pending_raw[:50]
 
     # Slim down the samples to reduce token usage
-    def slim(products, fields=("id","title_translated","sell_price_eur","score","category","stage","caption")):
+    def slim(products, fields=("id","title_translated","sell_price_eur","score","niche_fit","category","stage","caption","image_url")):
         return [{k: p.get(k) for k in fields if p.get(k) is not None} for p in products]
 
     # Compute top rejection reasons from sample
@@ -998,6 +998,18 @@ async def ai_chat(body: ChatRequest):
         if reconsidered:
             await _backup_products_to_sheets()
             result["reconsidered"] = reconsidered
+
+    # Execute: reject_products
+    if body.reconsider and result.get("action") == "reject_products" and result.get("product_ids"):
+        rejected_count = 0
+        for pid in result["product_ids"][:50]:
+            try:
+                await db.set_stage(int(pid), "rejected")
+                rejected_count += 1
+            except Exception:
+                pass
+        if rejected_count:
+            result["rejected_count"] = rejected_count
 
     # Execute: approve_products
     if body.execute_approvals and result.get("action") == "approve_products" and result.get("product_ids"):

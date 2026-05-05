@@ -2331,7 +2331,18 @@ function renderChatMessages() {
     // Inline product cards for list_products
     let productCards = '';
     if ((meta.action === 'list_products' || meta.action === 'show_products') && (meta.products||[]).length) {
-      productCards = `<div class="chat-product-grid">${(meta.products||[]).map(p => renderChatProductCard(p)).join('')}</div>`;
+      const prods = meta.products || [];
+      productCards = `<div class="chat-product-grid">${prods.map(p => renderChatProductCard(p)).join('')}</div>`;
+      // Bulk action buttons for review_pending
+      if (meta.action === 'review_pending' && prods.length > 0) {
+        const toApprove = prods.filter(p => p.recommendation === 'approve').map(p => p.id).filter(Boolean);
+        const toReject  = prods.filter(p => p.recommendation === 'reject').map(p => p.id).filter(Boolean);
+        const bulkBtns = [
+          toApprove.length ? `<button class="btn-sm chat-bulk-approve" onclick="chatBulkApprove([${toApprove.join(',')}], this)">✅ Approve ${toApprove.length} products</button>` : '',
+          toReject.length  ? `<button class="btn-sm chat-bulk-reject"  onclick="chatBulkReject([${toReject.join(',')}], this)">❌ Reject ${toReject.length} products</button>`   : '',
+        ].filter(Boolean).join('');
+        if (bulkBtns) productCards += `<div class="chat-bulk-row">${bulkBtns}</div>`;
+      }
     }
 
     // Edit preview cards for edit_products
@@ -2360,27 +2371,84 @@ function renderChatProductCard(p) {
   const title = p.title_translated || p.product_name || 'Product';
   const price = p.sell_price_eur ? `€${Number(p.sell_price_eur).toFixed(2)}` : '';
   const score = p.score ? `${p.score}` : '';
+  const niche = p.niche_fit ? `nf:${p.niche_fit}` : '';
   const stage = p.stage || '';
+  const rec = p.recommendation || '';
+  const reason = p.reason || '';
   const stageColor = {approved:'#22c55e',pending:'#f59e0b',rejected:'#ef4444',posted:'#3b82f6'}[stage]||'#888';
+  const recBadge = rec === 'approve'
+    ? `<span class="chat-rec approve">✅ Approve</span>`
+    : rec === 'reject'
+    ? `<span class="chat-rec reject">❌ Reject</span>`
+    : '';
   const imgEl = img
     ? `<img src="${API.replace('/api','')}/api/image?url=${encodeURIComponent(img)}" onerror="this.style.display='none'" loading="lazy">`
     : `<div class="chat-card-no-img">📦</div>`;
-  return `<div class="chat-product-card">
+  const actionBtns = p.id && stage === 'pending' ? `
+    <div class="chat-card-actions">
+      <button class="chat-card-approve-btn" onclick="chatQuickApprove(${p.id}, this)">✅ Approve</button>
+      <button class="chat-card-reject-btn" onclick="chatQuickReject(${p.id}, this)">❌ Reject</button>
+    </div>` : '';
+  return `<div class="chat-product-card${rec ? ' rec-'+rec : ''}">
     <div class="chat-card-img">${imgEl}</div>
     <div class="chat-card-info">
+      ${recBadge}
       <div class="chat-card-title">${escHtml(title)}</div>
+      ${reason ? `<div class="chat-card-reason">${escHtml(reason)}</div>` : ''}
       <div class="chat-card-meta">
         ${price ? `<span class="chat-card-price">${price}</span>` : ''}
-        ${score ? `<span class="chat-card-score">${score}</span>` : ''}
+        ${score ? `<span class="chat-card-score">⭐${score}</span>` : ''}
+        ${niche ? `<span class="chat-card-score" style="color:#a78bfa">${niche}</span>` : ''}
         <span class="chat-card-stage" style="color:${stageColor}">${stage}</span>
       </div>
-      ${p.id && stage === 'pending' ? `<button class="chat-card-approve-btn" onclick="chatQuickApprove(${p.id})">✅ Approve</button>` : ''}
+      ${actionBtns}
     </div>
   </div>`;
 }
 
 function escHtml(s) {
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+}
+
+async function chatBulkApprove(ids, btn) {
+  if (!ids?.length) return;
+  if (!confirm(`Approve ${ids.length} products?`)) return;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Approving…'; }
+  try {
+    let done = 0;
+    for (const id of ids) {
+      try { await api(`/products/${id}/approve`, 'POST'); done++; } catch(_) {}
+    }
+    _cacheInvalidate('/products', '/stats');
+    await refreshStats();
+    toast(`✅ Approved ${done} products!`, 'success');
+    if (btn) { btn.textContent = `✅ Approved ${done}`; }
+    // Gray out approved cards
+    document.querySelectorAll('.chat-product-card.rec-approve').forEach(c => c.classList.add('chat-card-done-approve'));
+  } catch(e) {
+    toast('Error: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = `✅ Approve ${ids.length} products`; }
+  }
+}
+
+async function chatBulkReject(ids, btn) {
+  if (!ids?.length) return;
+  if (!confirm(`Reject ${ids.length} products?`)) return;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Rejecting…'; }
+  try {
+    let done = 0;
+    for (const id of ids) {
+      try { await api(`/products/${id}/reject`, 'POST'); done++; } catch(_) {}
+    }
+    _cacheInvalidate('/products', '/stats');
+    await refreshStats();
+    toast(`❌ Rejected ${done} products`, 'success');
+    if (btn) { btn.textContent = `❌ Rejected ${done}`; }
+    document.querySelectorAll('.chat-product-card.rec-reject').forEach(c => c.classList.add('chat-card-done-reject'));
+  } catch(e) {
+    toast('Error: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = `❌ Reject ${ids.length} products`; }
+  }
 }
 
 async function chatSend(msg) {
@@ -2408,17 +2476,43 @@ async function chatSend(msg) {
   }
 }
 
-async function chatQuickApprove(id) {
+async function chatQuickApprove(id, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
   try {
     await api(`/products/${id}/approve`, 'POST');
     _cacheInvalidate('/products', '/stats');
     await refreshStats();
-    toast('✅ Product approved!', 'success');
-    // Refresh chat to update card state
-    const p = await api(`/products/${id}`).catch(() => null);
-    renderChatMessages();
+    toast('✅ Approved!', 'success');
+    if (btn) {
+      const card = btn.closest('.chat-product-card');
+      if (card) card.classList.add('chat-card-done-approve');
+      btn.textContent = '✅ Done';
+      const rejectBtn = btn.closest('.chat-card-actions')?.querySelector('.chat-card-reject-btn');
+      if (rejectBtn) rejectBtn.style.display = 'none';
+    }
   } catch(e) {
     toast('Approve failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '✅ Approve'; }
+  }
+}
+
+async function chatQuickReject(id, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    await api(`/products/${id}/reject`, 'POST');
+    _cacheInvalidate('/products', '/stats');
+    await refreshStats();
+    toast('❌ Rejected', 'success');
+    if (btn) {
+      const card = btn.closest('.chat-product-card');
+      if (card) card.classList.add('chat-card-done-reject');
+      btn.textContent = '❌ Done';
+      const approveBtn = btn.closest('.chat-card-actions')?.querySelector('.chat-card-approve-btn');
+      if (approveBtn) approveBtn.style.display = 'none';
+    }
+  } catch(e) {
+    toast('Reject failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '❌ Reject'; }
   }
 }
 
