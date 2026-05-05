@@ -2021,7 +2021,7 @@ let chatPending = false;
 
 const QUICK_ACTIONS = [
   { label: '🔍 Find rejected gems', msg: 'Review all rejected products and find any that were wrongly rejected or have borderline scores worth reconsidering.' },
-  { label: '📊 Today's summary', msg: 'Give me a brief summary of the current pipeline status and any recommendations.' },
+  { label: "📊 Today's summary", msg: 'Give me a brief summary of the current pipeline status and any recommendations.' },
   { label: '🔑 Keyword advice', msg: 'Based on keyword performance, what keywords should I add, remove or prioritise?' },
   { label: '✨ Best candidates', msg: 'From the rejected products, which 5-10 are the best candidates to reconsider? List them with IDs.' },
 ];
