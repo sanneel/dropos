@@ -2291,6 +2291,7 @@ let chatHistory = [];
 let chatPending = false;
 
 const QUICK_ACTIONS = [
+  { label: '🔍 Review pending', msg: 'Review all my pending products and tell me which to approve and which to reject.' },
   { label: '🔍 Find rejected gems', msg: 'Review all rejected products and find any that were wrongly rejected or have borderline scores worth reconsidering.' },
   { label: "📊 Today's summary", msg: "Give me a brief summary of the current pipeline status and any recommendations." },
   { label: '✅ Show approved', msg: 'Show me all currently approved products so I can review them.' },
@@ -2330,7 +2331,7 @@ function renderChatMessages() {
 
     // Inline product cards for list_products
     let productCards = '';
-    if ((meta.action === 'list_products' || meta.action === 'show_products') && (meta.products||[]).length) {
+    if ((meta.action === 'list_products' || meta.action === 'show_products' || meta.action === 'review_pending') && (meta.products||[]).length) {
       const prods = meta.products || [];
       productCards = `<div class="chat-product-grid">${prods.map(p => renderChatProductCard(p)).join('')}</div>`;
       // Bulk action buttons for review_pending

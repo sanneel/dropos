@@ -79,6 +79,49 @@ RESPONSE FORMAT — always respond with this exact JSON structure:
 """
 
 
+
+def _rule_based_review_pending(context: dict) -> dict:
+    """Score-based recommendation when AI keys are not available."""
+    pending = context.get("pending_sample", [])
+    if not pending:
+        return {
+            "reply": "No pending products found in the review queue.",
+            "action": None, "product_ids": [], "products": [], "edits": [], "suggestion": None,
+        }
+    products = []
+    for p in pending:
+        score = float(p.get("score") or 0)
+        niche = float(p.get("niche_fit") or 0)
+        if score >= 7.5 or niche >= 7.5:
+            rec = "approve"
+            reason = f"Strong scores: ⭐{score} score, 💜{niche} niche fit — solid pick"
+        elif score >= 6.5 or niche >= 6.5:
+            rec = "approve"
+            reason = f"Good scores: ⭐{score} score, 💜{niche} niche fit — worth approving"
+        elif score >= 5.5 and niche >= 5.0:
+            rec = "approve"
+            reason = f"Borderline: ⭐{score} score, 💜{niche} niche fit — give it a chance"
+        else:
+            rec = "reject"
+            reason = f"Low scores: ⭐{score} score, 💜{niche} niche fit — below threshold"
+        products.append({**p, "recommendation": rec, "reason": reason})
+
+    to_approve = [p for p in products if p["recommendation"] == "approve"]
+    to_reject = [p for p in products if p["recommendation"] == "reject"]
+    reply = (
+        f"Reviewed {len(products)} pending products using score analysis "
+        f"(no AI key needed). "
+        f"Recommending **{len(to_approve)} to approve** and **{len(to_reject)} to reject**."
+    )
+    return {
+        "reply": reply,
+        "action": "review_pending",
+        "product_ids": [],
+        "products": products,
+        "edits": [],
+        "suggestion": "Set a Gemini or Groq key in Settings for AI-powered recommendations.",
+    }
+
 async def chat(message: str, context: dict, settings: dict) -> dict:
     """Process a user chat message with store context."""
 
@@ -122,6 +165,11 @@ Rejected: {stats.get('rejected', 0)}
     result = await _groq_chat(user_msg, settings)
     if result:
         return result
+
+    # Rule-based fallback for review_pending (works without AI keys)
+    msg_lower = message.lower()
+    if any(kw in msg_lower for kw in ["review", "pending", "queue", "approve", "which"]):
+        return _rule_based_review_pending(context)
 
     return {
         "reply": "AI services are unavailable right now. Please check your Gemini or Groq API key in Settings.",
