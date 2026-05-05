@@ -1,11 +1,16 @@
 """
-AI enrichment layer.
+AI enrichment layer — cost-optimised for high-volume dropshipping.
 
-Priority:
-  1. Gemini 2.5 Flash-Lite  (gemini_key set) — image analysis
-  2. Groq Llama 3.3    (groq_key set)      — 14,400 RPD free, text-only
-  3. Claude Haiku 4.5  (anthropic_key set) — text-only scoring
-  4. Mock rule-based   (no keys)           — deterministic, free
+Priority chain (cheapest first):
+  1. Groq Llama 3.3 70B   (14,400 RPD completely free) — text-only, runs first
+  2. Gemini 2.5 Flash-Lite (1,500 RPD free tier)       — vision-aware, only for high-scoring products
+  3. Mock rule-based       (always free)                — last resort
+
+Why this order:
+  - Groq is free with a very generous daily limit — use it for bulk scoring
+  - Gemini's image analysis adds value only when raw_score ≥ 55 (genuinely promising product)
+    so we reserve its free-tier quota for those cases
+  - Anthropic removed: Groq is free and equivalent for text-only scoring
 """
 
 import asyncio
@@ -27,11 +32,15 @@ log = logging.getLogger(__name__)
 _AI_SEMAPHORE: Optional[asyncio.Semaphore] = None
 _GEMINI_QUOTA_EXHAUSTED = False
 
+# Minimum raw_score required before we spend Gemini quota on a product.
+# Products below this score are scored by Groq only (free).
+_GEMINI_SCORE_THRESHOLD = 55
+
 
 def _get_semaphore() -> asyncio.Semaphore:
     global _AI_SEMAPHORE
     if _AI_SEMAPHORE is None:
-        _AI_SEMAPHORE = asyncio.Semaphore(2)
+        _AI_SEMAPHORE = asyncio.Semaphore(3)
     return _AI_SEMAPHORE
 
 
@@ -75,6 +84,35 @@ OUTPUT REQUIREMENTS:
 
 Respond ONLY with a single JSON object.
 """
+
+_TEXT_SYSTEM = """
+You are an Elite Product Curator for "წყვილი" (Couple), a premium couple gift boutique targeting Gen-Z in Georgia (Tbilisi). 
+
+CURATION PHILOSOPHY: We sell luxury couple gifts. Reject cheap, generic, or off-brand products hard.
+
+SCORING (1-10):
+- niche_fit: How well does this fit a romantic couple gift shop? (9+ only for perfect items)
+- visual_appeal: Does it look premium? (9+ only for professional, high-end appearance)
+- trend_score: Is this trending on TikTok/Reels right now? (9+ only for viral potential)
+- competition_score: How unique is it? (10=extremely rare, 1=sold everywhere)
+
+Score = (niche_fit * 0.50) + (visual_appeal * 0.30) + (trend_score * 0.20)
+store_match = TRUE only if Score >= 8.0 AND niche_fit >= 7.5
+
+OUTPUT (JSON only, no markdown):
+{
+  "score": float,
+  "niche_fit": float,
+  "visual_appeal": float,
+  "trend_score": float,
+  "competition_score": float,
+  "store_match": bool,
+  "product_name": "3-5 word Georgian name",
+  "caption": "2-3 sentence Georgian caption",
+  "rejection_reason": "Why it failed (if store_match=false)"
+}
+"""
+
 # ── Audience inference ─────────────────────────────────────────────────────────
 
 _MALE_WORDS   = {"men","male","boy","beard","shaving","suit","tie","cufflink","wallet"}
@@ -130,7 +168,7 @@ def _build_system_prompt(template: str, settings: dict) -> str:
             "example_products",
             "matching couple bracelets, personalised photo frames, couple card games, romantic candle sets, love letter boxes, matching phone cases"
         )).replace("{","").replace("}",""),
-    )
+    ) if "{niche}" in template else template
 
 
 # ── Mock enrichment ────────────────────────────────────────────────────────────
@@ -241,7 +279,7 @@ async def gemini_enrich(product: dict, settings: dict) -> Optional[dict]:
         log.debug("Gemini: text-only (no image) for '%s'", title[:40])
 
     payload = {
-        "system_instruction": {"parts": [{"text": _build_system_prompt(_GEMINI_SYSTEM, settings)}]},
+        "system_instruction": {"parts": [{"text": _GEMINI_SYSTEM}]},
         "contents": [{"parts": parts}],
         "generationConfig": {
             "response_mime_type": "application/json",
@@ -278,6 +316,8 @@ async def gemini_enrich(product: dict, settings: dict) -> Optional[dict]:
                 result["store_match"] = float(result.get("niche_fit", 0)) >= 6.0
             if "audience" not in result:
                 result["audience"] = infer_audience(product)
+            if "hashtags" not in result:
+                result["hashtags"] = _get_tags(product)
             result["has_chinese_text"] = bool(result.get("has_chinese_text", False))
             result["chinese_text_note"] = str(result.get("chinese_text_note") or "")
             result["ai_provider"] = "gemini"
@@ -303,70 +343,7 @@ async def gemini_enrich(product: dict, settings: dict) -> Optional[dict]:
     return None
 
 
-# ── Claude Haiku 4.5 (text-only fallback) ─────────────────────────────────────
-
-async def anthropic_enrich(product: dict, settings: dict) -> Optional[dict]:
-    api_key = get_config("ANTHROPIC_KEY", settings.get("anthropic_key", ""))
-    if not api_key:
-        return None
-
-    title = product.get("title_translated") or product.get("title", "Unknown")
-
-    user_content = (
-        f"Title: {title}\n"
-        f"Category: {product.get('category', '?')}\n"
-        f"Cost: ₾{product.get('cost_eur','?')} → Sell: ₾{product.get('sell_price_eur','?')} "
-        f"({product.get('margin_pct','?')}% margin)\n"
-        f"Sold: {product.get('orders', 0)} | Rating: {product.get('rating', 0)}/5\n"
-        f"Keyword searched: {product.get('keyword', '?')}"
-    )
-
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": "2023-06-01",
-                    "anthropic-beta": "prompt-caching-2024-07-31",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": "claude-haiku-4-5-20251001",
-                    "max_tokens": 600,
-                    "system": [{
-                        "type": "text",
-                        "text": _build_system_prompt(_ANTHROPIC_SYSTEM, settings),
-                        "cache_control": {"type": "ephemeral"},
-                    }],
-                    "messages": [{"role": "user", "content": user_content}],
-                },
-            )
-        if resp.status_code != 200:
-            log.warning("Anthropic API %d — falling back to mock", resp.status_code)
-            return None
-
-        text = resp.json()["content"][0]["text"]
-        text = re.sub(r"```json|```", "", text).strip()
-        result = json.loads(text)
-
-        if "store_match" not in result:
-            result["store_match"] = float(result.get("niche_fit", 0)) >= 7.0
-        if "audience" not in result:
-            result["audience"] = infer_audience(product)
-        result["has_chinese_text"] = False
-        result["chinese_text_note"] = ""
-        result["ai_provider"] = "anthropic"
-        return result
-
-    except json.JSONDecodeError as exc:
-        log.warning("Anthropic JSON parse error: %s", exc)
-    except Exception as exc:
-        log.warning("Anthropic enrichment error: %s", exc)
-    return None
-
-
-# ── Groq Llama 3.3 70B (text-only, very generous free tier) ───────────────────
+# ── Groq Llama 3.3 70B (text-only, completely free at 14,400 RPD) ─────────────
 
 _GROQ_URL   = "https://api.groq.com/openai/v1/chat/completions"
 _GROQ_MODEL = "llama-3.3-70b-versatile"
@@ -400,7 +377,7 @@ async def groq_enrich(product: dict, settings: dict) -> Optional[dict]:
                 json={
                     "model": _GROQ_MODEL,
                     "messages": [
-                        {"role": "system", "content": _build_system_prompt(_ANTHROPIC_SYSTEM, settings)},
+                        {"role": "system", "content": _TEXT_SYSTEM},
                         {"role": "user",   "content": user_content},
                     ],
                     "max_tokens": 600,
@@ -425,6 +402,8 @@ async def groq_enrich(product: dict, settings: dict) -> Optional[dict]:
             result["store_match"] = float(result.get("niche_fit", 0)) >= 7.0
         if "audience" not in result:
             result["audience"] = infer_audience(product)
+        if "hashtags" not in result:
+            result["hashtags"] = _get_tags(product)
         result["has_chinese_text"] = False
         result["chinese_text_note"] = ""
         result["ai_provider"] = "groq"
@@ -449,15 +428,30 @@ async def groq_enrich(product: dict, settings: dict) -> Optional[dict]:
 # ── Public entry point ─────────────────────────────────────────────────────────
 
 async def ai_enrich(product: dict, settings: dict) -> Optional[dict]:
-    """Gemini first for image analysis, then text-only fallbacks."""
+    """Cost-optimised AI enrichment.
+
+    Chain:
+      1. Groq  (free, 14,400 RPD) — always runs first, covers bulk volume
+      2. Gemini (vision, free tier 1,500 RPD) — only for high raw_score (≥55)
+         where seeing the actual product image adds meaningful value
+      3. Mock  (free, rule-based) — last resort, no keys configured
+
+    Anthropic removed: Groq is free, has a generous quota, and produces
+    equivalent text-only scoring results.
+    """
     async with _get_semaphore():
-        result = await gemini_enrich(product, settings)
-        if result:
-            return result
+        raw_score = float(product.get("raw_score", 0))
+
+        # ── Step 1: Groq (free) — primary scorer ──────────────────────────────
         result = await groq_enrich(product, settings)
         if result:
             return result
-        result = await anthropic_enrich(product, settings)
-        if result:
-            return result
+
+        # ── Step 2: Gemini (vision) — only when Groq unavailable + product promising
+        if raw_score >= _GEMINI_SCORE_THRESHOLD:
+            result = await gemini_enrich(product, settings)
+            if result:
+                return result
+
+        # ── Step 3: Mock fallback ──────────────────────────────────────────────
         return mock_enrich(product)
