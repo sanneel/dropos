@@ -1,11 +1,13 @@
 """
-AI enrichment layer.
+AI enrichment layer — DropOS.
 
-Priority:
-  1. Gemini 2.5 Flash-Lite  (gemini_key set) — image analysis
-  2. Groq Llama 3.3    (groq_key set)      — 14,400 RPD free, text-only
-  3. Claude Haiku 4.5  (anthropic_key set) — text-only scoring
-  4. Mock rule-based   (no keys)           — deterministic, free
+Pipeline (in priority order):
+  1. Gemini 2.5 Flash-Lite  (gemini_key set) — image + text analysis  ★ PRIMARY
+  2. Groq Llama 3.3 70B     (groq_key set)   — text-only fallback, 14 400 RPD free
+  3. Mock rule-based         (no keys)        — deterministic, always free
+
+NOTE: Groq is TEXT-ONLY — it cannot see product images.
+      Always configure a Gemini key for real image-based scoring.
 """
 
 import asyncio
@@ -22,8 +24,6 @@ from config.runtime import get_config
 
 log = logging.getLogger(__name__)
 
-# Limits concurrent AI calls globally — prevents two simultaneous jobs from
-# both hammering the API and hitting rate limits faster.
 _AI_SEMAPHORE: Optional[asyncio.Semaphore] = None
 _GEMINI_QUOTA_EXHAUSTED = False
 
@@ -71,10 +71,32 @@ STRICT STORE MATCH RULE:
 OUTPUT REQUIREMENTS:
 - product_name: 3-5 words in Georgian. Must sound premium and alluring.
 - caption: 2-3 sentences in Georgian. Focus on exclusivity and the "perfect surprise."
-- rejection_reason: If store_match is false, provide a blunt, professional critique of why it failed (e.g., "Too generic," "Poor visual quality," "Doesn't fit brand age demographic").
+- rejection_reason: If store_match is false, provide a blunt, professional critique of why it failed.
+- has_chinese_text: true/false — does the product image contain visible Chinese text?
+- chinese_text_note: brief note if Chinese text found, else empty string.
 
 Respond ONLY with a single JSON object.
 """
+
+_GROQ_SYSTEM = """
+You are an Elite Product Curator for "წყვილი" (Couple), a high-end luxury couple gift boutique.
+
+NOTE: You are doing TEXT-ONLY analysis (no image). Score conservatively.
+
+BRAND: Black & Gold aesthetic, Gen-Z luxury, couple gifts only. Products must be Instagram-worthy.
+
+SCORING (1-10):
+- niche_fit: Fit for couple gift shop
+- visual_appeal: Expected visual quality based on product type/category (text only, be conservative)
+- trend_score: Current trend alignment
+- competition_score: Uniqueness
+
+SCORE: (niche_fit * 0.50) + (visual_appeal * 0.30) + (trend_score * 0.20)
+store_match = true ONLY IF score >= 8.0 AND niche_fit >= 7.5
+
+OUTPUT: JSON only. Fields: score, niche_fit, visual_appeal, trend_score, competition_score, store_match, product_name (Georgian, 3-5 words), caption (Georgian, 2-3 sentences), rejection_reason (if rejected).
+"""
+
 # ── Audience inference ─────────────────────────────────────────────────────────
 
 _MALE_WORDS   = {"men","male","boy","beard","shaving","suit","tie","cufflink","wallet"}
@@ -121,16 +143,7 @@ def _clean_name(product: dict) -> str:
 
 
 def _build_system_prompt(template: str, settings: dict) -> str:
-    return template.format(
-        niche=get_config("NICHE", settings.get("niche", "couple gifts & romantic products")).replace("{","").replace("}",""),
-        target_audience=get_config("TARGET_AUDIENCE", settings.get("target_audience", "couples, people buying gifts for partners, ages 18-35")).replace("{","").replace("}",""),
-        price_min=get_config("SELL_PRICE_MIN", settings.get("sell_price_min", 15)),
-        price_max=get_config("SELL_PRICE_MAX", settings.get("sell_price_max", 80)),
-        example_products=get_config("EXAMPLE_PRODUCTS", settings.get(
-            "example_products",
-            "matching couple bracelets, personalised photo frames, couple card games, romantic candle sets, love letter boxes, matching phone cases"
-        )).replace("{","").replace("}",""),
-    )
+    return template
 
 
 # ── Mock enrichment ────────────────────────────────────────────────────────────
@@ -171,7 +184,7 @@ _CAPTION_TEMPLATES = [
 ]
 
 
-# ── Gemini 2.5 Flash-Lite ──────────────────────────────────────────────────────
+# ── Gemini 2.5 Flash-Lite (image + text) ──────────────────────────────────────
 
 _GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 _GEMINI_MODEL_ALIASES = {
@@ -238,10 +251,10 @@ async def gemini_enrich(product: dict, settings: dict) -> Optional[dict]:
         parts = [{"inline_data": {"mime_type": mime, "data": b64}}, text_part]
         log.debug("Gemini: image included for '%s'", title[:40])
     else:
-        log.debug("Gemini: text-only (no image) for '%s'", title[:40])
+        log.debug("Gemini: text-only (no image available) for '%s'", title[:40])
 
     payload = {
-        "system_instruction": {"parts": [{"text": _build_system_prompt(_GEMINI_SYSTEM, settings)}]},
+        "system_instruction": {"parts": [{"text": _GEMINI_SYSTEM}]},
         "contents": [{"parts": parts}],
         "generationConfig": {
             "response_mime_type": "application/json",
@@ -260,9 +273,8 @@ async def gemini_enrich(product: dict, settings: dict) -> Optional[dict]:
                 )
 
             if resp.status_code == 429:
-                print(f"[GEMINI 429] key=...{api_key[-6:]} body={resp.text[:300]}", flush=True)
                 _GEMINI_QUOTA_EXHAUSTED = True
-                log.warning("Gemini 429 quota/rate limit — disabling Gemini for this process and falling back")
+                log.warning("Gemini 429 quota exhausted — falling back to Groq (text-only)")
                 return None
 
             if resp.status_code != 200:
@@ -280,15 +292,17 @@ async def gemini_enrich(product: dict, settings: dict) -> Optional[dict]:
                 result["audience"] = infer_audience(product)
             result["has_chinese_text"] = bool(result.get("has_chinese_text", False))
             result["chinese_text_note"] = str(result.get("chinese_text_note") or "")
+            result["hashtags"] = result.get("hashtags") or _get_tags(product)
             result["ai_provider"] = "gemini"
 
             log.info(
-                "Gemini '%s' → score=%.1f niche=%.1f visual=%.1f match=%s",
+                "Gemini '%s' → score=%.1f niche=%.1f visual=%.1f match=%s img=%s",
                 title[:35],
                 result.get("score", 0),
                 result.get("niche_fit", 0),
                 result.get("visual_appeal", 0),
                 result.get("store_match"),
+                "yes" if img_data else "no",
             )
             return result
 
@@ -296,83 +310,23 @@ async def gemini_enrich(product: dict, settings: dict) -> Optional[dict]:
             log.warning("Gemini JSON parse error: %s", exc)
             return None
         except Exception as exc:
-            log.warning("Gemini enrichment error: %s", exc)
-            return None
+            log.warning("Gemini enrichment error (attempt %d): %s", attempt + 1, exc)
+            if attempt == 2:
+                return None
 
-    log.warning("Gemini: gave up after retries for '%s'", title[:40])
     return None
 
 
-# ── Claude Haiku 4.5 (text-only fallback) ─────────────────────────────────────
-
-async def anthropic_enrich(product: dict, settings: dict) -> Optional[dict]:
-    api_key = get_config("ANTHROPIC_KEY", settings.get("anthropic_key", ""))
-    if not api_key:
-        return None
-
-    title = product.get("title_translated") or product.get("title", "Unknown")
-
-    user_content = (
-        f"Title: {title}\n"
-        f"Category: {product.get('category', '?')}\n"
-        f"Cost: ₾{product.get('cost_eur','?')} → Sell: ₾{product.get('sell_price_eur','?')} "
-        f"({product.get('margin_pct','?')}% margin)\n"
-        f"Sold: {product.get('orders', 0)} | Rating: {product.get('rating', 0)}/5\n"
-        f"Keyword searched: {product.get('keyword', '?')}"
-    )
-
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": "2023-06-01",
-                    "anthropic-beta": "prompt-caching-2024-07-31",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": "claude-haiku-4-5-20251001",
-                    "max_tokens": 600,
-                    "system": [{
-                        "type": "text",
-                        "text": _build_system_prompt(_ANTHROPIC_SYSTEM, settings),
-                        "cache_control": {"type": "ephemeral"},
-                    }],
-                    "messages": [{"role": "user", "content": user_content}],
-                },
-            )
-        if resp.status_code != 200:
-            log.warning("Anthropic API %d — falling back to mock", resp.status_code)
-            return None
-
-        text = resp.json()["content"][0]["text"]
-        text = re.sub(r"```json|```", "", text).strip()
-        result = json.loads(text)
-
-        if "store_match" not in result:
-            result["store_match"] = float(result.get("niche_fit", 0)) >= 7.0
-        if "audience" not in result:
-            result["audience"] = infer_audience(product)
-        result["has_chinese_text"] = False
-        result["chinese_text_note"] = ""
-        result["ai_provider"] = "anthropic"
-        return result
-
-    except json.JSONDecodeError as exc:
-        log.warning("Anthropic JSON parse error: %s", exc)
-    except Exception as exc:
-        log.warning("Anthropic enrichment error: %s", exc)
-    return None
-
-
-# ── Groq Llama 3.3 70B (text-only, very generous free tier) ───────────────────
+# ── Groq Llama 3.3 70B (TEXT-ONLY fallback) ───────────────────────────────────
+# Groq cannot process images. It is used as a free text-only fallback when
+# Gemini is unavailable (no key, quota exhausted, or network error).
 
 _GROQ_URL   = "https://api.groq.com/openai/v1/chat/completions"
 _GROQ_MODEL = "llama-3.3-70b-versatile"
 
 
 async def groq_enrich(product: dict, settings: dict) -> Optional[dict]:
+    """Text-only scoring via Groq. No image analysis."""
     api_key = get_config("GROQ_KEY", settings.get("groq_key", ""))
     if not api_key:
         return None
@@ -386,6 +340,7 @@ async def groq_enrich(product: dict, settings: dict) -> Optional[dict]:
         f"({product.get('margin_pct','?')}% margin)\n"
         f"Sold: {product.get('orders', 0)} | Rating: {product.get('rating', 0)}/5\n"
         f"Keyword searched: {product.get('keyword', '?')}\n\n"
+        "NOTE: No image available. Score conservatively on visual_appeal.\n"
         "Respond with ONLY a JSON object — no markdown, no explanation."
     )
 
@@ -400,7 +355,7 @@ async def groq_enrich(product: dict, settings: dict) -> Optional[dict]:
                 json={
                     "model": _GROQ_MODEL,
                     "messages": [
-                        {"role": "system", "content": _build_system_prompt(_ANTHROPIC_SYSTEM, settings)},
+                        {"role": "system", "content": _GROQ_SYSTEM},
                         {"role": "user",   "content": user_content},
                     ],
                     "max_tokens": 600,
@@ -410,7 +365,7 @@ async def groq_enrich(product: dict, settings: dict) -> Optional[dict]:
             )
 
         if resp.status_code == 429:
-            log.warning("Groq 429 rate limit — skipping to next provider")
+            log.warning("Groq 429 rate limit — falling back to mock")
             return None
 
         if resp.status_code != 200:
@@ -422,19 +377,19 @@ async def groq_enrich(product: dict, settings: dict) -> Optional[dict]:
         result = json.loads(text)
 
         if "store_match" not in result:
-            result["store_match"] = float(result.get("niche_fit", 0)) >= 7.0
+            result["store_match"] = float(result.get("niche_fit", 0)) >= 7.5
         if "audience" not in result:
             result["audience"] = infer_audience(product)
-        result["has_chinese_text"] = False
+        result["has_chinese_text"] = False   # Groq cannot detect Chinese text in images
         result["chinese_text_note"] = ""
+        result["hashtags"] = result.get("hashtags") or _get_tags(product)
         result["ai_provider"] = "groq"
 
         log.info(
-            "Groq '%s' → score=%.1f niche=%.1f visual=%.1f match=%s",
+            "Groq (text-only) '%s' → score=%.1f niche=%.1f match=%s",
             title[:35],
             result.get("score", 0),
             result.get("niche_fit", 0),
-            result.get("visual_appeal", 0),
             result.get("store_match"),
         )
         return result
@@ -449,15 +404,27 @@ async def groq_enrich(product: dict, settings: dict) -> Optional[dict]:
 # ── Public entry point ─────────────────────────────────────────────────────────
 
 async def ai_enrich(product: dict, settings: dict) -> Optional[dict]:
-    """Gemini first for image analysis, then text-only fallbacks."""
+    """
+    Enrich a product with AI scoring.
+
+    Chain:
+      1. Gemini (image + text) — best quality, uses actual product photos
+      2. Groq (text-only)      — free fallback when Gemini is unavailable
+      3. Mock (rule-based)     — always works, zero cost
+
+    Gemini MUST be configured (Settings → gemini_key) for real image analysis.
+    Groq is only for metadata-based fallback scoring.
+    """
     async with _get_semaphore():
+        # 1. Gemini — primary scorer, analyzes actual product images
         result = await gemini_enrich(product, settings)
         if result:
             return result
+
+        # 2. Groq — text-only fallback (free, no image analysis)
         result = await groq_enrich(product, settings)
         if result:
             return result
-        result = await anthropic_enrich(product, settings)
-        if result:
-            return result
+
+        # 3. Mock — last resort, always available
         return mock_enrich(product)
