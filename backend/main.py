@@ -21,6 +21,7 @@ from runner import process_scraped_products, run_pipeline
 from scheduler import create_scheduler, get_scheduler_status
 import instagram
 import sheets
+import ai_assistant
 import httpx
 from utils.google_auth import configure_google_credentials_from_env
 
@@ -53,6 +54,7 @@ _SENSITIVE_SETTING_FIELDS = {
     "captcha_2captcha_key",
     "google_sheets_credentials",
     "ingest_api_token",
+    "clipdrop_key",
 }
 
 
@@ -213,6 +215,11 @@ class SettingsUpdate(BaseModel):
     sell_price_min: Optional[float] = None
     sell_price_max: Optional[float] = None
     example_products: Optional[str] = None
+    clipdrop_key: Optional[str] = None
+    post_schedule_enabled: Optional[bool] = None
+    post_times: Optional[List[str]] = None
+    post_timezone: Optional[str] = None
+    posts_per_slot: Optional[int] = None
 
 
 async def _settings() -> dict:
@@ -904,6 +911,74 @@ async def restore_from_sheets():
     await _configure_sheets_from_settings()
     return result
 
+
+
+
+# ── Analytics ──────────────────────────────────────────────────────────────────
+
+@app.get("/api/analytics")
+async def get_analytics():
+    """Return analytics data for the dashboard."""
+    data = await db.get_analytics()
+    stats_data = await db.get_stats()
+    jobs = await db.get_jobs(5)
+    data["stats"] = stats_data
+    data["recent_jobs"] = jobs[:5]
+    return data
+
+
+# ── AI Chat Assistant ──────────────────────────────────────────────────────────
+
+class ChatRequest(BaseModel):
+    message: str
+    reconsider: Optional[bool] = False
+
+
+@app.post("/api/ai/chat")
+async def ai_chat(body: ChatRequest):
+    """AI chat assistant — reviews products, answers questions, resurfaces gems."""
+    if not body.message or not body.message.strip():
+        raise HTTPException(400, "message is required")
+
+    settings = await _settings()
+    stats_data = await db.get_stats()
+    jobs = await db.get_jobs(3)
+    last_job = jobs[0] if jobs else {}
+    rejected_sample = await db.get_rejected_sample(30)
+
+    # Compute top rejection reasons from sample
+    reason_counts: dict = {}
+    for p in rejected_sample:
+        r = (p.get("rejection_reason") or "Unknown").strip()
+        reason_counts[r] = reason_counts.get(r, 0) + 1
+    recent_rejection_reasons = [
+        {"reason": k, "count": v}
+        for k, v in sorted(reason_counts.items(), key=lambda x: x[1], reverse=True)[:6]
+    ]
+
+    context = {
+        "stats": stats_data,
+        "last_job": last_job,
+        "rejected_sample": rejected_sample,
+        "recent_rejection_reasons": recent_rejection_reasons,
+    }
+
+    result = await ai_assistant.chat(body.message, context, settings)
+
+    # If AI suggests reconsidering products and user confirmed, do it
+    if body.reconsider and result.get("action") == "reconsider" and result.get("product_ids"):
+        reconsidered = 0
+        for pid in result["product_ids"][:20]:  # max 20 at once
+            try:
+                await db.set_stage(int(pid), "pending")
+                reconsidered += 1
+            except Exception:
+                pass
+        if reconsidered:
+            await _backup_products_to_sheets()
+            result["reconsidered"] = reconsidered
+
+    return result
 
 # ── Background helpers ─────────────────────────────────────────────────────────
 
