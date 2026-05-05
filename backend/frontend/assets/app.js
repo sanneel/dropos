@@ -14,6 +14,7 @@ const IC = {
   check: `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
   analytics: `<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>`,
   chat: `<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
+  catalog: `<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>`,
 };
 
 // ── State ──────────────────────────────────────────────────────────────────
@@ -31,6 +32,7 @@ let scanSource   = 'taobao';
 let activeJob = null;
 let settingsData = {};
 let rejectTargetId = null;
+let catalogProducts = [], catalogTotal = 0, catalogStage = 'approved', catalogSearch = '', catalogPage = 0;
 
 // ── Nav ────────────────────────────────────────────────────────────────────
 const NAV_PAGES = [
@@ -41,6 +43,7 @@ const NAV_PAGES = [
   { id:'textEdit',  label:'Text edit',    icon:'settings',  stageKey:'text_edit' },
   { id:'approved',  label:'Approved',     icon:'approved',  stageKey:'approved' },
   { id:'posted',    label:'Posted',       icon:'posted'     },
+  { id:'catalog',   label:'Catalog',      icon:'catalog',   section:'Catalog'   },
   { id:'rejected',  label:'Rejected',     icon:'rejected'   },
   { id:'settings',  label:'Settings',     icon:'settings',  section:'Config'    },
   { id:'analytics', label:'Analytics',   icon:'analytics', section:'Tools'    },
@@ -1883,6 +1886,7 @@ const PAGE_RENDERERS = {
   settings:  renderSettings,
   analytics: renderAnalytics,
   chat:      renderChat,
+  catalog:   renderCatalog,
 };
 
 function _fadeIn() {
@@ -1892,6 +1896,232 @@ function _fadeIn() {
   c.style.transition = 'opacity 0.15s ease';
   requestAnimationFrame(() => { c.style.opacity = '1'; });
 }
+
+
+// ── Catalog ───────────────────────────────────────────────────────────────
+
+let _catalogEditId = null;
+
+async function renderCatalog() {
+  setTitle('Catalog', 'edit products & sync to Google Sheets');
+  document.getElementById('topbar-actions').innerHTML = `
+    <button class="btn btn-sm" onclick="loadCatalog()">↻ Refresh</button>`;
+  catalogPage = 0;
+  catalogProducts = [];
+  await loadCatalog();
+}
+
+async function loadCatalog(append = false) {
+  const offset = append ? catalogProducts.length : 0;
+  const stage = catalogStage === 'all' ? '' : catalogStage;
+  const q = catalogSearch ? `&search=${encodeURIComponent(catalogSearch)}` : '';
+  const stageParam = stage ? `stage=${stage}&` : 'stage=approved&stage=posted&';
+  // Use multi-stage fetch: approved + posted if "all"
+  let products = [], total = 0;
+  if (catalogStage === 'all') {
+    const [a, p] = await Promise.all([
+      api(`/products?stage=approved&limit=50&offset=${offset}&sort=created`).catch(() => ({ products: [], total: 0 })),
+      api(`/products?stage=posted&limit=50&offset=${offset}&sort=created`).catch(() => ({ products: [], total: 0 })),
+    ]);
+    products = [...a.products, ...p.products];
+    total = a.total + p.total;
+  } else {
+    const data = await api(`/products?stage=${catalogStage}&limit=50&offset=${offset}&sort=created`).catch(() => ({ products: [], total: 0 }));
+    products = data.products;
+    total = data.total;
+  }
+  // Client-side search filter
+  if (catalogSearch) {
+    const q = catalogSearch.toLowerCase();
+    products = products.filter(p =>
+      (p.title_translated || '').toLowerCase().includes(q) ||
+      (p.product_name || '').toLowerCase().includes(q) ||
+      (p.category || '').toLowerCase().includes(q) ||
+      (p.caption || '').toLowerCase().includes(q)
+    );
+    total = products.length;
+  }
+  catalogProducts = append ? catalogProducts.concat(products) : products;
+  catalogTotal = total;
+  renderCatalogTable();
+}
+
+function renderCatalogTable() {
+  const el = document.getElementById('content');
+  const canMore = !catalogSearch && catalogProducts.length < catalogTotal;
+
+  el.innerHTML = `
+    <div class="catalog-toolbar">
+      <div class="catalog-tabs">
+        <button class="cat-tab${catalogStage==='approved'?' active':''}" onclick="setCatalogStage('approved')">✅ Approved</button>
+        <button class="cat-tab${catalogStage==='posted'?' active':''}" onclick="setCatalogStage('posted')">📤 Posted</button>
+        <button class="cat-tab${catalogStage==='all'?' active':''}" onclick="setCatalogStage('all')">All</button>
+      </div>
+      <div class="catalog-search">
+        <input type="text" id="catalog-search-input" placeholder="Search by name, category…"
+          value="${catalogSearch}"
+          oninput="debCatalogSearch(this.value)"
+          style="width:220px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:12px">
+      </div>
+      <span style="font-size:12px;color:var(--t3);margin-left:auto">${catalogProducts.length} products${!catalogSearch && catalogTotal > catalogProducts.length ? ' of ' + catalogTotal : ''}</span>
+    </div>
+    ${catalogProducts.length === 0 ? `
+      <div class="empty" style="margin-top:48px">
+        <span class="empty-icon">🗂️</span>
+        <h3>No products found</h3>
+        <p>${catalogSearch ? 'Try a different search' : 'Approve products from the review queue first'}</p>
+      </div>` : `
+    <div class="catalog-table-wrap">
+      <table class="catalog-table">
+        <thead>
+          <tr>
+            <th style="width:60px">Photo</th>
+            <th>Name</th>
+            <th style="width:90px">Price (₾)</th>
+            <th style="width:80px">Stage</th>
+            <th style="width:60px">Score</th>
+            <th>Caption</th>
+            <th style="width:80px">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="catalog-tbody">
+          ${catalogProducts.map(p => catalogRow(p)).join('')}
+        </tbody>
+      </table>
+    </div>
+    ${canMore ? `<div style="text-align:center;margin-top:20px">
+      <button class="btn" onclick="loadCatalog(true)">Load more (${catalogTotal - catalogProducts.length} remaining)</button>
+    </div>` : ''}
+    `}
+  `;
+}
+
+function catalogRow(p, editMode = false) {
+  const img = (p.images || [])[0];
+  const name = p.product_name || p.title_translated || '—';
+  const price = p.sell_price_eur ?? 0;
+  const caption = p.caption || '';
+  const stageBadge = p.stage === 'posted'
+    ? '<span class="badge" style="background:#3b82f6;color:#fff">Posted</span>'
+    : '<span class="badge badge-green">Approved</span>';
+  const score = (p.score ?? 0).toFixed(1);
+
+  if (editMode) {
+    return `<tr id="cat-row-${p.id}" class="cat-row editing">
+      <td>
+        ${img ? `<img src="${imageUrl(img)}" class="cat-thumb" onerror="this.style.display='none'">` : '<div class="cat-thumb-ph">?</div>'}
+      </td>
+      <td>
+        <input id="cat-name-${p.id}" class="cat-input" type="text" value="${escHtml(name)}" placeholder="Product name">
+      </td>
+      <td>
+        <input id="cat-price-${p.id}" class="cat-input cat-price-input" type="number" step="0.01" min="0" value="${price}" placeholder="0.00">
+      </td>
+      <td>${stageBadge}</td>
+      <td><span class="badge badge-purple">${score}</span></td>
+      <td>
+        <textarea id="cat-caption-${p.id}" class="cat-input cat-caption-input" placeholder="Caption for Instagram">${escHtml(caption)}</textarea>
+      </td>
+      <td>
+        <button class="btn btn-sm" style="background:var(--green);color:#fff;margin-bottom:4px" onclick="saveCatalogRow(${p.id})">💾 Save</button>
+        <button class="btn btn-sm" onclick="cancelCatalogEdit(${p.id})">✕</button>
+      </td>
+    </tr>`;
+  }
+
+  return `<tr id="cat-row-${p.id}" class="cat-row">
+    <td>
+      ${img ? `<img src="${imageUrl(img)}" class="cat-thumb" onerror="this.style.display='none'">` : '<div class="cat-thumb-ph">?</div>'}
+    </td>
+    <td>
+      <div class="cat-name">${escHtml(name)}</div>
+      <div style="font-size:10px;color:var(--t3)">${escHtml(p.category || p.keyword || '')}</div>
+    </td>
+    <td>
+      <span class="cat-price-display">₾${price}</span>
+    </td>
+    <td>${stageBadge}</td>
+    <td><span class="badge badge-purple">${score}</span></td>
+    <td>
+      <div class="cat-caption-preview">${escHtml(caption.slice(0, 80))}${caption.length > 80 ? '…' : ''}</div>
+    </td>
+    <td>
+      <button class="btn btn-sm" onclick="editCatalogRow(${p.id})">✏️ Edit</button>
+    </td>
+  </tr>`;
+}
+
+function escHtml(s) {
+  return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function editCatalogRow(id) {
+  if (_catalogEditId && _catalogEditId !== id) cancelCatalogEdit(_catalogEditId);
+  _catalogEditId = id;
+  const p = catalogProducts.find(x => x.id === id);
+  if (!p) return;
+  const row = document.getElementById(`cat-row-${id}`);
+  if (row) row.outerHTML = catalogRow(p, true);
+}
+
+function cancelCatalogEdit(id) {
+  const p = catalogProducts.find(x => x.id === id);
+  if (!p) return;
+  const row = document.getElementById(`cat-row-${id}`);
+  if (row) row.outerHTML = catalogRow(p, false);
+  _catalogEditId = null;
+}
+
+async function saveCatalogRow(id) {
+  const name = document.getElementById(`cat-name-${id}`)?.value?.trim();
+  const price = parseFloat(document.getElementById(`cat-price-${id}`)?.value || '0');
+  const caption = document.getElementById(`cat-caption-${id}`)?.value?.trim();
+
+  const btn = document.querySelector(`#cat-row-${id} .btn`);
+  if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
+
+  try {
+    const result = await api(`/products/${id}`, 'PATCH', {
+      product_name: name,
+      sell_price_eur: isNaN(price) ? undefined : price,
+      caption: caption,
+    });
+
+    // Update local state
+    const idx = catalogProducts.findIndex(x => x.id === id);
+    if (idx >= 0) {
+      catalogProducts[idx] = { ...catalogProducts[idx], ...result.product };
+      const row = document.getElementById(`cat-row-${id}`);
+      if (row) row.outerHTML = catalogRow(catalogProducts[idx], false);
+    }
+    _catalogEditId = null;
+    toast('✅ Saved & synced to Sheets', 'success');
+  } catch(e) {
+    toast('❌ ' + (e.message || 'Save failed'), 'error');
+    const btn2 = document.querySelector(`#cat-row-${id} .btn`);
+    if (btn2) { btn2.textContent = '💾 Save'; btn2.disabled = false; }
+  }
+}
+
+function setCatalogStage(stage) {
+  catalogStage = stage;
+  catalogPage = 0;
+  catalogProducts = [];
+  loadCatalog();
+}
+
+let _catalogSearchTimer = null;
+function debCatalogSearch(val) {
+  catalogSearch = val;
+  clearTimeout(_catalogSearchTimer);
+  _catalogSearchTimer = setTimeout(() => {
+    catalogPage = 0;
+    catalogProducts = [];
+    loadCatalog();
+  }, 350);
+}
+
+
 
 async function renderPage() {
   const fn = PAGE_RENDERERS[currentPage];
