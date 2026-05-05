@@ -10,6 +10,33 @@ from typing import Literal
 
 ScoreLabel = Literal["LOW", "MEDIUM", "HIGH"]
 
+# Categories that are a great fit for the couple gift shop
+_GOOD_CATEGORIES = {
+    "Jewelry", "Accessories", "Stationery", "Home Fragrance",
+    "Phone Accessories", "Phone Cases", "Bags", "Watches",
+}
+
+# Categories clearly not a fit — penalize hard so they rarely reach AI
+_BAD_CATEGORIES = {
+    "Kitchen", "Baby", "Tools", "Automotive", "Sportswear",
+    "Outdoor", "Pet Supplies", "Office", "Industrial", "Food",
+}
+
+# Title signals that suggest premium materials — reward these
+_PREMIUM_SIGNALS = [
+    "925 silver", "sterling silver", "18k", "14k gold", "gold plated",
+    "gold-plated", "personalized", "personalised", "custom engraved",
+    "engraved", "stainless steel", "zircon", "crystal", "gemstone",
+    "titanium", "moissanite", "cubic zirconia",
+]
+
+# Title signals that suggest low-quality materials — penalize these
+_CHEAP_SIGNALS = [
+    "plastic bracelet", "rubber bracelet", "silicone bracelet",
+    "acrylic jewelry", "acrylic jewellery", "resin bracelet",
+    "resin necklace", "resin ring", "pvc keychain", "foam",
+]
+
 
 def compute_score(product: dict) -> int:
     points = 0
@@ -72,6 +99,7 @@ def compute_score(product: dict) -> int:
 
     # Title richness (0-10)
     title = product.get("title_translated") or product.get("title", "")
+    title_lower = title.lower()
     if len(title) >= 25:
         points += 10
     elif len(title) >= 12:
@@ -79,7 +107,24 @@ def compute_score(product: dict) -> int:
     elif len(title) >= 5:
         points += 2
 
-    return min(100, points)
+    # ── Category fit bonus/penalty (-20 to +15) ────────────────────────────────
+    # Rewards products in niche-relevant categories and penalises off-niche ones
+    # before they waste AI tokens.
+    category = product.get("category", "")
+    if category in _GOOD_CATEGORIES:
+        points += 15
+    elif category in _BAD_CATEGORIES:
+        points -= 20
+
+    # ── Material quality signals (-15 to +10) ──────────────────────────────────
+    # Cheap-material indicators flag products that would hurt premium brand image.
+    # Premium-material indicators suggest the product genuinely looks high-end.
+    if any(sig in title_lower for sig in _CHEAP_SIGNALS):
+        points -= 15
+    elif any(sig in title_lower for sig in _PREMIUM_SIGNALS):
+        points += 10
+
+    return min(100, max(0, points))
 
 
 def get_label(score: int) -> ScoreLabel:
