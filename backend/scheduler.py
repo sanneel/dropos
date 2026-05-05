@@ -13,10 +13,16 @@ from runner import run_pipeline
 
 log = logging.getLogger(__name__)
 
+# Couple gift shop keywords — focused on high-intent gift searches
 DEFAULT_KEYWORDS = [
-    "aesthetic home decor",
-    "minimalist room decor",
-    "aesthetic lifestyle",
+    "couple bracelet matching",
+    "matching necklace couple",
+    "anniversary gift for girlfriend",
+    "personalized couple jewelry",
+    "romantic gift for her",
+    "couple phone case matching",
+    "love locket necklace",
+    "custom engraved couple ring",
 ]
 
 
