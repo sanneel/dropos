@@ -569,6 +569,112 @@ class Database:
 
     # ── Stats ─────────────────────────────────────────────────────────────────
 
+
+    async def get_analytics(self) -> dict:
+        """Return analytics data for the analytics dashboard."""
+        conn = self._db
+
+        async with conn.execute("""
+            SELECT stage, COUNT(*) as cnt FROM products GROUP BY stage
+        """) as cur:
+            stages_raw = await cur.fetchall()
+
+        async with conn.execute("""
+            SELECT
+                CASE
+                    WHEN score >= 9 THEN '9-10'
+                    WHEN score >= 8 THEN '8-9'
+                    WHEN score >= 7 THEN '7-8'
+                    WHEN score >= 6 THEN '6-7'
+                    ELSE 'under 6'
+                END as bucket,
+                COUNT(*) as cnt
+            FROM products WHERE score IS NOT NULL
+            GROUP BY bucket ORDER BY bucket DESC
+        """) as cur:
+            score_dist = await cur.fetchall()
+
+        async with conn.execute("""
+            SELECT category, COUNT(*) as cnt FROM products
+            WHERE category IS NOT NULL AND category != ''
+            GROUP BY category ORDER BY cnt DESC LIMIT 10
+        """) as cur:
+            categories = await cur.fetchall()
+
+        async with conn.execute("""
+            SELECT rejection_reason, COUNT(*) as cnt FROM products
+            WHERE stage = 'rejected' AND rejection_reason IS NOT NULL AND rejection_reason != ''
+            GROUP BY rejection_reason ORDER BY cnt DESC LIMIT 8
+        """) as cur:
+            rejections = await cur.fetchall()
+
+        async with conn.execute("""
+            SELECT DATE(created_at) as day,
+                   SUM(CASE WHEN stage IN ('approved','posted') THEN 1 ELSE 0 END) as approved,
+                   SUM(CASE WHEN stage = 'rejected' THEN 1 ELSE 0 END) as rejected,
+                   COUNT(*) as total
+            FROM products
+            WHERE created_at >= datetime('now', '-30 days')
+            GROUP BY day ORDER BY day
+        """) as cur:
+            timeline = await cur.fetchall()
+
+        async with conn.execute("""
+            SELECT keyword,
+                   COUNT(*) as total,
+                   SUM(CASE WHEN stage IN ('approved','posted') THEN 1 ELSE 0 END) as approved,
+                   ROUND(AVG(score), 1) as avg_score
+            FROM products
+            WHERE keyword IS NOT NULL AND keyword != ''
+            GROUP BY keyword ORDER BY approved DESC, total DESC LIMIT 10
+        """) as cur:
+            keywords = await cur.fetchall()
+
+        async with conn.execute("""
+            SELECT ai_provider, COUNT(*) as cnt FROM products
+            WHERE ai_provider IS NOT NULL AND ai_provider != ''
+            GROUP BY ai_provider ORDER BY cnt DESC
+        """) as cur:
+            providers = await cur.fetchall()
+
+        return {
+            "stages":            [{"stage": r[0], "cnt": r[1]} for r in stages_raw],
+            "score_distribution":[{"bucket": r[0], "cnt": r[1]} for r in score_dist],
+            "categories":        [{"category": r[0], "cnt": r[1]} for r in categories],
+            "top_rejections":    [{"reason": r[0], "cnt": r[1]} for r in rejections],
+            "timeline":          [{"day": r[0], "approved": r[1], "rejected": r[2], "total": r[3]} for r in timeline],
+            "keywords":          [{"keyword": r[0], "total": r[1], "approved": r[2], "avg_score": r[3]} for r in keywords],
+            "ai_providers":      [{"provider": r[0], "cnt": r[1]} for r in providers],
+        }
+
+    async def get_rejected_sample(self, limit: int = 30) -> list:
+        """Return a compact sample of rejected products for AI assistant context."""
+        conn = self._db
+        async with conn.execute("""
+            SELECT id, title_translated, category, score, niche_fit, visual_appeal,
+                   rejection_reason, keyword, orders, margin_pct
+            FROM products
+            WHERE stage = 'rejected'
+            ORDER BY score DESC NULLS LAST
+            LIMIT ?
+        """, (limit,)) as cur:
+            rows = await cur.fetchall()
+        return [
+            {
+                "id": r[0],
+                "title": (r[1] or "")[:60],
+                "category": r[2],
+                "score": r[3],
+                "niche_fit": r[4],
+                "visual_appeal": r[5],
+                "rejection_reason": r[6],
+                "keyword": r[7],
+                "orders": r[8],
+                "margin_pct": r[9],
+            }
+            for r in rows
+        ]
+
     async def get_stats(self) -> dict:
         stats: dict = {}
         for stage in ("pending", "approved", "text_edit", "posted", "rejected"):
