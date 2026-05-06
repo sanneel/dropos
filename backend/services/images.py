@@ -1,70 +1,130 @@
 """
-Image processing pipeline: download → compress → upload to S3.
+Image processing pipeline: download → compress → upload to Supabase Storage.
 
-Resource-safety notes:
-  • PIL.Image is opened inside a `with` block so it is always closed,
-    even when mode conversion or save raises an exception.
-  • aiohttp.ClientSession is opened per-request (one-shot pattern) to
-    avoid sharing a session across threads/event loops. This is safe
-    because each call is already isolated inside asyncio.to_thread.
-    If a long-running shared session is preferred in the future, inject
-    it via dependency injection rather than a module-level global.
+Supabase Storage is the primary backend (configured via SUPABASE_URL +
+SUPABASE_SERVICE_ROLE_KEY).  If those env vars are absent the module falls
+back to returning the original source URL so the rest of the pipeline keeps
+working even in a bare local dev environment.
+
+Memory-safety: PIL.Image is always opened inside a `with` block so it is
+closed — and its pixel buffer freed — whether the call succeeds or raises.
 """
 
 import asyncio
-import boto3
 import os
-import uuid
 import logging
 from io import BytesIO
-from PIL import Image
 
 import httpx
+from PIL import Image
 
 log = logging.getLogger(__name__)
 
+# ── Supabase client (initialised lazily so import never crashes) ────────────────
+_supabase_client = None
+
+def _get_supabase():
+    """Return a cached Supabase client, or None if env vars are missing."""
+    global _supabase_client
+    if _supabase_client is not None:
+        return _supabase_client
+
+    url = os.getenv("SUPABASE_URL", "")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+
+    if not url or not key:
+        return None
+
+    try:
+        from supabase import create_client
+        _supabase_client = create_client(url, key)
+        log.info("Supabase client initialised (url=%s…)", url[:30])
+    except Exception as exc:
+        log.error("Failed to initialise Supabase client: %s", exc)
+        _supabase_client = None
+
+    return _supabase_client
+
+
+# ── Compression (CPU-bound, run in a thread-pool) ───────────────────────────────
 
 def _compress(data: bytes) -> bytes:
     """
-    Convert raw bytes to an optimised JPEG.
-    The `with` block guarantees the Image is closed and its memory released
-    whether the conversion succeeds or raises.
+    Decode raw bytes and re-encode as an optimised JPEG.
+    The `with` block guarantees the Image object is always closed.
     """
     with Image.open(BytesIO(data)) as img:
         if img.mode in ("RGBA", "P"):
             img = img.convert("RGB")
-        out = BytesIO()
-        img.save(out, format="JPEG", quality=85, optimize=True)
-        return out.getvalue()
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=85, optimize=True)
+        return buf.getvalue()
 
 
-def _upload_to_s3(img_bytes: bytes, bucket: str, key: str) -> str:
-    """Upload bytes to S3 and return the public URL."""
-    s3 = boto3.client("s3")
-    s3.put_object(
-        Bucket=bucket,
-        Key=key,
-        Body=img_bytes,
-        ContentType="image/jpeg",
+# ── Supabase upload (blocking SDK → thread-pool) ────────────────────────────────
+
+_BUCKET = "product-images"
+
+def _upload_to_supabase(img_bytes: bytes, source_id: str) -> str:
+    """
+    Upload compressed JPEG bytes to Supabase Storage.
+    Returns the public URL of the uploaded file.
+    Raises on failure so the caller can fall back to the original URL.
+    """
+    client = _get_supabase()
+    if client is None:
+        raise RuntimeError("Supabase client not available (check env vars)")
+
+    filename = f"{source_id}.jpg"
+    path = f"products/{filename}"
+
+    # upsert=True means re-uploading the same source_id simply overwrites the
+    # previous file instead of raising a "already exists" error.
+    client.storage.from_(_BUCKET).upload(
+        path=path,
+        file=img_bytes,
+        file_options={"content-type": "image/jpeg", "upsert": "true"},
     )
-    region = boto3.session.Session().region_name or "us-east-1"
-    return f"https://{bucket}.s3.{region}.amazonaws.com/{key}"
+
+    public_url = client.storage.from_(_BUCKET).get_public_url(path)
+    return public_url
 
 
-async def process_image(image_url: str) -> str:
+# ── Public entry point ──────────────────────────────────────────────────────────
+
+async def upload_product_image(image_bytes: bytes, source_id: str) -> str | None:
     """
-    Asynchronously downloads an image from a scraped URL, compresses it to an
-    optimised JPEG (quality 85), and uploads it to an S3 bucket.
-
-    Returns the new S3 URL on success, or the original URL as a safe fallback.
+    Compress *image_bytes* and upload to Supabase Storage.
+    Returns the public URL on success, or None on failure.
     """
-    bucket_name = os.getenv("AWS_S3_BUCKET") or os.getenv("S3_BUCKET_NAME")
-    if not bucket_name:
-        log.warning("AWS_S3_BUCKET not set — returning original image URL.")
+    try:
+        compressed = await asyncio.to_thread(_compress, image_bytes)
+        url = await asyncio.to_thread(_upload_to_supabase, compressed, source_id)
+        log.info("Supabase upload OK  source_id=%s  url=…%s", source_id, url[-40:])
+        return url
+    except Exception as exc:
+        log.error("Supabase upload FAILED  source_id=%s  error=%s", source_id, exc)
+        return None
+
+
+async def process_image(image_url: str, source_id: str = "") -> str:
+    """
+    Download *image_url*, compress it, and upload to Supabase Storage.
+
+    Falls back to the original URL if:
+      • Supabase env vars are missing
+      • The download fails
+      • The upload fails
+
+    This ensures the pipeline always has *some* image URL and can continue.
+    """
+    # Fast-path: if Supabase is not configured, skip silently
+    if not os.getenv("SUPABASE_URL") or not os.getenv("SUPABASE_SERVICE_ROLE_KEY"):
+        log.debug("Supabase not configured — skipping image upload for %s", image_url[:60])
         return image_url
 
+    # 1. Download
     try:
-        # 1. Download — use httpx (already a project dependency; no extra import)
         async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
             resp = await client.get(
                 image_url,
@@ -72,17 +132,19 @@ async def process_image(image_url: str) -> str:
             )
             resp.raise_for_status()
             img_data = resp.content
+    except Exception as exc:
+        log.error("Image download FAILED  url=%s  error=%s", image_url[:80], exc)
+        return image_url  # Graceful fallback
 
-        # 2. Compress (CPU-bound — run in thread-pool to avoid blocking the loop)
-        compressed_data = await asyncio.to_thread(_compress, img_data)
+    # 2. Compress + Upload
+    # Use source_id for the filename so repeated ingestion of the same product
+    # overwrites the existing file rather than creating duplicates.
+    effective_id = source_id or image_url[-32:].replace("/", "_")
+    public_url = await upload_product_image(img_data, effective_id)
 
-        # 3. Upload to S3 (blocking boto3 call → thread-pool)
-        key = f"products/{uuid.uuid4().hex}.jpg"
-        s3_url = await asyncio.to_thread(_upload_to_s3, compressed_data, bucket_name, key)
+    if public_url:
+        return public_url
 
-        log.info("Uploaded %s → %s (%dKB)", image_url[:60], s3_url[-40:], len(compressed_data) // 1024)
-        return s3_url
-
-    except Exception as e:
-        log.error("Failed to process image %s: %s", image_url[:80], e, exc_info=True)
-        return image_url  # Graceful fallback: keep original URL
+    # 3. Fallback: keep original URL so the post can still go live
+    log.warning("Falling back to original URL for source_id=%s", source_id)
+    return image_url

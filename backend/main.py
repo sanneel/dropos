@@ -87,8 +87,23 @@ async def lifespan(app: FastAPI):
     )
     if merged_settings.get("google_sheets_id"):
         asyncio.create_task(_sync_sheets_after_startup())
-    
-    # Start the autonomous worker loop
+
+    # ── Critical environment variable audit ───────────────────────────────────
+    # Log CRITICAL (not raise) so Railway healthchecks still pass on partial
+    # config, but the operator is clearly warned in the log stream.
+    _required_env = {
+        "DATABASE_URL":            "PostgreSQL connection string (Railway/Supabase)",
+        "SUPABASE_URL":            "Supabase project URL (image storage)",
+        "SUPABASE_SERVICE_ROLE_KEY": "Supabase service role key (image storage)",
+    }
+    for var, description in _required_env.items():
+        if not os.getenv(var):
+            log.critical(
+                "MISSING ENV VAR: %s (%s) — some features will not work.",
+                var, description,
+            )
+
+    # ── Start the autonomous worker loops ─────────────────────────────────────
     asyncio.create_task(run_worker_loop())
     asyncio.create_task(process_queued_items())
 
