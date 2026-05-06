@@ -10,33 +10,55 @@ from .services.publisher import publish_to_instagram
 log = logging.getLogger(__name__)
 
 async def run_worker_loop():
-    log.info("Started autonomous worker loop.")
+    log.info("Started autonomous worker loop (Batch Vision + Deep Enrichment).")
     while True:
         try:
-            # Poll for SCRAPED products
-            products = await db.get_products(stage=ProductStage.SCRAPED.value, limit=5, sort="created")
-            for p in products:
+            # 1. Grab SCRAPED products in batches of up to 6
+            products = await db.get_products(stage=ProductStage.SCRAPED.value, limit=6, sort="created")
+            if not products:
+                await asyncio.sleep(10)
+                continue
+
+            settings = await db.get_settings()
+            
+            # 2. Vision AI Curator (Batch Collage)
+            log.info(f"Worker: Running Batch Vision AI for {len(products)} products...")
+            # Late import to avoid circular dependency
+            from .enrichment import ai_enrich_batch
+            
+            batch_results = await ai_enrich_batch(products, settings)
+            
+            for i, p in enumerate(products):
                 pid = p["id"]
+                # Safeguard index out of range if AI returns fewer results
+                res = batch_results[i] if i < len(batch_results) else {"store_match": False, "rejection_reason": "Missing AI result"}
+                
+                if not res.get("store_match"):
+                    # Reject it
+                    await db.update_product_fields(pid, {
+                        "stage": "REJECTED",
+                        "rejection_reason": f"Curator: {res.get('rejection_reason', 'Low visual appeal')}"
+                    })
+                    log.info(f"Worker: [REJECT] Product {pid} failed Vision AI.")
+                    continue
+                
+                # Winner! Now do Deep AI Enrichment (Instagram Caption) + Image Processing
+                log.info(f"Worker: [WINNER] Deep Enrichment for product {pid}...")
                 title = p.get("title_translated") or p.get("product_name") or p.get("title") or ""
                 description = p.get("description_translated") or p.get("description") or ""
                 
-                # 1. AI Enrichment
-                log.info(f"Worker: Enriching product {pid}...")
+                # a. English Caption (Deep Enrichment)
                 try:
                     enriched_data = await enrich_product(title, description)
                 except Exception as e:
-                    log.error(f"Worker: Enrichment failed for {pid}: {e}")
+                    log.error(f"Worker: Text enrichment failed for {pid}: {e}")
                     enriched_data = {"caption": f"{title}\n\n{description}", "hashtags": []}
                 
-                # 2. Image Pipeline (process the first image)
-                log.info(f"Worker: Processing images for product {pid}...")
-                image_url = p.get("image_url")
-                images = p.get("images")
-                
-                if not image_url and images and isinstance(images, list):
-                    image_url = images[0]
-                
+                # b. Image Pipeline (Download, Compress, Upload to S3)
+                images = p.get("images", [])
+                image_url = images[0] if images else p.get("image_url")
                 new_image_url = None
+                
                 if image_url:
                     try:
                         new_image_url = await process_image(image_url)
@@ -44,13 +66,15 @@ async def run_worker_loop():
                         log.error(f"Worker: Image processing failed for {pid}: {e}")
                         new_image_url = image_url
                 
-                # 3. Update DB
+                # c. Update DB
                 updates = {
                     "caption": enriched_data.get("caption", ""),
-                    "hashtags_json": json.dumps(enriched_data.get("hashtags", []))
+                    "hashtags_json": json.dumps(enriched_data.get("hashtags", [])),
+                    "product_name": res.get("product_name", p.get("product_name", "")),
+                    "stage": ProductStage.ENRICHED.value
                 }
                 
-                if new_image_url and images and isinstance(images, list):
+                if new_image_url and images:
                     try:
                         images[0] = new_image_url
                         updates["images_json"] = json.dumps(images)
@@ -58,11 +82,10 @@ async def run_worker_loop():
                         log.warning(f"Worker: Failed to update images array: {e}")
 
                 await db.update_product_fields(pid, updates)
-                await db.set_stage(pid, ProductStage.ENRICHED.value)
                 log.info(f"Worker: Finished processing product {pid}. Moved to ENRICHED.")
             
-            # Wait before polling again
-            await asyncio.sleep(10 if not products else 2)
+            # Shorter sleep if we had items, to keep the momentum
+            await asyncio.sleep(2)
             
         except asyncio.CancelledError:
             log.info("Autonomous worker loop cancelled.")
@@ -98,7 +121,6 @@ async def process_queued_items():
                     log.info(f"Publisher: Product {pid} published successfully. Moved to LIVE.")
                 except Exception as e:
                     log.error(f"Publisher: Failed to publish {pid}: {e}")
-                    # Could set to REJECTED or add a retry count if desired.
                     pass
                     
             # Wait 60 seconds if no products, else shorter

@@ -28,8 +28,8 @@ class Database:
              images_json, url, category, keyword,
              score, niche_fit, visual_appeal, trend_score, competition_score,
              caption, description, hashtags_json, ai_provider, has_chinese_text,
-             chinese_text_note, stage, created_at)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
+             chinese_text_note, rejection_reason, stage, created_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
             ON CONFLICT (source_id) DO NOTHING
         """,
             job_id,
@@ -59,7 +59,8 @@ class Database:
             p.get("ai_provider", ""),
             1 if p.get("has_chinese_text") else 0,
             p.get("chinese_text_note", ""),
-            "SCRAPED",
+            p.get("rejection_reason", ""),
+            p.get("stage", "SCRAPED"),
             _now()
         )
 

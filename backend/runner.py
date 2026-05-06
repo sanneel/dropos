@@ -1,65 +1,21 @@
 """
 Pipeline orchestrator.
-Stages: scrape → raw store → filter → profit → dedup → rule-score → AI enrich → save
+Stages: scrape → raw store → filter → profit → dedup → rule-score → hand-off to worker
 """
 
 import logging
 from typing import Optional
 
-import asyncio
-
-from config.runtime import get_config, merge_env_with_settings
+from config.runtime import merge_env_with_settings
 from database import db
-from enrichment import ai_enrich
 from filter_engine import basic_filter, dedup, profit_filter
 from scorer import score_product
-import sheets
-import scraper_1688
-import scraper_taobao
 import scraper_cssbuy
-import scraper_superbuy
 
 log = logging.getLogger(__name__)
 
 # Products scoring below this raw threshold are dropped before AI to save tokens.
 _AI_PREFILTER_THRESHOLD = 40
-
-
-def _pipeline_rec(job_id: int, product: dict, stage: str, reason: str = "", ai_score: float = 0, ai_niche_fit: float = 0, ai_visual: float = 0) -> dict:
-    img = (product.get("images") or [""])[0]
-    return {
-        "job_id":       job_id,
-        "source_id":    product.get("source_id", ""),
-        "title":        (product.get("title_translated") or product.get("title", ""))[:120],
-        "product_name":  product.get("product_name", ""),
-        "image_url":    img,
-        "url":          product.get("url", ""),
-        "price_cny":    float(product.get("price_cny", 0)),
-        "cost_eur":     float(product.get("cost_eur", 0)),
-        "sell_price_eur": float(product.get("sell_price_eur", 0)),
-        "orders":       int(product.get("orders", 0)),
-        "rating":       float(product.get("rating", 0)),
-        "margin_pct":   float(product.get("margin_pct", 0)),
-        "raw_score":    float(product.get("raw_score", 0)),
-        "filter_stage": stage,
-        "filter_reason": reason,
-        "ai_score":     ai_score,
-        "ai_niche_fit": ai_niche_fit,
-        "ai_visual":    ai_visual,
-        "trend_score":  float(product.get("trend_score", 0)),
-        "competition_score": float(product.get("competition_score", 0)),
-        "ai_provider":  product.get("ai_provider", ""),
-    }
-
-
-async def _flush_pipeline_records(job_id: int, records: list) -> None:
-    if not records:
-        return
-    try:
-        await db.bulk_insert_pipeline(records)
-    except Exception as exc:
-        log.warning("Job %d: pipeline records save failed: %s", job_id, exc)
-    records.clear()
 
 
 async def run_pipeline(
@@ -78,6 +34,7 @@ async def run_pipeline(
     settings = merge_env_with_settings(settings)
 
     if keywords is None:
+        from config.runtime import get_config
         raw_kw = get_config("SCAN_KEYWORDS", settings.get("scan_keywords", ["aesthetic home decor"]))
         keywords = raw_kw if isinstance(raw_kw, list) else [raw_kw]
     if not keywords:
@@ -85,11 +42,10 @@ async def run_pipeline(
     if job_id is None:
         job_id = await db.create_job(keywords=keywords)
 
-    token: Optional[str] = get_config("APIFY_TOKEN", settings.get("apify_token")) or None
-
     await db.update_job(job_id, status="scraping", progress=5)
 
     # ── 1. Scrape ──────────────────────────────────────────────────────────────
+    from config.runtime import get_config
     cssbuy_user = get_config("CSSBUY_USERNAME", settings.get("cssbuy_username", ""))
     cssbuy_pass = get_config("CSSBUY_PASSWORD", settings.get("cssbuy_password", ""))
     captcha_key = get_config("CAPTCHA_2CAPTCHA_KEY", settings.get("captcha_2captcha_key", ""))
@@ -113,7 +69,6 @@ async def run_pipeline(
 async def process_scraped_products(job_id: int, raw_all: list, settings: Optional[dict] = None) -> dict:
     """
     Process products that were scraped outside this server.
-    Used by the hosted ingestion endpoint so Playwright/CSSBuy can run locally.
     """
     if settings is None:
         settings = await db.get_settings()
@@ -130,24 +85,33 @@ async def process_scraped_products(job_id: int, raw_all: list, settings: Optiona
     await db.update_job(job_id, status="filtering", progress=35, after_basic=len(filtered))
 
     filtered_ids = {p.get("source_id") for p in filtered if p.get("source_id")}
-    pipeline_recs = [_pipeline_rec(job_id, p, "basic_reject", "spam/no-image/low-orders") for p in raw_all if p.get("source_id") not in filtered_ids]
-    await _flush_pipeline_records(job_id, pipeline_recs)
+    for p in raw_all:
+        if p.get("source_id") not in filtered_ids:
+            p["stage"] = "REJECTED"
+            p["rejection_reason"] = "Bouncer: spam/no-image/low-orders"
+            await db.insert_product(p, job_id)
 
     # ── 4. Profit filter (adds cost/sell/margin fields) ────────────────────────
     profitable = [p for p in filtered if profit_filter(p, settings)]
     await db.update_job(job_id, status="calculating", progress=50, after_profit=len(profitable))
 
     profitable_ids = {p.get("source_id") for p in profitable if p.get("source_id")}
-    pipeline_recs += [_pipeline_rec(job_id, p, "profit_reject", "margin too low") for p in filtered if p.get("source_id") not in profitable_ids]
-    await _flush_pipeline_records(job_id, pipeline_recs)
+    for p in filtered:
+        if p.get("source_id") not in profitable_ids:
+            p["stage"] = "REJECTED"
+            p["rejection_reason"] = f"Bouncer: Low Margin ({p.get('margin_pct', 0)}%)"
+            await db.insert_product(p, job_id)
 
     # ── 5. Dedup by first image ────────────────────────────────────────────────
     deduped = dedup(profitable)
     await db.update_job(job_id, status="deduping", progress=55, after_dedup=len(deduped))
 
     deduped_ids = {p.get("source_id") for p in deduped if p.get("source_id")}
-    pipeline_recs += [_pipeline_rec(job_id, p, "dedup_reject", "duplicate product") for p in profitable if p.get("source_id") not in deduped_ids]
-    await _flush_pipeline_records(job_id, pipeline_recs)
+    for p in profitable:
+        if p.get("source_id") not in deduped_ids:
+            p["stage"] = "REJECTED"
+            p["rejection_reason"] = "Bouncer: Duplicate product"
+            await db.insert_product(p, job_id)
 
     # ── 6. Rule-based scoring + pre-filter ────────────────────────────────────
     scored = [score_product(p) for p in deduped]
@@ -159,73 +123,20 @@ async def process_scraped_products(job_id: int, raw_all: list, settings: Optiona
     )
 
     candidates_ids = {p.get("source_id") for p in candidates if p.get("source_id")}
-    pipeline_recs += [_pipeline_rec(job_id, p, "score_reject", f"raw score {p.get('raw_score',0):.0f} < {_AI_PREFILTER_THRESHOLD}") for p in scored if p.get("source_id") not in candidates_ids]
-    await _flush_pipeline_records(job_id, pipeline_recs)
+    for p in scored:
+        if p.get("source_id") not in candidates_ids:
+            p["stage"] = "REJECTED"
+            p["rejection_reason"] = f"Detective: Low raw score ({p.get('raw_score',0):.0f})"
+            await db.insert_product(p, job_id)
 
-    # ── 7. AI enrichment ───────────────────────────────────────────────────────
-    passed: list = []
-    total = len(candidates)
-    min_ai_score = float(get_config("MIN_SCORE", settings.get("min_score", 7.0)))
-    if get_config("GEMINI_KEY", settings.get("gemini_key")):
-        scorer_name = "gemini-2.5-flash-lite"
-    elif get_config("GROQ_KEY", settings.get("groq_key")):
-        scorer_name = "groq/llama-3.3-70b"
-    elif get_config("ANTHROPIC_KEY", settings.get("anthropic_key")):
-        scorer_name = "claude-haiku-4-5"
-    else:
-        scorer_name = "mock/rule-based"
-    log.info(
-        "Job %d: enriching %d candidates (scorer=%s, min_score=%.1f)",
-        job_id, total, scorer_name, min_ai_score,
-    )
+    # ── 7. Save surviving candidates as SCRAPED for the Worker to pick up ─────
+    await db.update_job(job_id, status="saving", progress=95, after_ai=len(candidates))
 
-    use_gemini = bool(get_config("GEMINI_KEY", settings.get("gemini_key")))
-
-    for i, product in enumerate(candidates):
-        # Keep Gemini visual analysis comfortably below rate limits.
-        if use_gemini and i > 0:
-            await asyncio.sleep(10)
-
-        try:
-            enriched = await ai_enrich(product, settings)
-        except Exception as exc:
-            log.warning("Enrichment exception for source_id=%s: %s", product.get("source_id", "?"), exc)
-            enriched = None
-
-        if enriched:
-            ai_score = float(enriched.get("score", 0))
-            title = (product.get("title_translated") or product.get("title", "?"))[:40]
-            if ai_score >= min_ai_score:
-                product.update(enriched)
-                passed.append(product)
-                pipeline_recs.append(_pipeline_rec(job_id, product, "ai_pass", "", ai_score, float(enriched.get("niche_fit", 0)), float(enriched.get("visual_appeal", 0))))
-                log.info("  [PASS] %.1f  visual=%.1f  %s", ai_score, float(enriched.get("visual_appeal", 0)), title)
-            else:
-                product.update(enriched)
-                pipeline_recs.append(_pipeline_rec(job_id, product, "ai_reject", enriched.get("rejection_reason", ""), ai_score, float(enriched.get("niche_fit", 0)), float(enriched.get("visual_appeal", 0))))
-                log.info("  [FAIL] %.1f  %s  (%s)", ai_score, title, enriched.get("rejection_reason", ""))
-        else:
-            log.warning("Enrichment returned None for source_id=%s", product.get("source_id", "?"))
-
-        if i % 5 == 0:
-            await _flush_pipeline_records(job_id, pipeline_recs)
-            progress = 55 + int((i / max(total, 1)) * 38)
-            await db.update_job(job_id, status="ai_review", progress=progress, after_ai=len(passed))
-
-    # ── 8. Save to review queue ────────────────────────────────────────────────
-    await db.update_job(job_id, status="saving", progress=95, after_ai=len(passed))
-
-    for product in passed:
+    for product in candidates:
+        product["stage"] = "SCRAPED"
         await db.insert_product(product, job_id)
 
-    try:
-        sheets.append_rows(passed)
-    except Exception as exc:
-        log.error("Job %d: sheets append failed: %s", job_id, exc)
-
-    await _flush_pipeline_records(job_id, pipeline_recs)
-
-    await db.update_job(job_id, status="done", progress=100, after_ai=len(passed))
+    await db.update_job(job_id, status="done", progress=100, after_ai=len(candidates))
 
     summary = {
         "job_id": job_id,
@@ -234,7 +145,6 @@ async def process_scraped_products(job_id: int, raw_all: list, settings: Optiona
         "after_profit": len(profitable),
         "after_dedup": len(deduped),
         "after_score": len(candidates),
-        "passed_ai": len(passed),
     }
     log.info("Job %d done: %s", job_id, summary)
     return summary

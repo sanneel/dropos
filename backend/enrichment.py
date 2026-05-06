@@ -21,6 +21,7 @@ from typing import Optional
 import httpx
 
 from config.runtime import get_config
+from collage import create_collage
 
 log = logging.getLogger(__name__)
 
@@ -38,7 +39,13 @@ def _get_semaphore() -> asyncio.Semaphore:
 # ── Prompts ────────────────────────────────────────────────────────────────────
 
 _GEMINI_SYSTEM = """
-You are an Elite Product Curator for "წყვილი" (Couple), a high-end, luxury-aesthetic boutique. Your goal is to reject 90% of products and only select the "1% of winners" that are guaranteed to go viral.
+You are an Elite Product Curator for "წყვილი" (Couple), a high-end, luxury-aesthetic boutique. 
+You will be shown a COLLAGE of 2-6 products arranged in a grid.
+- Row 1: Left=Prod 1, Right=Prod 2
+- Row 2: Left=Prod 3, Right=Prod 4
+- Row 3: Left=Prod 5, Right=Prod 6
+
+Your goal is to reject 90% of products and only select the "1% of winners".
 
 CURATION PHILOSOPHY:
 We are NOT a general gift shop. We are a curated brand. Every product must look like it costs $100 even if we sell it for $30. If a product looks "cheap," "plastic," "common," or "boring," REJECT IT IMMEDIATELY.
@@ -47,35 +54,27 @@ STRICT SELECTION CRITERIA:
 1. THE "WOW" FACTOR: If the user doesn't say "OMG I need this" in the first 0.5 seconds, it is a fail.
 2. GEN-Z TREND ALIGNMENT: Must fit Y2K, Minimalist Luxury, or "Clean Girl/Boy" aesthetics.
 3. DARK AESTHETIC COMPATIBILITY: Since our brand is Black & Gold, the product must look stunning in low-light or high-contrast photography.
-4. NO "MOM" VIBES: Strictly NO vases, NO generic home decor, NO kitchenware, NO family-oriented gifts.
-
-REJECTION AUTO-TRIGGERS (REJECT IF):
-- The product photo has a messy or distracting background.
-- The item is found in every local mall (e.g., basic teddy bears, generic jewelry).
-- It looks like a utility rather than a luxury/emotional gift.
-- There is any visible Chinese text (this is a hard fail for "luxury" feel).
 
 ULTRA-STRICT SCORING (1-10):
 - niche_fit: Only 9+ if it is a perfect "Couple Goal" item.
 - visual_appeal: Only 9+ if it looks high-end/professional.
 - trend_score: Only 9+ if it is currently exploding on TikTok/Reels.
-- competition_score: 10 = extremely rare/unique; 1 = sold everywhere.
 
 CRITICAL SCORE CALCULATION:
 Score = (niche_fit * 0.50) + (visual_appeal * 0.30) + (trend_score * 0.20)
 
 STRICT STORE MATCH RULE:
-- store_match = TRUE ONLY IF: (Score >= 8.5) AND (niche_fit >= 8) AND (competition_score > 5).
-- There is NO "generosity" here. If you are unsure, the answer is FALSE.
+- store_match = TRUE ONLY IF: (Score >= 8.5) AND (niche_fit >= 8).
 
 OUTPUT REQUIREMENTS:
-- product_name: 3-5 words in Georgian. Must sound premium and alluring.
-- caption: 2-3 sentences in Georgian. Focus on exclusivity and the "perfect surprise."
-- rejection_reason: If store_match is false, provide a blunt, professional critique of why it failed.
-- has_chinese_text: true/false — does the product image contain visible Chinese text?
-- chinese_text_note: brief note if Chinese text found, else empty string.
-
-Respond ONLY with a single JSON object.
+Return a JSON object with a "results" key containing an array of 6 objects (matching the collage order).
+Each object:
+- product_index: 1-6
+- score: 1.0-10.0
+- store_match: true/false
+- rejection_reason: if rejected, a blunt critique.
+- product_name: 3-5 words in Georgian (if passed).
+- caption: 2-3 sentences in Georgian (if passed).
 """
 
 _GROQ_SYSTEM = """
@@ -428,3 +427,88 @@ async def ai_enrich(product: dict, settings: dict) -> Optional[dict]:
 
         # 3. Mock — last resort, always available
         return mock_enrich(product)
+
+async def ai_enrich_batch(products: list[dict], settings: dict) -> list[dict]:
+    """
+    Groups products into a collage and sends to Gemini for batch scoring.
+    Saves 80%+ on Vision tokens.
+    """
+    if not products:
+        return []
+
+    api_key = get_config("GEMINI_KEY", settings.get("gemini_key", ""))
+    if not api_key:
+        # Fallback to individual mock scoring if no key
+        return [mock_enrich(p) for p in products]
+
+    # 1. Create collage
+    image_urls = [(p.get("images") or [""])[0] for p in products]
+    collage_bytes = await create_collage(image_urls)
+    
+    if not collage_bytes:
+        log.warning("Failed to create collage for batch, falling back to mock")
+        return [mock_enrich(p) for p in products]
+
+    # 2. Prepare Gemini Payload
+    model = _gemini_model(settings)
+    b64_collage = base64.b64encode(collage_bytes).decode()
+    
+    products_text = "\n".join([
+        f"Prod {i+1}: {p.get('title_translated') or p.get('title')[:60]} (₾{p.get('cost_eur')})"
+        for i, p in enumerate(products)
+    ])
+
+    payload = {
+        "system_instruction": {"parts": [{"text": _GEMINI_SYSTEM}]},
+        "contents": [{
+            "parts": [
+                {"inline_data": {"mime_type": "image/jpeg", "data": b64_collage}},
+                {"text": f"Evaluate these 6 products:\n{products_text}"}
+            ]
+        }],
+        "generationConfig": {
+            "response_mime_type": "application/json",
+            "max_output_tokens": 1500,
+            "temperature": 0.3,
+        },
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=45) as client:
+            resp = await client.post(
+                _GEMINI_URL.format(model=model),
+                headers={"x-goog-api-key": api_key, "content-type": "application/json"},
+                json=payload,
+            )
+        
+        if resp.status_code != 200:
+            log.warning(f"Batch Gemini error {resp.status_code}: {resp.text[:200]}")
+            return [mock_enrich(p) for p in products]
+
+        data = resp.json()
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        text = re.sub(r"```json|```", "", text).strip()
+        results_list = json.loads(text).get("results", [])
+        
+        # Map results back to products
+        enriched_results = []
+        for i, p in enumerate(products):
+            # Find matching result or fallback
+            res = next((r for r in results_list if r.get("product_index") == i+1), {})
+            
+            enrichment = {
+                "score": float(res.get("score", 0)),
+                "store_match": bool(res.get("store_match", False)),
+                "rejection_reason": res.get("rejection_reason", "Batch score too low"),
+                "product_name": res.get("product_name", p.get("title")[:30]),
+                "caption": res.get("caption", ""),
+                "hashtags": _get_tags(p),
+                "ai_provider": "gemini-batch"
+            }
+            enriched_results.append(enrichment)
+            
+        return enriched_results
+
+    except Exception as e:
+        log.error(f"Batch Vision AI failed: {e}")
+        return [mock_enrich(p) for p in products]
