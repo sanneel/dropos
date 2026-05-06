@@ -1,8 +1,14 @@
+import asyncio
 import asyncpg
 import json
+import logging
 import os
+import sys
+
 from datetime import datetime, timezone
 from typing import Optional
+
+log = logging.getLogger(__name__)
 
 class Database:
     def __init__(self):
@@ -11,8 +17,47 @@ class Database:
     async def connect(self):
         db_url = os.getenv("DATABASE_URL")
         if not db_url:
-            raise ValueError("DATABASE_URL is not set")
-        self._db = await asyncpg.connect(db_url)
+            log.critical(
+                "\n"
+                "╔══════════════════════════════════════════════════════════╗\n"
+                "║  FATAL: DATABASE_URL environment variable is not set.   ║\n"
+                "║                                                          ║\n"
+                "║  Fix:  Railway Dashboard → Service → Variables → Add:   ║\n"
+                "║        Use the Supabase SESSION POOLER connection string ║\n"
+                "║        (Settings → Database → Connection pooling)        ║\n"
+                "╚══════════════════════════════════════════════════════════╝"
+            )
+            sys.exit(1)
+
+        # Supabase requires SSL and works best through their connection pooler.
+        # statement_cache_size=0 disables prepared statements, which is required
+        # when connecting through PgBouncer (Supabase's pooler) in transaction mode.
+        # ssl='require' ensures the connection is encrypted (mandatory for Supabase).
+        last_exc = None
+        for attempt in range(3):
+            try:
+                self._db = await asyncpg.connect(
+                    db_url,
+                    ssl="require",
+                    statement_cache_size=0,
+                )
+                log.info("Database connected successfully.")
+                return
+            except Exception as e:
+                last_exc = e
+                log.warning("DB connect attempt %d/3 failed: %s", attempt + 1, e)
+                await asyncio.sleep(3 * (attempt + 1))
+
+        log.critical(
+            "Could not connect to the database after 3 attempts.\n"
+            "Error: %s\n"
+            "Check that DATABASE_URL uses the Supabase SESSION POOLER URL\n"
+            "(Settings → Database → Connection pooling → Session mode, port 5432)",
+            last_exc,
+        )
+        sys.exit(1)
+
+
 
     async def close(self):
         if self._db:
