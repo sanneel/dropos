@@ -717,8 +717,16 @@ async def init_db():
         )
     """)
 
+    # ── Indexes for high-traffic query patterns ────────────────────────────────
+    # Worker polls by stage constantly; this prevents full table scans at scale.
     await conn.execute("CREATE INDEX IF NOT EXISTS idx_products_stage ON products(stage)")
     await conn.execute("CREATE INDEX IF NOT EXISTS idx_products_category ON products(category)")
+    # Deduplication & ingestion path (ON CONFLICT + JOIN lookups)
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_products_source_id ON products(source_id)")
+    # Filter-engine and analytics queries by platform (1688 vs taobao)
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_products_source_platform ON products(source)")
+    # Composite: the worker's most common query pattern (stage + created_at ordering)
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_products_stage_created ON products(stage, created_at)")
 
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS jobs (

@@ -262,6 +262,8 @@ async def gemini_enrich(product: dict, settings: dict) -> Optional[dict]:
         },
     }
 
+    # ── Retry loop: 3 attempts with exponential back-off on transient errors ──
+    _RETRYABLE = {429, 500, 502, 503, 504}
     for attempt in range(3):
         try:
             async with httpx.AsyncClient(timeout=30) as client:
@@ -271,10 +273,18 @@ async def gemini_enrich(product: dict, settings: dict) -> Optional[dict]:
                     json=payload,
                 )
 
+            # Hard quota exhaustion — stop trying Gemini for this session
             if resp.status_code == 429:
                 _GEMINI_QUOTA_EXHAUSTED = True
                 log.warning("Gemini 429 quota exhausted — falling back to Groq (text-only)")
                 return None
+
+            # Transient server error: wait then retry
+            if resp.status_code in _RETRYABLE:
+                wait = 3 * (attempt + 1)  # 3s, 6s, 9s
+                log.warning("Gemini API %d on attempt %d — retrying in %ds", resp.status_code, attempt + 1, wait)
+                await asyncio.sleep(wait)
+                continue
 
             if resp.status_code != 200:
                 log.warning("Gemini API %d: %s", resp.status_code, resp.text[:300])
@@ -309,9 +319,11 @@ async def gemini_enrich(product: dict, settings: dict) -> Optional[dict]:
             log.warning("Gemini JSON parse error: %s", exc)
             return None
         except Exception as exc:
-            log.warning("Gemini enrichment error (attempt %d): %s", attempt + 1, exc)
+            wait = 3 * (attempt + 1)
+            log.warning("Gemini enrichment error (attempt %d/%d, retry in %ds): %s", attempt + 1, 3, wait, exc)
             if attempt == 2:
                 return None
+            await asyncio.sleep(wait)
 
     return None
 
@@ -343,60 +355,72 @@ async def groq_enrich(product: dict, settings: dict) -> Optional[dict]:
         "Respond with ONLY a JSON object — no markdown, no explanation."
     )
 
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                _GROQ_URL,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": _GROQ_MODEL,
-                    "messages": [
-                        {"role": "system", "content": _GROQ_SYSTEM},
-                        {"role": "user",   "content": user_content},
-                    ],
-                    "max_tokens": 600,
-                    "temperature": 0.4,
-                    "response_format": {"type": "json_object"},
-                },
+    _RETRYABLE = {429, 500, 502, 503, 504}
+
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(
+                    _GROQ_URL,
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": _GROQ_MODEL,
+                        "messages": [
+                            {"role": "system", "content": _GROQ_SYSTEM},
+                            {"role": "user",   "content": user_content},
+                        ],
+                        "max_tokens": 600,
+                        "temperature": 0.4,
+                        "response_format": {"type": "json_object"},
+                    },
+                )
+
+            # Transient errors: retry with back-off
+            if resp.status_code in _RETRYABLE:
+                wait = 3 * (attempt + 1)
+                log.warning("Groq API %d on attempt %d — retrying in %ds", resp.status_code, attempt + 1, wait)
+                await asyncio.sleep(wait)
+                continue
+
+            if resp.status_code != 200:
+                log.warning("Groq API %d: %s", resp.status_code, resp.text[:300])
+                return None
+
+            text = resp.json()["choices"][0]["message"]["content"]
+            text = re.sub(r"```json|```", "", text).strip()
+            result = json.loads(text)
+
+            if "store_match" not in result:
+                result["store_match"] = float(result.get("niche_fit", 0)) >= 7.5
+            if "audience" not in result:
+                result["audience"] = infer_audience(product)
+            result["has_chinese_text"] = False   # Groq cannot detect Chinese text in images
+            result["chinese_text_note"] = ""
+            result["hashtags"] = result.get("hashtags") or _get_tags(product)
+            result["ai_provider"] = "groq"
+
+            log.info(
+                "Groq (text-only) '%s' → score=%.1f niche=%.1f match=%s",
+                title[:35],
+                result.get("score", 0),
+                result.get("niche_fit", 0),
+                result.get("store_match"),
             )
+            return result
 
-        if resp.status_code == 429:
-            log.warning("Groq 429 rate limit — falling back to mock")
+        except json.JSONDecodeError as exc:
+            log.warning("Groq JSON parse error: %s", exc)
             return None
+        except Exception as exc:
+            wait = 3 * (attempt + 1)
+            log.warning("Groq enrichment error (attempt %d/%d, retry in %ds): %s", attempt + 1, 3, wait, exc)
+            if attempt == 2:
+                return None
+            await asyncio.sleep(wait)
 
-        if resp.status_code != 200:
-            log.warning("Groq API %d: %s", resp.status_code, resp.text[:300])
-            return None
-
-        text = resp.json()["choices"][0]["message"]["content"]
-        text = re.sub(r"```json|```", "", text).strip()
-        result = json.loads(text)
-
-        if "store_match" not in result:
-            result["store_match"] = float(result.get("niche_fit", 0)) >= 7.5
-        if "audience" not in result:
-            result["audience"] = infer_audience(product)
-        result["has_chinese_text"] = False   # Groq cannot detect Chinese text in images
-        result["chinese_text_note"] = ""
-        result["hashtags"] = result.get("hashtags") or _get_tags(product)
-        result["ai_provider"] = "groq"
-
-        log.info(
-            "Groq (text-only) '%s' → score=%.1f niche=%.1f match=%s",
-            title[:35],
-            result.get("score", 0),
-            result.get("niche_fit", 0),
-            result.get("store_match"),
-        )
-        return result
-
-    except json.JSONDecodeError as exc:
-        log.warning("Groq JSON parse error: %s", exc)
-    except Exception as exc:
-        log.warning("Groq enrichment error: %s", exc)
     return None
 
 
