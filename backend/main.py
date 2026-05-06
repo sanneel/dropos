@@ -1184,8 +1184,25 @@ async def ai_chat(body: ChatRequest):
     pending_sample = pending_raw.get("items", []) if isinstance(pending_raw, dict) else pending_raw[:50]
 
     # Slim down the samples to reduce token usage
-    def slim(products, fields=("id","title_translated","sell_price_eur","score","niche_fit","category","stage","caption","image_url")):
-        return [{k: p.get(k) for k in fields if p.get(k) is not None} for p in products]
+    def slim(products, fields=("id","title_translated","sell_price_eur","score","niche_fit","category","stage","caption","image_url","images")):
+        import json as _json
+        rows = []
+        for p in products:
+            row = {k: p.get(k) for k in fields if p.get(k) is not None}
+            # Ensure image_url is populated — fall back to first image in array
+            if not row.get("image_url"):
+                imgs = row.get("images")
+                if isinstance(imgs, str):
+                    try: imgs = _json.loads(imgs)
+                    except Exception: imgs = []
+                if isinstance(imgs, list) and imgs:
+                    row["image_url"] = imgs[0]
+            # Keep images as a proper list (not JSON string) for the frontend
+            if "images" in row and isinstance(row["images"], str):
+                try: row["images"] = _json.loads(row["images"])
+                except Exception: row["images"] = []
+            rows.append(row)
+        return rows
 
     # Compute top rejection reasons from sample
     reason_counts: dict = {}
