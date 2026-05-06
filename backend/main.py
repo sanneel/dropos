@@ -1012,7 +1012,7 @@ async def ai_chat(body: ChatRequest):
 
     # Fetch approved and pending samples for richer context
     approved_raw = await db.get_products(stage="approved", limit=20, offset=0)
-    pending_raw = await db.get_products(stage="pending", limit=50, offset=0)
+    pending_raw = await db.get_products(stage="pending", limit=25, offset=0)
     approved_sample = approved_raw.get("items", []) if isinstance(approved_raw, dict) else approved_raw[:20]
     pending_sample = pending_raw.get("items", []) if isinstance(pending_raw, dict) else pending_raw[:50]
 

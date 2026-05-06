@@ -50,6 +50,7 @@ WHEN REVIEWING PENDING/REVIEWED PRODUCTS (most important feature):
   - reply: a brief summary like "Reviewed 12 products: 7 approve, 5 reject"
 - APPROVE criteria: score >= 8.0, premium/couple category, clean image, good couple appeal
 - REJECT criteria: score < 7.5, cheap/generic, no couple angle, Chinese text without note, plush toys, random gadgets
+- Keep "reason" under 12 words to save tokens. Return ONLY id, recommendation, reason in the products array.
 
 WHEN SUGGESTING EDITS:
 - Return action="edit_products" with edits=[{id, title, price}] — only include fields that actually need changing.
@@ -200,7 +201,7 @@ async def _gemini_chat(message: str, settings: dict) -> Optional[dict]:
                     "contents": [{"parts": [{"text": message}]}],
                     "generationConfig": {
                         "response_mime_type": "application/json",
-                        "max_output_tokens": 1500,
+                        "max_output_tokens": 8192,
                         "temperature": 0.3,
                     },
                 },
@@ -240,7 +241,7 @@ async def _groq_chat(message: str, settings: dict) -> Optional[dict]:
                         {"role": "system", "content": _SYSTEM},
                         {"role": "user", "content": message},
                     ],
-                    "max_tokens": 1500,
+                    "max_tokens": 4096,
                     "temperature": 0.3,
                     "response_format": {"type": "json_object"},
                 },

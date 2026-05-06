@@ -15,12 +15,14 @@ SENSITIVE_KEYS = {
     "captcha_2captcha_key",
     "google_sheets_credentials",
     "google_service_account_json",
+    "clipdrop_key",
 }
 
 ENV_TO_SETTING = {
     "APIFY_TOKEN": "apify_token",
     "ANTHROPIC_KEY": "anthropic_key",
     "GEMINI_KEY": "gemini_key",
+    "CLIPDROP_KEY": "clipdrop_key",
     "GROQ_KEY": "groq_key",
     "GOOGLE_SHEETS_ID": "google_sheets_id",
     "GOOGLE_SHEETS_CREDENTIALS": "google_sheets_credentials",
