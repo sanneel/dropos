@@ -1,21 +1,18 @@
-import aiosqlite
+import asyncpg
 import json
 import os
 from datetime import datetime, timezone
 from typing import Optional
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "dropship.db")
-
-
 class Database:
     def __init__(self):
-        self._db: Optional[aiosqlite.Connection] = None
+        self._db: Optional[asyncpg.Connection] = None
 
     async def connect(self):
-        self._db = await aiosqlite.connect(DB_PATH)
-        self._db.row_factory = aiosqlite.Row
-        await self._db.execute("PRAGMA journal_mode=WAL;")
-        await self._db.execute("PRAGMA synchronous=NORMAL;")
+        db_url = os.getenv("DATABASE_URL")
+        if not db_url:
+            raise ValueError("DATABASE_URL is not set")
+        self._db = await asyncpg.connect(db_url)
 
     async def close(self):
         if self._db:
@@ -25,36 +22,37 @@ class Database:
 
     async def insert_product(self, p: dict, job_id: int):
         await self._db.execute("""
-            INSERT OR IGNORE INTO products
+            INSERT INTO products
             (job_id, source, source_id, title, title_translated, product_name,
              price_cny, cost_eur, sell_price_eur, margin_pct, orders, rating,
              images_json, url, category, keyword,
              score, niche_fit, visual_appeal, trend_score, competition_score,
              caption, description, hashtags_json, ai_provider, has_chinese_text,
              chinese_text_note, stage, created_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        """, (
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
+            ON CONFLICT (source_id) DO NOTHING
+        """,
             job_id,
             p.get("source", ""),
             p.get("source_id", ""),
             p.get("title", ""),
             p.get("title_translated", ""),
             p.get("product_name", ""),
-            p.get("price_cny", 0),
-            p.get("cost_eur", 0),
-            p.get("sell_price_eur", 0),
-            p.get("margin_pct", 0),
-            p.get("orders", 0),
-            p.get("rating", 0),
+            float(p.get("price_cny") or 0),
+            float(p.get("cost_eur") or 0),
+            float(p.get("sell_price_eur") or 0),
+            float(p.get("margin_pct") or 0),
+            int(p.get("orders") or 0),
+            float(p.get("rating") or 0),
             json.dumps(p.get("images", [])),
             p.get("url", ""),
             p.get("category", ""),
             p.get("keyword", ""),
-            p.get("score", 0),
-            p.get("niche_fit", 0),
-            p.get("visual_appeal", 0),
-            p.get("trend_score", 0),
-            p.get("competition_score", 0),
+            float(p.get("score") or 0),
+            float(p.get("niche_fit") or 0),
+            float(p.get("visual_appeal") or 0),
+            float(p.get("trend_score") or 0),
+            float(p.get("competition_score") or 0),
             p.get("caption", ""),
             p.get("description", ""),
             json.dumps(p.get("hashtags", [])),
@@ -62,13 +60,10 @@ class Database:
             1 if p.get("has_chinese_text") else 0,
             p.get("chinese_text_note", ""),
             "SCRAPED",
-            _now(),
-        ))
-        await self._db.commit()
+            _now()
+        )
 
-    async def get_products(
-        self, stage: str = "SCRAPED", limit: int = 50, offset: int = 0, sort: str = "score"
-    ) -> list:
+    async def get_products(self, stage: str = "SCRAPED", limit: int = 50, offset: int = 0, sort: str = "score") -> list:
         sort_map = {
             "score": "score DESC",
             "margin": "margin_pct DESC",
@@ -76,32 +71,22 @@ class Database:
             "created": "created_at DESC",
         }
         order = sort_map.get(sort, "score DESC")
-        async with self._db.execute(
-            f"SELECT * FROM products WHERE stage=? ORDER BY {order} LIMIT ? OFFSET ?",
-            (stage, limit, offset),
-        ) as cur:
-            rows = await cur.fetchall()
+        rows = await self._db.fetch(
+            f"SELECT * FROM products WHERE stage=$1 ORDER BY {order} LIMIT $2 OFFSET $3",
+            stage, limit, offset
+        )
         return [_row_to_product(r) for r in rows]
 
     async def get_all_products(self, limit: int = 5000) -> list:
-        async with self._db.execute(
-            "SELECT * FROM products ORDER BY id DESC LIMIT ?", (limit,)
-        ) as cur:
-            rows = await cur.fetchall()
+        rows = await self._db.fetch("SELECT * FROM products ORDER BY id DESC LIMIT $1", limit)
         return [_row_to_product(r) for r in rows]
 
     async def count_products(self, stage: str = "SCRAPED") -> int:
-        async with self._db.execute(
-            "SELECT COUNT(*) FROM products WHERE stage=?", (stage,)
-        ) as cur:
-            row = await cur.fetchone()
-        return row[0] if row else 0
+        val = await self._db.fetchval("SELECT COUNT(*) FROM products WHERE stage=$1", stage)
+        return val if val else 0
 
     async def get_product(self, pid: int) -> Optional[dict]:
-        async with self._db.execute(
-            "SELECT * FROM products WHERE id=?", (pid,)
-        ) as cur:
-            row = await cur.fetchone()
+        row = await self._db.fetchrow("SELECT * FROM products WHERE id=$1", pid)
         return _row_to_product(row) if row else None
 
     async def upsert_product_backup(self, p: dict) -> None:
@@ -117,62 +102,62 @@ class Database:
              caption, description, hashtags_json, ai_provider, has_chinese_text, chinese_text_note,
              stage, rejection_reason, review_note,
              approved_at, rejected_at, posted_at, created_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(source_id) DO UPDATE SET
-             job_id=excluded.job_id,
-             source=excluded.source,
-             title=excluded.title,
-             title_translated=excluded.title_translated,
-             product_name=excluded.product_name,
-             price_cny=excluded.price_cny,
-             cost_eur=excluded.cost_eur,
-             sell_price_eur=excluded.sell_price_eur,
-             margin_pct=excluded.margin_pct,
-             orders=excluded.orders,
-             rating=excluded.rating,
-             images_json=excluded.images_json,
-             url=excluded.url,
-             category=excluded.category,
-             keyword=excluded.keyword,
-             score=excluded.score,
-             niche_fit=excluded.niche_fit,
-             visual_appeal=excluded.visual_appeal,
-             trend_score=excluded.trend_score,
-             competition_score=excluded.competition_score,
-             caption=excluded.caption,
-             description=excluded.description,
-             hashtags_json=excluded.hashtags_json,
-             ai_provider=excluded.ai_provider,
-             has_chinese_text=excluded.has_chinese_text,
-             chinese_text_note=excluded.chinese_text_note,
-             stage=excluded.stage,
-             rejection_reason=excluded.rejection_reason,
-             review_note=excluded.review_note,
-             approved_at=excluded.approved_at,
-             rejected_at=excluded.rejected_at,
-             posted_at=excluded.posted_at
-        """, (
-            p.get("job_id", 0),
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34)
+            ON CONFLICT (source_id) DO UPDATE SET
+             job_id=EXCLUDED.job_id,
+             source=EXCLUDED.source,
+             title=EXCLUDED.title,
+             title_translated=EXCLUDED.title_translated,
+             product_name=EXCLUDED.product_name,
+             price_cny=EXCLUDED.price_cny,
+             cost_eur=EXCLUDED.cost_eur,
+             sell_price_eur=EXCLUDED.sell_price_eur,
+             margin_pct=EXCLUDED.margin_pct,
+             orders=EXCLUDED.orders,
+             rating=EXCLUDED.rating,
+             images_json=EXCLUDED.images_json,
+             url=EXCLUDED.url,
+             category=EXCLUDED.category,
+             keyword=EXCLUDED.keyword,
+             score=EXCLUDED.score,
+             niche_fit=EXCLUDED.niche_fit,
+             visual_appeal=EXCLUDED.visual_appeal,
+             trend_score=EXCLUDED.trend_score,
+             competition_score=EXCLUDED.competition_score,
+             caption=EXCLUDED.caption,
+             description=EXCLUDED.description,
+             hashtags_json=EXCLUDED.hashtags_json,
+             ai_provider=EXCLUDED.ai_provider,
+             has_chinese_text=EXCLUDED.has_chinese_text,
+             chinese_text_note=EXCLUDED.chinese_text_note,
+             stage=EXCLUDED.stage,
+             rejection_reason=EXCLUDED.rejection_reason,
+             review_note=EXCLUDED.review_note,
+             approved_at=EXCLUDED.approved_at,
+             rejected_at=EXCLUDED.rejected_at,
+             posted_at=EXCLUDED.posted_at
+        """,
+            int(p.get("job_id") or 0),
             p.get("source", ""),
             source_id,
             p.get("title", ""),
             p.get("title_translated", ""),
             p.get("product_name", ""),
-            p.get("price_cny", 0),
-            p.get("cost_eur", 0),
-            p.get("sell_price_eur", 0),
-            p.get("margin_pct", 0),
-            p.get("orders", 0),
-            p.get("rating", 0),
+            float(p.get("price_cny") or 0),
+            float(p.get("cost_eur") or 0),
+            float(p.get("sell_price_eur") or 0),
+            float(p.get("margin_pct") or 0),
+            int(p.get("orders") or 0),
+            float(p.get("rating") or 0),
             json.dumps(p.get("images", [])),
             p.get("url", ""),
             p.get("category", ""),
             p.get("keyword", ""),
-            p.get("score", 0),
-            p.get("niche_fit", 0),
-            p.get("visual_appeal", 0),
-            p.get("trend_score", 0),
-            p.get("competition_score", 0),
+            float(p.get("score") or 0),
+            float(p.get("niche_fit") or 0),
+            float(p.get("visual_appeal") or 0),
+            float(p.get("trend_score") or 0),
+            float(p.get("competition_score") or 0),
             p.get("caption", ""),
             p.get("description", ""),
             json.dumps(p.get("hashtags", [])),
@@ -185,9 +170,8 @@ class Database:
             p.get("approved_at"),
             p.get("rejected_at"),
             p.get("posted_at"),
-            p.get("created_at") or _now(),
-        ))
-        await self._db.commit()
+            p.get("created_at") or _now()
+        )
 
     async def upsert_product_backups(self, products: list) -> int:
         count = 0
@@ -214,16 +198,12 @@ class Database:
         if note is not None:
             updates["review_note"] = note
 
-        sets = ", ".join(f"{k}=?" for k in updates)
+        sets = ", ".join(f"{k}=${i+1}" for i, k in enumerate(updates))
         vals = list(updates.values()) + [pid]
-        await self._db.execute(f"UPDATE products SET {sets} WHERE id=?", vals)
-        await self._db.commit()
+        await self._db.execute(f"UPDATE products SET {sets} WHERE id=${len(vals)}", *vals)
 
     async def update_product_note(self, pid: int, note: str):
-        await self._db.execute(
-            "UPDATE products SET review_note=? WHERE id=?", (note, pid)
-        )
-        await self._db.commit()
+        await self._db.execute("UPDATE products SET review_note=$1 WHERE id=$2", note, pid)
 
     async def update_product_fields(self, pid: int, data: dict) -> Optional[dict]:
         allowed = {
@@ -248,21 +228,17 @@ class Database:
                 updates["margin_pct"] = round(((sell - cost) / sell) * 100, 1)
         if not updates:
             return await self.get_product(pid)
-        sets = ", ".join(f"{k}=?" for k in updates)
+        sets = ", ".join(f"{k}=${i+1}" for i, k in enumerate(updates))
         vals = list(updates.values()) + [pid]
-        await self._db.execute(f"UPDATE products SET {sets} WHERE id=?", vals)
-        await self._db.commit()
+        await self._db.execute(f"UPDATE products SET {sets} WHERE id=${len(vals)}", *vals)
         return await self.get_product(pid)
 
     async def log_post(self, pid: int):
         await self._db.execute(
-            "INSERT INTO post_log (product_id, posted_at) VALUES (?,?)",
-            (pid, _now()),
+            "INSERT INTO post_log (product_id, posted_at) VALUES ($1,$2)", pid, _now()
         )
-        await self._db.commit()
 
     async def bulk_insert_pipeline(self, records: list) -> None:
-        """Bulk insert pipeline tracking records."""
         for r in records:
             await self._db.execute("""
                 INSERT INTO pipeline_products
@@ -270,28 +246,21 @@ class Database:
                  cost_eur, sell_price_eur, orders, rating, margin_pct, raw_score,
                  filter_stage, filter_reason, ai_score, ai_niche_fit, ai_visual,
                  trend_score, competition_score, ai_provider, created_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """, (
-                r["job_id"], r["source_id"], r["title"], r.get("product_name", ""),
-                r["image_url"], r.get("url", ""), r["price_cny"],
-                r.get("cost_eur", 0), r.get("sell_price_eur", 0),
-                r["orders"], r.get("rating", 0), r["margin_pct"], r.get("raw_score", 0),
-                r["filter_stage"], r.get("filter_reason", ""),
-                r.get("ai_score", 0), r.get("ai_niche_fit", 0), r.get("ai_visual", 0),
-                r.get("trend_score", 0), r.get("competition_score", 0),
-                r.get("ai_provider", ""),
-                _now(),
-            ))
-        await self._db.commit()
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+            """,
+                int(r["job_id"]), str(r["source_id"]), str(r["title"]), str(r.get("product_name", "")),
+                str(r["image_url"]), str(r.get("url", "")), float(r["price_cny"]),
+                float(r.get("cost_eur", 0)), float(r.get("sell_price_eur", 0)),
+                int(r["orders"]), float(r.get("rating", 0)), float(r["margin_pct"]), float(r.get("raw_score", 0)),
+                str(r["filter_stage"]), str(r.get("filter_reason", "")),
+                float(r.get("ai_score", 0)), float(r.get("ai_niche_fit", 0)), float(r.get("ai_visual", 0)),
+                float(r.get("trend_score", 0)), float(r.get("competition_score", 0)),
+                str(r.get("ai_provider", "")),
+                _now()
+            )
 
     async def get_pipeline(self, job_id: int) -> dict:
-        """Return pipeline breakdown for a job."""
-        async with self._db.execute(
-            "SELECT * FROM pipeline_products WHERE job_id=? ORDER BY filter_stage, id",
-            (job_id,)
-        ) as cur:
-            rows = await cur.fetchall()
-
+        rows = await self._db.fetch("SELECT * FROM pipeline_products WHERE job_id=$1 ORDER BY filter_stage, id", job_id)
         stages = {}
         for row in rows:
             d = dict(row)
@@ -306,36 +275,28 @@ class Database:
     async def insert_raw(self, p: dict, job_id: int) -> None:
         images = p.get("images") or []
         await self._db.execute("""
-            INSERT OR IGNORE INTO products_raw
+            INSERT INTO products_raw
             (job_id, source, source_id, product_name, price, image_url, merchant, raw_data, created_at)
-            VALUES (?,?,?,?,?,?,?,?,?)
-        """, (
-            job_id,
-            p.get("source", ""),
-            p.get("source_id", ""),
-            p.get("title_translated") or p.get("title", ""),
-            p.get("price_cny", 0),
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+            ON CONFLICT (job_id, source_id) DO NOTHING
+        """,
+            int(job_id),
+            str(p.get("source", "")),
+            str(p.get("source_id", "")),
+            str(p.get("title_translated") or p.get("title", "")),
+            float(p.get("price_cny", 0)),
             images[0] if images else "",
-            p.get("merchant", ""),
+            str(p.get("merchant", "")),
             json.dumps(p),
-            _now(),
-        ))
-        await self._db.commit()
+            _now()
+        )
 
     async def count_raw(self, job_id: int) -> int:
-        async with self._db.execute(
-            "SELECT COUNT(*) FROM products_raw WHERE job_id=?", (job_id,)
-        ) as cur:
-            row = await cur.fetchone()
-        return row[0] if row else 0
+        val = await self._db.fetchval("SELECT COUNT(*) FROM products_raw WHERE job_id=$1", job_id)
+        return val if val else 0
 
     async def get_raw_products(self, job_id: int, limit: int = 2000) -> list:
-        async with self._db.execute(
-            "SELECT * FROM products_raw WHERE job_id=? ORDER BY id LIMIT ?",
-            (job_id, limit),
-        ) as cur:
-            rows = await cur.fetchall()
-
+        rows = await self._db.fetch("SELECT * FROM products_raw WHERE job_id=$1 ORDER BY id LIMIT $2", job_id, limit)
         products = []
         for row in rows:
             d = dict(row)
@@ -382,12 +343,8 @@ class Database:
 
     async def get_scan_items(self, job_id: int, limit: int = 2000) -> list:
         raw_items = await self.get_raw_products(job_id, limit=limit)
-        pipeline = []
-        async with self._db.execute(
-            "SELECT * FROM pipeline_products WHERE job_id=? ORDER BY id",
-            (job_id,),
-        ) as cur:
-            pipeline = [dict(row) for row in await cur.fetchall()]
+        rows = await self._db.fetch("SELECT * FROM pipeline_products WHERE job_id=$1 ORDER BY id", job_id)
+        pipeline = [dict(row) for row in rows]
 
         merged = []
         by_source_id = {}
@@ -452,32 +409,25 @@ class Database:
     # ── Jobs ──────────────────────────────────────────────────────────────────
 
     async def create_job(self, keywords: list) -> int:
-        async with self._db.execute(
-            """INSERT INTO jobs (keywords_json, status, progress, scraped,
+        job_id = await self._db.fetchval("""
+            INSERT INTO jobs (keywords_json, status, progress, scraped,
                after_basic, after_profit, after_dedup, after_ai, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
-            (json.dumps(keywords), "queued", 0, 0, 0, 0, 0, 0, _now()),
-        ) as cur:
-            job_id = cur.lastrowid
-        await self._db.commit()
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+            RETURNING id
+        """, json.dumps(keywords), "queued", 0, 0, 0, 0, 0, 0, _now())
         return job_id
 
     async def update_job(self, job_id: int, **kwargs):
-        sets = ", ".join(f"{k}=?" for k in kwargs)
+        sets = ", ".join(f"{k}=${i+1}" for i, k in enumerate(kwargs))
         vals = list(kwargs.values()) + [job_id]
-        await self._db.execute(f"UPDATE jobs SET {sets} WHERE id=?", vals)
-        await self._db.commit()
+        await self._db.execute(f"UPDATE jobs SET {sets} WHERE id=${len(vals)}", *vals)
 
     async def get_job(self, job_id: int) -> Optional[dict]:
-        async with self._db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)) as cur:
-            row = await cur.fetchone()
+        row = await self._db.fetchrow("SELECT * FROM jobs WHERE id=$1", job_id)
         return _row_to_job(row) if row else None
 
     async def get_jobs(self, limit: int = 10) -> list:
-        async with self._db.execute(
-            "SELECT * FROM jobs ORDER BY id DESC LIMIT ?", (limit,)
-        ) as cur:
-            rows = await cur.fetchall()
+        rows = await self._db.fetch("SELECT * FROM jobs ORDER BY id DESC LIMIT $1", limit)
         return [_row_to_job(r) for r in rows]
 
     async def get_active_job(self) -> Optional[dict]:
@@ -490,12 +440,11 @@ class Database:
             "ai_review",
             "saving",
         )
-        placeholders = ",".join("?" for _ in active_statuses)
-        async with self._db.execute(
+        placeholders = ",".join(f"${i+1}" for i in range(len(active_statuses)))
+        row = await self._db.fetchrow(
             f"SELECT * FROM jobs WHERE status IN ({placeholders}) ORDER BY id DESC LIMIT 1",
-            active_statuses,
-        ) as cur:
-            row = await cur.fetchone()
+            *active_statuses
+        )
         return _row_to_job(row) if row else None
 
     async def mark_active_jobs_interrupted(self) -> int:
@@ -508,29 +457,28 @@ class Database:
             "ai_review",
             "saving",
         )
-        placeholders = ",".join("?" for _ in active_statuses)
-        cur = await self._db.execute(
+        placeholders = ",".join(f"${i+1}" for i in range(len(active_statuses)))
+        status = await self._db.execute(
             f"UPDATE jobs SET status='interrupted' WHERE status IN ({placeholders})",
-            active_statuses,
+            *active_statuses
         )
-        await self._db.commit()
-        return cur.rowcount or 0
+        try:
+            return int(status.split()[1])
+        except Exception:
+            return 0
 
     async def clear_scan_history(self) -> dict:
         counts = {}
         for table in ("pipeline_products", "products_raw", "jobs"):
-            async with self._db.execute(f"SELECT COUNT(*) FROM {table}") as cur:
-                row = await cur.fetchone()
-            counts[table] = row[0] if row else 0
+            val = await self._db.fetchval(f"SELECT COUNT(*) FROM {table}")
+            counts[table] = val if val else 0
             await self._db.execute(f"DELETE FROM {table}")
-        await self._db.commit()
         return counts
 
     # ── Settings ──────────────────────────────────────────────────────────────
 
     async def get_settings(self) -> dict:
-        async with self._db.execute("SELECT key, value FROM settings") as cur:
-            rows = await cur.fetchall()
+        rows = await self._db.fetch("SELECT key, value FROM settings")
         result = {}
         for row in rows:
             k, v = row[0], row[1]
@@ -543,46 +491,34 @@ class Database:
     async def update_settings(self, data: dict):
         for k, v in data.items():
             val = json.dumps(v) if not isinstance(v, str) else v
-            await self._db.execute(
-                "INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)", (k, val)
-            )
-        await self._db.commit()
+            await self._db.execute("""
+                INSERT INTO settings (key, value) VALUES ($1,$2)
+                ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value
+            """, k, val)
 
     # ── Comment reply log ─────────────────────────────────────────────────────
 
     async def has_replied_to_comment(self, comment_id: str) -> bool:
-        async with self._db.execute(
-            "SELECT id FROM comment_reply_log WHERE comment_id=?", (comment_id,)
-        ) as cur:
-            return await cur.fetchone() is not None
+        val = await self._db.fetchval("SELECT id FROM comment_reply_log WHERE comment_id=$1", comment_id)
+        return val is not None
 
     async def log_comment_reply(self, comment_id: str, matched_rule: str, reply_type: str = "comment") -> None:
-        await self._db.execute(
-            "INSERT OR IGNORE INTO comment_reply_log (comment_id, reply_type, replied_at, matched_rule) VALUES (?,?,?,?)",
-            (comment_id, reply_type, _now(), matched_rule),
-        )
-        await self._db.commit()
+        await self._db.execute("""
+            INSERT INTO comment_reply_log (comment_id, reply_type, replied_at, matched_rule)
+            VALUES ($1,$2,$3,$4)
+            ON CONFLICT (comment_id) DO NOTHING
+        """, comment_id, reply_type, _now(), matched_rule)
 
     async def get_comment_reply_log(self, limit: int = 50) -> list:
-        async with self._db.execute(
-            "SELECT * FROM comment_reply_log ORDER BY id DESC LIMIT ?", (limit,)
-        ) as cur:
-            rows = await cur.fetchall()
+        rows = await self._db.fetch("SELECT * FROM comment_reply_log ORDER BY id DESC LIMIT $1", limit)
         return [dict(r) for r in rows]
 
     # ── Stats ─────────────────────────────────────────────────────────────────
 
-
     async def get_analytics(self) -> dict:
-        """Return analytics data for the analytics dashboard."""
-        conn = self._db
-
-        async with conn.execute("""
-            SELECT stage, COUNT(*) as cnt FROM products GROUP BY stage
-        """) as cur:
-            stages_raw = await cur.fetchall()
-
-        async with conn.execute("""
+        stages_raw = await self._db.fetch("SELECT stage, COUNT(*) as cnt FROM products GROUP BY stage")
+        
+        score_dist = await self._db.fetch("""
             SELECT
                 CASE
                     WHEN score >= 9 THEN '9-10'
@@ -594,74 +530,65 @@ class Database:
                 COUNT(*) as cnt
             FROM products WHERE score IS NOT NULL
             GROUP BY bucket ORDER BY bucket DESC
-        """) as cur:
-            score_dist = await cur.fetchall()
+        """)
 
-        async with conn.execute("""
+        categories = await self._db.fetch("""
             SELECT category, COUNT(*) as cnt FROM products
             WHERE category IS NOT NULL AND category != ''
             GROUP BY category ORDER BY cnt DESC LIMIT 10
-        """) as cur:
-            categories = await cur.fetchall()
+        """)
 
-        async with conn.execute("""
+        rejections = await self._db.fetch("""
             SELECT rejection_reason, COUNT(*) as cnt FROM products
             WHERE stage = 'REJECTED' AND rejection_reason IS NOT NULL AND rejection_reason != ''
             GROUP BY rejection_reason ORDER BY cnt DESC LIMIT 8
-        """) as cur:
-            rejections = await cur.fetchall()
+        """)
 
-        async with conn.execute("""
+        timeline = await self._db.fetch("""
             SELECT DATE(created_at) as day,
                    SUM(CASE WHEN stage IN ('REVIEWED','LIVE') THEN 1 ELSE 0 END) as approved,
                    SUM(CASE WHEN stage = 'REJECTED' THEN 1 ELSE 0 END) as rejected,
                    COUNT(*) as total
             FROM products
-            WHERE created_at >= datetime('now', '-30 days')
+            WHERE created_at::timestamp >= NOW() - INTERVAL '30 days'
             GROUP BY day ORDER BY day
-        """) as cur:
-            timeline = await cur.fetchall()
+        """)
 
-        async with conn.execute("""
+        keywords = await self._db.fetch("""
             SELECT keyword,
                    COUNT(*) as total,
                    SUM(CASE WHEN stage IN ('REVIEWED','LIVE') THEN 1 ELSE 0 END) as approved,
-                   ROUND(AVG(score), 1) as avg_score
+                   ROUND(AVG(score)::numeric, 1) as avg_score
             FROM products
             WHERE keyword IS NOT NULL AND keyword != ''
             GROUP BY keyword ORDER BY approved DESC, total DESC LIMIT 10
-        """) as cur:
-            keywords = await cur.fetchall()
+        """)
 
-        async with conn.execute("""
+        providers = await self._db.fetch("""
             SELECT ai_provider, COUNT(*) as cnt FROM products
             WHERE ai_provider IS NOT NULL AND ai_provider != ''
             GROUP BY ai_provider ORDER BY cnt DESC
-        """) as cur:
-            providers = await cur.fetchall()
+        """)
 
         return {
             "stages":            [{"stage": r[0], "cnt": r[1]} for r in stages_raw],
             "score_distribution":[{"bucket": r[0], "cnt": r[1]} for r in score_dist],
             "categories":        [{"category": r[0], "cnt": r[1]} for r in categories],
             "top_rejections":    [{"reason": r[0], "cnt": r[1]} for r in rejections],
-            "timeline":          [{"day": r[0], "approved": r[1], "rejected": r[2], "total": r[3]} for r in timeline],
+            "timeline":          [{"day": str(r[0]), "approved": r[1], "rejected": r[2], "total": r[3]} for r in timeline],
             "keywords":          [{"keyword": r[0], "total": r[1], "approved": r[2], "avg_score": r[3]} for r in keywords],
             "ai_providers":      [{"provider": r[0], "cnt": r[1]} for r in providers],
         }
 
     async def get_rejected_sample(self, limit: int = 30) -> list:
-        """Return a compact sample of rejected products for AI assistant context."""
-        conn = self._db
-        async with conn.execute("""
+        rows = await self._db.fetch("""
             SELECT id, title_translated, category, score, niche_fit, visual_appeal,
                    rejection_reason, keyword, orders, margin_pct
             FROM products
             WHERE stage = 'REJECTED'
             ORDER BY score DESC NULLS LAST
-            LIMIT ?
-        """, (limit,)) as cur:
-            rows = await cur.fetchall()
+            LIMIT $1
+        """, limit)
         return [
             {
                 "id": r[0],
@@ -681,33 +608,20 @@ class Database:
     async def get_stats(self) -> dict:
         stats: dict = {}
         for stage in ("SCRAPED", "REVIEWED", "ENRICHED", "LIVE", "REJECTED"):
-            async with self._db.execute(
-                "SELECT COUNT(*) FROM products WHERE stage=?", (stage,)
-            ) as cur:
-                row = await cur.fetchone()
-            stats[stage] = row[0] if row else 0
+            val = await self._db.fetchval("SELECT COUNT(*) FROM products WHERE stage=$1", stage)
+            stats[stage] = val if val else 0
 
-        async with self._db.execute("SELECT COUNT(*) FROM jobs") as cur:
-            row = await cur.fetchone()
-        stats["total_jobs"] = row[0] if row else 0
+        val = await self._db.fetchval("SELECT COUNT(*) FROM jobs")
+        stats["total_jobs"] = val if val else 0
 
-        async with self._db.execute(
-            "SELECT COUNT(*) FROM post_log WHERE posted_at > datetime('now','-7 days')"
-        ) as cur:
-            row = await cur.fetchone()
-        stats["posted_7d"] = row[0] if row else 0
+        val = await self._db.fetchval("SELECT COUNT(*) FROM post_log WHERE posted_at::timestamp > (NOW() - INTERVAL '7 days')")
+        stats["posted_7d"] = val if val else 0
 
-        async with self._db.execute(
-            "SELECT AVG(margin_pct) FROM products WHERE stage='SCRAPED'"
-        ) as cur:
-            row = await cur.fetchone()
-        stats["avg_margin_pending"] = round(row[0] or 0, 1)
+        val = await self._db.fetchval("SELECT AVG(margin_pct) FROM products WHERE stage='SCRAPED'")
+        stats["avg_margin_pending"] = round(val or 0, 1)
 
-        async with self._db.execute(
-            "SELECT AVG(score) FROM products WHERE stage='SCRAPED'"
-        ) as cur:
-            row = await cur.fetchone()
-        stats["avg_score_pending"] = round(row[0] or 0, 1)
+        val = await self._db.fetchval("SELECT AVG(score) FROM products WHERE stage='SCRAPED'")
+        stats["avg_score_pending"] = round(val or 0, 1)
 
         total_reviewed = stats["REVIEWED"] + stats["ENRICHED"] + stats["REJECTED"]
         stats["approval_rate"] = (
@@ -760,34 +674,31 @@ db = Database()
 async def init_db():
     await db.connect()
     conn = db._db
-    await conn.execute("PRAGMA journal_mode=WAL")
-    await conn.execute("PRAGMA synchronous=NORMAL")
-    await conn.execute("PRAGMA cache_size=-64000")
 
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS products (
-            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            id                SERIAL PRIMARY KEY,
             job_id            INTEGER,
             source            TEXT,
             source_id         TEXT UNIQUE,
             title             TEXT,
             title_translated  TEXT,
             product_name      TEXT,
-            price_cny         REAL,
-            cost_eur          REAL,
-            sell_price_eur    REAL,
-            margin_pct        REAL,
+            price_cny         DOUBLE PRECISION,
+            cost_eur          DOUBLE PRECISION,
+            sell_price_eur    DOUBLE PRECISION,
+            margin_pct        DOUBLE PRECISION,
             orders            INTEGER,
-            rating            REAL,
+            rating            DOUBLE PRECISION,
             images_json       TEXT,
             url               TEXT,
             category          TEXT,
             keyword           TEXT,
-            score             REAL,
-            niche_fit         REAL,
-            visual_appeal     REAL,
-            trend_score       REAL,
-            competition_score REAL DEFAULT 0,
+            score             DOUBLE PRECISION,
+            niche_fit         DOUBLE PRECISION,
+            visual_appeal     DOUBLE PRECISION,
+            trend_score       DOUBLE PRECISION,
+            competition_score DOUBLE PRECISION DEFAULT 0,
             caption           TEXT,
             description       TEXT DEFAULT '',
             hashtags_json     TEXT,
@@ -808,23 +719,9 @@ async def init_db():
     await conn.execute("CREATE INDEX IF NOT EXISTS idx_products_stage ON products(stage)")
     await conn.execute("CREATE INDEX IF NOT EXISTS idx_products_category ON products(category)")
 
-    # Safe migration for existing databases
-    await _add_columns_if_missing(conn, "products", [
-        ("competition_score", "REAL DEFAULT 0"),
-        ("rejection_reason", "TEXT"),
-        ("review_note", "TEXT"),
-        ("approved_at", "TEXT"),
-        ("rejected_at", "TEXT"),
-        ("posted_at", "TEXT"),
-        ("ai_provider", "TEXT DEFAULT ''"),
-        ("description", "TEXT DEFAULT ''"),
-        ("has_chinese_text", "INTEGER DEFAULT 0"),
-        ("chinese_text_note", "TEXT DEFAULT ''"),
-    ])
-
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS jobs (
-            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            id           SERIAL PRIMARY KEY,
             keywords_json TEXT,
             status       TEXT,
             progress     INTEGER DEFAULT 0,
@@ -839,26 +736,23 @@ async def init_db():
 
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS products_raw (
-            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            id           SERIAL PRIMARY KEY,
             job_id       INTEGER,
             source       TEXT,
             source_id    TEXT,
             product_name TEXT,
-            price        REAL,
+            price        DOUBLE PRECISION,
             image_url    TEXT,
             merchant     TEXT,
             raw_data     TEXT,
-            created_at   TEXT
+            created_at   TEXT,
+            UNIQUE(job_id, source_id)
         )
     """)
-    await _migrate_products_raw_unique_per_job(conn)
-    await conn.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_products_raw_job_source ON products_raw(job_id, source_id) WHERE source_id <> ''"
-    )
 
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS post_log (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            id         SERIAL PRIMARY KEY,
             product_id INTEGER,
             posted_at  TEXT
         )
@@ -866,42 +760,31 @@ async def init_db():
 
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS pipeline_products (
-            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            id           SERIAL PRIMARY KEY,
             job_id       INTEGER,
             source_id    TEXT,
             title        TEXT,
             product_name TEXT DEFAULT '',
             image_url    TEXT,
             url          TEXT DEFAULT '',
-            price_cny    REAL DEFAULT 0,
-            cost_eur     REAL DEFAULT 0,
-            sell_price_eur REAL DEFAULT 0,
+            price_cny    DOUBLE PRECISION DEFAULT 0,
+            cost_eur     DOUBLE PRECISION DEFAULT 0,
+            sell_price_eur DOUBLE PRECISION DEFAULT 0,
             orders       INTEGER DEFAULT 0,
-            rating       REAL DEFAULT 0,
-            margin_pct   REAL DEFAULT 0,
-            raw_score    REAL DEFAULT 0,
+            rating       DOUBLE PRECISION DEFAULT 0,
+            margin_pct   DOUBLE PRECISION DEFAULT 0,
+            raw_score    DOUBLE PRECISION DEFAULT 0,
             filter_stage TEXT,
             filter_reason TEXT DEFAULT '',
-            ai_score     REAL DEFAULT 0,
-            ai_niche_fit REAL DEFAULT 0,
-            ai_visual    REAL DEFAULT 0,
-            trend_score  REAL DEFAULT 0,
-            competition_score REAL DEFAULT 0,
+            ai_score     DOUBLE PRECISION DEFAULT 0,
+            ai_niche_fit DOUBLE PRECISION DEFAULT 0,
+            ai_visual    DOUBLE PRECISION DEFAULT 0,
+            trend_score  DOUBLE PRECISION DEFAULT 0,
+            competition_score DOUBLE PRECISION DEFAULT 0,
             ai_provider  TEXT DEFAULT '',
             created_at   TEXT
         )
     """)
-    await _add_columns_if_missing(conn, "pipeline_products", [
-        ("product_name", "TEXT DEFAULT ''"),
-        ("url", "TEXT DEFAULT ''"),
-        ("cost_eur", "REAL DEFAULT 0"),
-        ("sell_price_eur", "REAL DEFAULT 0"),
-        ("rating", "REAL DEFAULT 0"),
-        ("raw_score", "REAL DEFAULT 0"),
-        ("trend_score", "REAL DEFAULT 0"),
-        ("competition_score", "REAL DEFAULT 0"),
-        ("ai_provider", "TEXT DEFAULT ''"),
-    ])
 
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS settings (
@@ -912,16 +795,13 @@ async def init_db():
 
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS comment_reply_log (
-            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            id           SERIAL PRIMARY KEY,
             comment_id   TEXT UNIQUE,
             reply_type   TEXT DEFAULT 'comment',
             replied_at   TEXT,
             matched_rule TEXT
         )
     """)
-    await _add_columns_if_missing(conn, "comment_reply_log", [
-        ("reply_type", "TEXT DEFAULT 'comment'"),
-    ])
 
     defaults = {
         "instagram_auto_reply_enabled": False,
@@ -959,51 +839,8 @@ async def init_db():
         "example_products": "matching couple bracelets, personalised photo frames, couple card games, romantic candle sets, love letter boxes, matching phone cases",
     }
     for k, v in defaults.items():
-        await conn.execute(
-            "INSERT OR IGNORE INTO settings (key, value) VALUES (?,?)",
-            (k, json.dumps(v) if not isinstance(v, str) else v),
-        )
-    await conn.commit()
-
-
-async def _add_columns_if_missing(conn, table: str, columns: list):
-    async with conn.execute(f"PRAGMA table_info({table})") as cur:
-        existing = {row[1] for row in await cur.fetchall()}
-    for col_name, col_def in columns:
-        if col_name not in existing:
-            await conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_def}")
-    await conn.commit()
-
-
-async def _migrate_products_raw_unique_per_job(conn) -> None:
-    async with conn.execute(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND name='products_raw'"
-    ) as cur:
-        row = await cur.fetchone()
-    table_sql = (row[0] if row else "") or ""
-    if "source_id    TEXT UNIQUE" not in table_sql and "source_id TEXT UNIQUE" not in table_sql:
-        return
-
-    await conn.execute("ALTER TABLE products_raw RENAME TO products_raw_old")
-    await conn.execute("""
-        CREATE TABLE products_raw (
-            id           INTEGER PRIMARY KEY AUTOINCREMENT,
-            job_id       INTEGER,
-            source       TEXT,
-            source_id    TEXT,
-            product_name TEXT,
-            price        REAL,
-            image_url    TEXT,
-            merchant     TEXT,
-            raw_data     TEXT,
-            created_at   TEXT
-        )
-    """)
-    await conn.execute("""
-        INSERT OR IGNORE INTO products_raw
-        (id, job_id, source, source_id, product_name, price, image_url, merchant, raw_data, created_at)
-        SELECT id, job_id, source, source_id, product_name, price, image_url, merchant, raw_data, created_at
-        FROM products_raw_old
-    """)
-    await conn.execute("DROP TABLE products_raw_old")
-    await conn.commit()
+        val = json.dumps(v) if not isinstance(v, str) else v
+        await conn.execute("""
+            INSERT INTO settings (key, value) VALUES ($1,$2)
+            ON CONFLICT (key) DO NOTHING
+        """, k, val)
