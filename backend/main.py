@@ -13,6 +13,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from enum import Enum
+
+class ProductStage(str, Enum):
+    SCRAPED = "SCRAPED"
+    ENRICHED = "ENRICHED"
+    REVIEWED = "REVIEWED"
+    QUEUED = "QUEUED"
+    LIVE = "LIVE"
+    REJECTED = "REJECTED"
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -28,7 +37,7 @@ import sheets
 import ai_assistant
 import httpx
 from utils.google_auth import configure_google_credentials_from_env
-
+from worker import run_worker_loop
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
@@ -78,6 +87,10 @@ async def lifespan(app: FastAPI):
     )
     if merged_settings.get("google_sheets_id"):
         asyncio.create_task(_sync_sheets_after_startup())
+    
+    # Start the autonomous worker loop
+    asyncio.create_task(run_worker_loop())
+
     if merged_settings.get("local_scraping_only"):
         log.info("Scheduler disabled: local scraping only mode is enabled")
     else:
@@ -448,7 +461,7 @@ async def _stage_products(
 
 
 def _approval_stage(product: dict) -> str:
-    return "text_edit" if product.get("has_chinese_text") else "approved"
+    return ProductStage.ENRICHED.value if product.get("has_chinese_text") else ProductStage.REVIEWED.value
 
 
 # Settings
@@ -479,7 +492,7 @@ async def get_stats():
 
 @app.get("/api/products")
 async def get_products(
-    stage: str = "pending", limit: int = 50, offset: int = 0, sort: str = "score"
+    stage: str = ProductStage.SCRAPED.value, limit: int = 50, offset: int = 0, sort: str = "score"
 ):
     products = await db.get_products(stage=stage, limit=limit, offset=offset, sort=sort)
     total = await db.count_products(stage=stage)
@@ -540,7 +553,7 @@ async def proxy_image(url: str):
 @app.post("/api/products/{product_id}/approve")
 async def approve_product(product_id: int):
     p = await _get_product_or_404(product_id)
-    _require_stage(p, "pending", "Cannot approve product in stage '{stage}'")
+    _require_stage(p, ProductStage.SCRAPED.value, "Cannot approve product in stage '{stage}'")
     stage = _approval_stage(p)
     await db.set_stage(product_id, stage)
     await _backup_products_to_sheets()
@@ -555,11 +568,11 @@ async def approve_products(body: ApproveRequest):
     text_edit = 0
     for pid in body.product_ids:
         product = await db.get_product(pid)
-        if not product or product.get("stage") != "pending":
+        if not product or product.get("stage") != ProductStage.SCRAPED.value:
             continue
         stage = _approval_stage(product)
         await db.set_stage(pid, stage)
-        if stage == "text_edit":
+        if stage == ProductStage.ENRICHED.value:
             text_edit += 1
         else:
             approved += 1
@@ -572,7 +585,7 @@ async def reject_products(body: BatchRejectRequest):
     if len(body.product_ids) > 50:
         raise HTTPException(400, "Max 50 products at once")
     reason = (body.reason or "").strip() or None
-    await _stage_products(body.product_ids, "rejected", reason=reason)
+    await _stage_products(body.product_ids, ProductStage.REJECTED.value, reason=reason)
     await _backup_products_to_sheets()
     return {"ok": True, "rejected": len(body.product_ids)}
 
@@ -580,7 +593,7 @@ async def reject_products(body: BatchRejectRequest):
 @app.post("/api/products/{product_id}/post")
 async def post_product(product_id: int, bg: BackgroundTasks):
     p = await _get_product_or_404(product_id)
-    _require_stage(p, "approved", "Can only post approved products (stage: '{stage}')")
+    _require_stage(p, ProductStage.REVIEWED.value, "Can only post approved products (stage: '{stage}')")
     bg.add_task(_post_and_export, [p])
     return {"ok": True, "queued": 1}
 
@@ -590,17 +603,34 @@ async def post_products(body: PostRequest, bg: BackgroundTasks):
     if len(body.product_ids) > 10:
         raise HTTPException(400, "Max 10 products at once")
     to_post = await _stage_products(
-        body.product_ids, "approved", required_stage="approved"
+        body.product_ids, ProductStage.REVIEWED.value, required_stage=ProductStage.REVIEWED.value
     )
     bg.add_task(_post_and_export, to_post)
     return {"ok": True, "queued": len(to_post)}
+
+class BulkStatusRequest(BaseModel):
+    product_ids: list[int]
+    stage: ProductStage
+
+@app.post("/api/products/bulk-status")
+async def bulk_status(body: BulkStatusRequest):
+    for pid in body.product_ids:
+        await db.set_stage(pid, body.stage.value)
+    await _backup_products_to_sheets()
+    return {"ok": True}
+
+@app.put("/api/products/{product_id}")
+async def update_product(product_id: int, body: dict):
+    await db.update_product_fields(product_id, body)
+    await _backup_products_to_sheets()
+    return {"ok": True}
 
 
 @app.post("/api/products/{product_id}/reject")
 async def reject_product(product_id: int, body: RejectRequest = None):
     await _get_product_or_404(product_id)
     reason = (body.reason or "").strip() if body else ""
-    await db.set_stage(product_id, "rejected", reason=reason or None)
+    await db.set_stage(product_id, ProductStage.REJECTED.value, reason=reason or None)
     await _backup_products_to_sheets()
     return {"ok": True}
 
@@ -608,7 +638,7 @@ async def reject_product(product_id: int, body: RejectRequest = None):
 @app.post("/api/products/{product_id}/reconsider")
 async def reconsider_product(product_id: int):
     await _get_product_or_404(product_id)
-    await db.set_stage(product_id, "pending")
+    await db.set_stage(product_id, ProductStage.SCRAPED.value)
     await _backup_products_to_sheets()
     return {"ok": True}
 
@@ -616,12 +646,12 @@ async def reconsider_product(product_id: int):
 @app.post("/api/products/{product_id}/text-edited")
 async def mark_text_edited(product_id: int):
     p = await _get_product_or_404(product_id)
-    _require_stage(p, "text_edit", "Can only mark text-edited products from stage '{stage}'")
+    _require_stage(p, ProductStage.ENRICHED.value, "Can only mark text-edited products from stage '{stage}'")
     await db.update_product_fields(product_id, {
         "has_chinese_text": False,
         "chinese_text_note": "",
     })
-    await db.set_stage(product_id, "approved")
+    await db.set_stage(product_id, ProductStage.REVIEWED.value)
     await _backup_products_to_sheets()
     return {"ok": True}
 
@@ -665,7 +695,7 @@ async def remove_product_text(product_id: int):
         "has_chinese_text": False,
         "chinese_text_note": "",
     })
-    await db.set_stage(product_id, "approved")
+    await db.set_stage(product_id, ProductStage.REVIEWED.value)
     await _backup_products_to_sheets()
     return {"ok": True, "image_url": new_url, "product": await db.get_product(product_id)}
 
@@ -957,8 +987,8 @@ async def ig_reply_log():
 @app.post("/api/sheets/export")
 async def export_to_sheets():
     """Export all approved + posted products to Google Sheets."""
-    approved = await db.get_products(stage="approved", limit=500)
-    posted = await db.get_products(stage="posted", limit=500)
+    approved = await db.get_products(stage=ProductStage.REVIEWED.value, limit=500)
+    posted = await db.get_products(stage=ProductStage.LIVE.value, limit=500)
     all_products = approved + posted
     if not all_products:
         return {"ok": True, "exported": 0, "message": "No products to export"}
@@ -1140,10 +1170,10 @@ async def post_collage(body: CollageRequest):
         {"id": -1, "images": [collage_url], "caption": full_caption},
         settings=merged,
     )
-    if results and results[0].status in ("posted", "mock"):
+    if results and results[0].status in (ProductStage.LIVE.value, "mock"):
         for p in products:
             try:
-                await db.set_stage(p["id"], "posted")
+                await db.set_stage(p["id"], ProductStage.LIVE.value)
             except Exception:
                 pass
         await _backup_products_to_sheets()
@@ -1179,8 +1209,8 @@ async def ai_chat(body: ChatRequest):
     rejected_sample = await db.get_rejected_sample(30)
 
     # Fetch approved and pending samples for richer context
-    approved_raw = await db.get_products(stage="approved", limit=20, offset=0)
-    pending_raw = await db.get_products(stage="pending", limit=50, offset=0)
+    approved_raw = await db.get_products(stage=ProductStage.REVIEWED.value, limit=20, offset=0)
+    pending_raw = await db.get_products(stage=ProductStage.SCRAPED.value, limit=50, offset=0)
     approved_sample = approved_raw.get("items", []) if isinstance(approved_raw, dict) else approved_raw[:20]
     pending_sample = pending_raw.get("items", []) if isinstance(pending_raw, dict) else pending_raw[:50]
 
@@ -1231,7 +1261,7 @@ async def ai_chat(body: ChatRequest):
         reconsidered = 0
         for pid in result["product_ids"][:20]:
             try:
-                await db.set_stage(int(pid), "pending")
+                await db.set_stage(int(pid), ProductStage.SCRAPED.value)
                 reconsidered += 1
             except Exception:
                 pass
@@ -1244,7 +1274,7 @@ async def ai_chat(body: ChatRequest):
         rejected_count = 0
         for pid in result["product_ids"][:50]:
             try:
-                await db.set_stage(int(pid), "rejected")
+                await db.set_stage(int(pid), ProductStage.REJECTED.value)
                 rejected_count += 1
             except Exception:
                 pass
@@ -1257,7 +1287,7 @@ async def ai_chat(body: ChatRequest):
         for pid in result["product_ids"][:20]:
             try:
                 product = await db.get_product(int(pid))
-                if product and product.get("stage") == "pending":
+                if product and product.get("stage") == ProductStage.SCRAPED.value:
                     stage = _approval_stage(product)
                     await db.set_stage(int(pid), stage)
                     approved_count += 1

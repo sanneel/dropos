@@ -1363,3 +1363,23 @@ label { display: block; font-size: 11px; color: var(--t3); font-family: var(--ff
   border-color: var(--accent);
   color: var(--accent);
 }
+
+/* ── Keyboard Navigation & Inline Editing ────────────────────────────────── */
+.product-card.active-row {
+  border-left: 4px solid var(--blue) !important;
+  transform: scale(1.02);
+  transition: all 0.2s ease;
+  z-index: 10;
+  box-shadow: 0 8px 24px rgba(59,130,246,0.15);
+}
+
+.editable {
+  text-decoration: underline dashed;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.editable:hover {
+  color: var(--accent);
+}

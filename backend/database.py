@@ -59,13 +59,13 @@ class Database:
             p.get("ai_provider", ""),
             1 if p.get("has_chinese_text") else 0,
             p.get("chinese_text_note", ""),
-            "pending",
+            "SCRAPED",
             _now(),
         ))
         await self._db.commit()
 
     async def get_products(
-        self, stage: str = "pending", limit: int = 50, offset: int = 0, sort: str = "score"
+        self, stage: str = "SCRAPED", limit: int = 50, offset: int = 0, sort: str = "score"
     ) -> list:
         sort_map = {
             "score": "score DESC",
@@ -88,7 +88,7 @@ class Database:
             rows = await cur.fetchall()
         return [_row_to_product(r) for r in rows]
 
-    async def count_products(self, stage: str = "pending") -> int:
+    async def count_products(self, stage: str = "SCRAPED") -> int:
         async with self._db.execute(
             "SELECT COUNT(*) FROM products WHERE stage=?", (stage,)
         ) as cur:
@@ -177,7 +177,7 @@ class Database:
             p.get("ai_provider", ""),
             1 if p.get("has_chinese_text") else 0,
             p.get("chinese_text_note", ""),
-            p.get("stage", "pending"),
+            p.get("stage", "SCRAPED"),
             p.get("rejection_reason"),
             p.get("review_note"),
             p.get("approved_at"),
@@ -198,10 +198,10 @@ class Database:
 
     async def set_stage(self, pid: int, stage: str, reason: str = None, note: str = None):
         ts_field = {
-            "approved": "approved_at",
-            "text_edit": "approved_at",
-            "rejected": "rejected_at",
-            "posted": "posted_at",
+            "REVIEWED": "approved_at",
+            "ENRICHED": "approved_at",
+            "REJECTED": "rejected_at",
+            "LIVE": "posted_at",
         }.get(stage)
 
         updates: dict = {"stage": stage}
@@ -604,15 +604,15 @@ class Database:
 
         async with conn.execute("""
             SELECT rejection_reason, COUNT(*) as cnt FROM products
-            WHERE stage = 'rejected' AND rejection_reason IS NOT NULL AND rejection_reason != ''
+            WHERE stage = 'REJECTED' AND rejection_reason IS NOT NULL AND rejection_reason != ''
             GROUP BY rejection_reason ORDER BY cnt DESC LIMIT 8
         """) as cur:
             rejections = await cur.fetchall()
 
         async with conn.execute("""
             SELECT DATE(created_at) as day,
-                   SUM(CASE WHEN stage IN ('approved','posted') THEN 1 ELSE 0 END) as approved,
-                   SUM(CASE WHEN stage = 'rejected' THEN 1 ELSE 0 END) as rejected,
+                   SUM(CASE WHEN stage IN ('REVIEWED','LIVE') THEN 1 ELSE 0 END) as approved,
+                   SUM(CASE WHEN stage = 'REJECTED' THEN 1 ELSE 0 END) as rejected,
                    COUNT(*) as total
             FROM products
             WHERE created_at >= datetime('now', '-30 days')
@@ -623,7 +623,7 @@ class Database:
         async with conn.execute("""
             SELECT keyword,
                    COUNT(*) as total,
-                   SUM(CASE WHEN stage IN ('approved','posted') THEN 1 ELSE 0 END) as approved,
+                   SUM(CASE WHEN stage IN ('REVIEWED','LIVE') THEN 1 ELSE 0 END) as approved,
                    ROUND(AVG(score), 1) as avg_score
             FROM products
             WHERE keyword IS NOT NULL AND keyword != ''
@@ -655,7 +655,7 @@ class Database:
             SELECT id, title_translated, category, score, niche_fit, visual_appeal,
                    rejection_reason, keyword, orders, margin_pct
             FROM products
-            WHERE stage = 'rejected'
+            WHERE stage = 'REJECTED'
             ORDER BY score DESC NULLS LAST
             LIMIT ?
         """, (limit,)) as cur:
@@ -678,7 +678,7 @@ class Database:
 
     async def get_stats(self) -> dict:
         stats: dict = {}
-        for stage in ("pending", "approved", "text_edit", "posted", "rejected"):
+        for stage in ("SCRAPED", "REVIEWED", "ENRICHED", "LIVE", "REJECTED"):
             async with self._db.execute(
                 "SELECT COUNT(*) FROM products WHERE stage=?", (stage,)
             ) as cur:
@@ -696,20 +696,20 @@ class Database:
         stats["posted_7d"] = row[0] if row else 0
 
         async with self._db.execute(
-            "SELECT AVG(margin_pct) FROM products WHERE stage='pending'"
+            "SELECT AVG(margin_pct) FROM products WHERE stage='SCRAPED'"
         ) as cur:
             row = await cur.fetchone()
         stats["avg_margin_pending"] = round(row[0] or 0, 1)
 
         async with self._db.execute(
-            "SELECT AVG(score) FROM products WHERE stage='pending'"
+            "SELECT AVG(score) FROM products WHERE stage='SCRAPED'"
         ) as cur:
             row = await cur.fetchone()
         stats["avg_score_pending"] = round(row[0] or 0, 1)
 
-        total_reviewed = stats["approved"] + stats["text_edit"] + stats["rejected"]
+        total_reviewed = stats["REVIEWED"] + stats["ENRICHED"] + stats["REJECTED"]
         stats["approval_rate"] = (
-            round((stats["approved"] + stats["text_edit"]) / total_reviewed * 100, 1) if total_reviewed else 0
+            round((stats["REVIEWED"] + stats["ENRICHED"]) / total_reviewed * 100, 1) if total_reviewed else 0
         )
 
         return stats
@@ -792,15 +792,19 @@ async def init_db():
             ai_provider       TEXT DEFAULT '',
             has_chinese_text  INTEGER DEFAULT 0,
             chinese_text_note TEXT DEFAULT '',
-            stage             TEXT DEFAULT 'pending',
+            stage             TEXT DEFAULT 'SCRAPED',
             rejection_reason  TEXT,
             review_note       TEXT,
             approved_at       TEXT,
             rejected_at       TEXT,
             posted_at         TEXT,
-            created_at        TEXT
+            created_at        TEXT,
+            CHECK (stage IN ('SCRAPED', 'ENRICHED', 'REVIEWED', 'QUEUED', 'LIVE', 'REJECTED'))
         )
     """)
+
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_products_stage ON products(stage)")
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_products_category ON products(category)")
 
     # Safe migration for existing databases
     await _add_columns_if_missing(conn, "products", [

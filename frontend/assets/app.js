@@ -32,19 +32,19 @@ let scanSource   = 'taobao';
 let activeJob = null;
 let settingsData = {};
 let rejectTargetId = null;
-let catalogProducts = [], catalogTotal = 0, catalogStage = 'approved', catalogSearch = '', catalogPage = 0;
+let catalogProducts = [], catalogTotal = 0, catalogStage = 'REVIEWED', catalogSearch = '', catalogPage = 0;
 
 // ── Nav ────────────────────────────────────────────────────────────────────
 const NAV_PAGES = [
   { id:'dashboard', label:'Today',        icon:'dashboard', section:'Overview' },
   { id:'scan',      label:'Find',         icon:'scan'                          },
   { id:'pipeline',  label:'Pipeline',     icon:'scan',      section:undefined  },
-  { id:'queue',     label:'Review',       icon:'queue',     section:'Pipeline', stageKey:'pending'  },
-  { id:'textEdit',  label:'Text edit',    icon:'settings',  stageKey:'text_edit' },
-  { id:'approved',  label:'Approved',     icon:'approved',  stageKey:'approved' },
-  { id:'posted',    label:'Posted',       icon:'posted'     },
+  { id:'queue',     label:'Review',       icon:'queue',     section:'Pipeline', stageKey:'SCRAPED'  },
+  { id:'textEdit',  label:'Text edit',    icon:'settings',  stageKey:'ENRICHED' },
+  { id:'REVIEWED',  label:'Approved',     icon:'REVIEWED',  stageKey:'REVIEWED' },
+  { id:'LIVE',    label:'Posted',       icon:'LIVE'     },
   { id:'catalog',   label:'Catalog',      icon:'catalog',   section:'Catalog'   },
-  { id:'rejected',  label:'Rejected',     icon:'rejected'   },
+  { id:'REJECTED',  label:'Rejected',     icon:'REJECTED'   },
   { id:'settings',  label:'Settings',     icon:'settings',  section:'Config'    },
   { id:'analytics', label:'Analytics',   icon:'analytics', section:'Tools'    },
   { id:'chat',      label:'AI Assistant',icon:'chat'                           },
@@ -76,7 +76,7 @@ function buildNav() {
       lastSection = p.section;
     }
     const cnt = p.stageKey ? stats[p.stageKey] : null;
-    const badgeClass = p.stageKey === 'approved' ? 'nav-badge g' : 'nav-badge';
+    const badgeClass = p.stageKey === 'REVIEWED' ? 'nav-badge g' : 'nav-badge';
     html += `
       <button class="nav-item${p.id === currentPage ? ' active' : ''}" onclick="navigate('${p.id}')" title="${p.label}">
         ${IC[p.icon]}
@@ -228,7 +228,7 @@ async function renderDashboard() {
     <div class="dash-stat-grid">
       <div class="dash-stat-card">
         <div class="dash-stat-label">Ready to review</div>
-        <div class="dash-stat-val" style="color:var(--blue)">${s.pending ?? 0}</div>
+        <div class="dash-stat-val" style="color:var(--blue)">${s.SCRAPED ?? 0}</div>
         <div class="dash-stat-actions">
           <button class="dash-stat-btn" onclick="navigate('queue')">Review now</button>
           <button class="dash-stat-btn" onclick="navigate('scan')">Find products</button>
@@ -236,17 +236,17 @@ async function renderDashboard() {
       </div>
       <div class="dash-stat-card">
         <div class="dash-stat-label">Approved</div>
-        <div class="dash-stat-val" style="color:var(--green)">${s.approved ?? 0}</div>
+        <div class="dash-stat-val" style="color:var(--green)">${s.REVIEWED ?? 0}</div>
         <div class="dash-stat-actions">
-          <button class="dash-stat-btn" onclick="navigate('approved')">Post next</button>
-          <button class="dash-stat-btn" onclick="navigate('posted')">Posted: ${s.posted ?? 0}</button>
+          <button class="dash-stat-btn" onclick="navigate('REVIEWED')">Post next</button>
+          <button class="dash-stat-btn" onclick="navigate('LIVE')">Posted: ${s.LIVE ?? 0}</button>
         </div>
       </div>
       <div class="dash-stat-card">
         <div class="dash-stat-label">Rejected</div>
-        <div class="dash-stat-val" style="color:var(--t3)">${s.rejected ?? 0}</div>
+        <div class="dash-stat-val" style="color:var(--t3)">${s.REJECTED ?? 0}</div>
         <div class="dash-stat-actions">
-          <button class="dash-stat-btn" onclick="navigate('rejected')">View rejected</button>
+          <button class="dash-stat-btn" onclick="navigate('REJECTED')">View rejected</button>
           <button class="dash-stat-btn" style="cursor:default;opacity:.5">${s.approval_rate ?? 0}% approval</button>
         </div>
       </div>
@@ -263,7 +263,7 @@ async function renderDashboard() {
       </div>
       <div class="stat-card green">
         <div class="stat-label">Posted 7 days</div>
-        <div class="stat-val">${s.posted_7d ?? 0}</div>
+        <div class="stat-val">${s.LIVE_7d ?? 0}</div>
       </div>
       <div class="stat-card amber">
         <div class="stat-label">Approval rate</div>
@@ -292,8 +292,8 @@ async function renderDashboard() {
             </div>`).join('')}
         <div style="margin-top:14px;display:flex;gap:8px">
           <button class="btn btn-sm" onclick="navigate('scan')">New scan</button>
-          ${(s.pending > 0) ? `<button class="btn btn-sm btn-green" onclick="navigate('queue')">Review ${s.pending} products</button>` : ''}
-          ${(s.approved > 0) ? `<button class="btn btn-sm btn-amber" onclick="navigate('approved')">Post ${s.approved} approved</button>` : ''}
+          ${(s.SCRAPED > 0) ? `<button class="btn btn-sm btn-green" onclick="navigate('queue')">Review ${s.SCRAPED} products</button>` : ''}
+          ${(s.REVIEWED > 0) ? `<button class="btn btn-sm btn-amber" onclick="navigate('REVIEWED')">Post ${s.REVIEWED} approved</button>` : ''}
         </div>
       </div>
 
@@ -491,7 +491,7 @@ async function renderQueue() {
 async function loadQueue(append = false) {
   const offset = append ? queueProducts.length : 0;
   if (!append) queueProducts = [];
-  const data = await api(`/products?stage=pending&limit=50&offset=${offset}&sort=${queueSort}`).catch(() => ({ products: [], total: 0 }));
+  const data = await api(`/products?stage=SCRAPED&limit=50&offset=${offset}&sort=${queueSort}`).catch(() => ({ products: [], total: 0 }));
   queueProducts = append ? queueProducts.concat(data.products) : data.products;
   queueTotal = data.total;
   renderQueueGrid();
@@ -536,7 +536,7 @@ async function renderApproved() {
 async function loadApproved(append = false) {
   const offset = append ? approvedProducts.length : 0;
   if (!append) approvedProducts = [];
-  const data = await api(`/products?stage=approved&limit=50&offset=${offset}&sort=score`).catch(() => ({ products: [], total: 0 }));
+  const data = await api(`/products?stage=REVIEWED&limit=50&offset=${offset}&sort=score`).catch(() => ({ products: [], total: 0 }));
   approvedProducts = append ? approvedProducts.concat(data.products) : data.products;
   approvedTotal = data.total;
   renderApprovedGrid();
@@ -561,7 +561,7 @@ function renderApprovedGrid() {
       <button class="btn btn-sm" onclick="clearSel()">Clear</button>
     </div>
     <div class="product-grid" id="product-grid">
-      ${approvedProducts.map(p => productCard(p, 'approved')).join('')}
+      ${approvedProducts.map(p => productCard(p, 'REVIEWED')).join('')}
     </div>
     ${canMore ? `<div style="text-align:center;margin-top:20px">
       <button class="btn" onclick="loadApproved(true)">Load more (${approvedTotal - approvedProducts.length} remaining)</button>
@@ -578,7 +578,7 @@ async function renderTextEdit() {
 async function loadTextEdit(append = false) {
   const offset = append ? textEditProducts.length : 0;
   if (!append) textEditProducts = [];
-  const data = await api(`/products?stage=text_edit&limit=50&offset=${offset}&sort=score`).catch(() => ({ products: [], total: 0 }));
+  const data = await api(`/products?stage=ENRICHED&limit=50&offset=${offset}&sort=score`).catch(() => ({ products: [], total: 0 }));
   textEditProducts = append ? textEditProducts.concat(data.products) : data.products;
   textEditTotal = data.total;
   renderTextEditGrid();
@@ -600,7 +600,7 @@ function renderTextEditGrid() {
       <span style="font-size:12px;color:var(--t3)">${textEditTotal} need image text cleanup</span>
     </div>
     <div class="product-grid" id="product-grid">
-      ${textEditProducts.map(p => productCard(p, 'text_edit')).join('')}
+      ${textEditProducts.map(p => productCard(p, 'ENRICHED')).join('')}
     </div>
     ${canMore ? `<div style="text-align:center;margin-top:20px">
       <button class="btn" onclick="loadTextEdit(true)">Load more (${textEditTotal - textEditProducts.length} remaining)</button>
@@ -618,12 +618,12 @@ function productCard(p, mode) {
   if (mode === 'queue') {
     actions = `<button class="pca-approve" onclick="event.stopPropagation();quickApprove(${p.id})">Approve</button>
                <button class="pca-reject"  onclick="event.stopPropagation();showRejectModal(${p.id})">✕</button>`;
-  } else if (mode === 'approved') {
+  } else if (mode === 'REVIEWED') {
     actions = `<button class="pca-post"   onclick="event.stopPropagation();quickPost(${p.id})">Post →</button>
                <button class="pca-reject" onclick="event.stopPropagation();showRejectModal(${p.id})">✕</button>`;
   }
 
-  if (mode === 'text_edit') {
+  if (mode === 'ENRICHED') {
     actions = `<button class="pca-clean" id="clean-btn-${p.id}" onclick="event.stopPropagation();cleanImage(${p.id},this)">🧹 Clean</button>
                <button class="pca-reject" onclick="event.stopPropagation();showRejectModal(${p.id})">Reject</button>`;
   }
@@ -647,13 +647,13 @@ function productCard(p, mode) {
         </div>
       </div>
       <div class="pcard-body">
-        <div class="pcard-name">${name}</div>
+        <div class="pcard-name editable" ondblclick="event.stopPropagation();startEdit(${p.id}, 'product_name', this)">${name}</div>
         ${p.has_chinese_text ? `<span class="badge badge-amber" style="align-self:flex-start">Chinese text</span>` : ''}
         <div class="pcard-cat">${cat || '—'}</div>
         <div class="pcard-pricing">
           <span class="p-cost">₾${p.cost_eur ?? '?'}</span>
           <span class="p-arr">→</span>
-          <span class="p-sell">₾${p.sell_price_eur ?? '?'}</span>
+          <span class="p-sell editable" ondblclick="event.stopPropagation();startEdit(${p.id}, 'sell_price_eur', this)">₾${p.sell_price_eur ?? '?'}</span>
           <span class="p-margin">${p.margin_pct ?? 0}%</span>
         </div>
         <div class="pcard-social">
@@ -677,20 +677,20 @@ function toggleSel(id) {
   if (card) {
     card.className = `product-card${selectedProducts.has(id) ? ' selected' : ''}`;
   }
-  updateSelBar(currentPage === 'approved' ? 'post' : currentPage === 'textEdit' ? 'text_edit' : 'approve');
+  updateSelBar(currentPage === 'REVIEWED' ? 'post' : currentPage === 'textEdit' ? 'ENRICHED' : 'approve');
 }
 
 function selectAll() {
-  const list = currentPage === 'approved' ? approvedProducts : currentPage === 'textEdit' ? textEditProducts : queueProducts;
+  const list = currentPage === 'REVIEWED' ? approvedProducts : currentPage === 'textEdit' ? textEditProducts : queueProducts;
   list.slice(0, 10).forEach(p => selectedProducts.add(p.id));
-  if (currentPage === 'approved') renderApprovedGrid();
+  if (currentPage === 'REVIEWED') renderApprovedGrid();
   else if (currentPage === 'textEdit') renderTextEditGrid();
   else renderQueueGrid();
 }
 
 function clearSel() {
   selectedProducts.clear();
-  if (currentPage === 'approved') renderApprovedGrid();
+  if (currentPage === 'REVIEWED') renderApprovedGrid();
   else if (currentPage === 'textEdit') renderTextEditGrid();
   else renderQueueGrid();
 }
@@ -724,8 +724,8 @@ async function batchApprove() {
   const ids = [...selectedProducts];
   try {
     const res = await api('/approve', 'POST', { product_ids: ids });
-    const textEdit = res.text_edit || 0;
-    const approved = res.approved || 0;
+    const textEdit = res.ENRICHED || 0;
+    const approved = res.REVIEWED || 0;
     toast(textEdit ? `${approved} approved · ${textEdit} moved to Text edit` : `${approved || ids.length} approved`, 'success');
     selectedProducts.clear();
     await refreshStats();
@@ -777,7 +777,7 @@ async function quickApprove(id) {
   _cacheInvalidate('/products', '/stats');
   try {
     const res = await api(`/products/${id}/approve`, 'POST');
-    toast(res.stage === 'text_edit' ? 'Moved to Text edit' : 'Approved', 'success');
+    toast(res.stage === 'ENRICHED' ? 'Moved to Text edit' : 'Approved', 'success');
     closeDetail();
     queueProducts = queueProducts.filter(p => p.id !== id);
     selectedProducts.delete(id);
@@ -923,7 +923,7 @@ async function confirmReject() {
     textEditProducts = textEditProducts.filter(p => p.id !== id);
     selectedProducts.delete(id);
     if (currentPage === 'queue') { queueTotal = Math.max(0, queueTotal - 1); renderQueueGrid(); }
-    else if (currentPage === 'approved') { approvedTotal = Math.max(0, approvedTotal - 1); renderApprovedGrid(); }
+    else if (currentPage === 'REVIEWED') { approvedTotal = Math.max(0, approvedTotal - 1); renderApprovedGrid(); }
     else if (currentPage === 'textEdit') { textEditTotal = Math.max(0, textEditTotal - 1); renderTextEditGrid(); }
     refreshStats();
   } catch(e) {}
@@ -935,7 +935,7 @@ async function showDetail(id) {
   if (!p) return;
   document.getElementById('detail-overlay')?.remove();
 
-  const stage = p.stage || 'pending';
+  const stage = p.stage || 'SCRAPED';
   const img   = imageUrl((p.images || [])[0] || '');
   const tags  = (p.hashtags || []);
 
@@ -953,16 +953,16 @@ async function showDetail(id) {
   const stageLabel = { pending:'Pending', approved:'Approved', text_edit:'Text edit', posted:'Posted', rejected:'Rejected' }[stage] || stage;
 
   let actionHtml = '';
-  if (stage === 'pending')
+  if (stage === 'SCRAPED')
     actionHtml = `<button class="btn btn-green" style="flex:1" onclick="quickApprove(${p.id})">Approve</button>
                   <button class="btn btn-danger" onclick="showRejectModal(${p.id})">Reject</button>`;
-  else if (stage === 'approved')
+  else if (stage === 'REVIEWED')
     actionHtml = `<button class="btn btn-primary" style="flex:1" onclick="quickPost(${p.id})">Post to Instagram →</button>
                   <button class="btn btn-danger" onclick="showRejectModal(${p.id})">Reject</button>`;
-  else if (stage === 'text_edit')
+  else if (stage === 'ENRICHED')
     actionHtml = `<button class="btn btn-green" style="flex:1" id="clean-btn-${p.id}" onclick="cleanImage(${p.id},this)">🧹 Clean image</button>
                   <button class="btn btn-danger" onclick="showRejectModal(${p.id})">Reject</button>`;
-  else if (stage === 'rejected')
+  else if (stage === 'REJECTED')
     actionHtml = `<button class="btn btn-amber" style="flex:1" onclick="reconsider(${p.id})">Move back to queue</button>`;
 
   const ov = document.createElement('div');
@@ -1098,9 +1098,9 @@ async function showDetail(id) {
           <span class="detail-sec-lbl">Timeline</span>
           <div style="font-size:11px;font-family:var(--ff-m);line-height:2.2;color:var(--t3)">
             ${p.created_at  ? `<div>Scraped: ${fmtDate(p.created_at)}</div>` : ''}
-            ${p.approved_at ? `<div style="color:var(--green)">Approved: ${fmtDate(p.approved_at)}</div>` : ''}
-            ${p.rejected_at ? `<div style="color:var(--red)">Rejected: ${fmtDate(p.rejected_at)}</div>` : ''}
-            ${p.posted_at   ? `<div style="color:var(--blue)">Posted: ${fmtDate(p.posted_at)}</div>` : ''}
+            ${p.REVIEWED_at ? `<div style="color:var(--green)">Approved: ${fmtDate(p.REVIEWED_at)}</div>` : ''}
+            ${p.REJECTED_at ? `<div style="color:var(--red)">Rejected: ${fmtDate(p.REJECTED_at)}</div>` : ''}
+            ${p.LIVE_at   ? `<div style="color:var(--blue)">Posted: ${fmtDate(p.LIVE_at)}</div>` : ''}
           </div>
         </div>
 
@@ -1139,8 +1139,8 @@ async function saveProductEdit(id) {
     });
     showDetail(id);
     if (currentPage === 'queue') renderQueueGrid();
-    if (currentPage === 'approved') renderApprovedGrid();
-    if (currentPage === 'rejected') renderRejectedTable();
+    if (currentPage === 'REVIEWED') renderApprovedGrid();
+    if (currentPage === 'REJECTED') renderRejectedTable();
   } catch(e) {
     toast(`Save failed: ${e.message || e}`, 'error');
   }
@@ -1167,7 +1167,7 @@ function fmtDate(iso) {
 async function renderPosted() {
   setTitle('Posted');
   document.getElementById('topbar-actions').innerHTML = '';
-  const data = await api('/products?stage=posted&limit=100&sort=created').catch(() => ({ products: [], total: 0 }));
+  const data = await api('/products?stage=LIVE&limit=100&sort=created').catch(() => ({ products: [], total: 0 }));
 
   if (!data.products.length) {
     document.getElementById('content').innerHTML = `
@@ -1202,7 +1202,7 @@ async function renderPosted() {
               <td><span class="badge badge-green">${p.margin_pct ?? 0}%</span></td>
               <td style="font-family:var(--ff-m);color:var(--green);font-size:12px">₾${p.sell_price_eur ?? 0}</td>
               <td style="font-family:var(--ff-m);font-size:12px">${(p.orders ?? 0).toLocaleString()}</td>
-              <td style="font-size:11px;color:var(--t3);font-family:var(--ff-m);white-space:nowrap">${fmtDate(p.posted_at || p.created_at)}</td>
+              <td style="font-size:11px;color:var(--t3);font-family:var(--ff-m);white-space:nowrap">${fmtDate(p.LIVE_at || p.created_at)}</td>
             </tr>`).join('')}
         </tbody>
       </table>
@@ -1213,7 +1213,7 @@ async function renderPosted() {
 async function renderRejected() {
   setTitle('Rejected');
   document.getElementById('topbar-actions').innerHTML = '';
-  const data = await api('/products?stage=rejected&limit=100&sort=created').catch(() => ({ products: [], total: 0 }));
+  const data = await api('/products?stage=REJECTED&limit=100&sort=created').catch(() => ({ products: [], total: 0 }));
   rejectedProducts = data.products;
   rejectedTotal = data.total;
   renderRejectedTable();
@@ -1245,7 +1245,7 @@ function renderRejectedTable() {
               </td>
               <td><span class="badge badge-gray">${(p.score ?? 0).toFixed(1)}</span></td>
               <td style="font-size:12px;color:var(--t3);max-width:180px">${p.rejection_reason || '<span style="opacity:.35">—</span>'}</td>
-              <td style="font-size:11px;color:var(--t3);font-family:var(--ff-m);white-space:nowrap">${fmtDate(p.rejected_at)}</td>
+              <td style="font-size:11px;color:var(--t3);font-family:var(--ff-m);white-space:nowrap">${fmtDate(p.REJECTED_at)}</td>
               <td><button class="btn btn-sm btn-amber" onclick="reconsider(${p.id})">Reconsider</button></td>
             </tr>`).join('')}
         </tbody>
@@ -2062,13 +2062,13 @@ async function loadCatalog(append = false) {
   const offset = append ? catalogProducts.length : 0;
   const stage = catalogStage === 'all' ? '' : catalogStage;
   const q = catalogSearch ? `&search=${encodeURIComponent(catalogSearch)}` : '';
-  const stageParam = stage ? `stage=${stage}&` : 'stage=approved&stage=posted&';
+  const stageParam = stage ? `stage=${stage}&` : 'stage=REVIEWED&stage=LIVE&';
   // Use multi-stage fetch: approved + posted if "all"
   let products = [], total = 0;
   if (catalogStage === 'all') {
     const [a, p] = await Promise.all([
-      api(`/products?stage=approved&limit=50&offset=${offset}&sort=created`).catch(() => ({ products: [], total: 0 })),
-      api(`/products?stage=posted&limit=50&offset=${offset}&sort=created`).catch(() => ({ products: [], total: 0 })),
+      api(`/products?stage=REVIEWED&limit=50&offset=${offset}&sort=created`).catch(() => ({ products: [], total: 0 })),
+      api(`/products?stage=LIVE&limit=50&offset=${offset}&sort=created`).catch(() => ({ products: [], total: 0 })),
     ]);
     products = [...a.products, ...p.products];
     total = a.total + p.total;
@@ -2100,8 +2100,8 @@ function renderCatalogTable() {
   el.innerHTML = `
     <div class="catalog-toolbar">
       <div class="catalog-tabs">
-        <button class="cat-tab${catalogStage==='approved'?' active':''}" onclick="setCatalogStage('approved')">✅ Approved</button>
-        <button class="cat-tab${catalogStage==='posted'?' active':''}" onclick="setCatalogStage('posted')">📤 Posted</button>
+        <button class="cat-tab${catalogStage==='REVIEWED'?' active':''}" onclick="setCatalogStage('REVIEWED')">✅ Approved</button>
+        <button class="cat-tab${catalogStage==='LIVE'?' active':''}" onclick="setCatalogStage('LIVE')">📤 Posted</button>
         <button class="cat-tab${catalogStage==='all'?' active':''}" onclick="setCatalogStage('all')">All</button>
       </div>
       <div class="catalog-search">
@@ -2148,7 +2148,7 @@ function catalogRow(p, editMode = false) {
   const name = p.product_name || p.title_translated || '—';
   const price = p.sell_price_eur ?? 0;
   const caption = p.caption || '';
-  const stageBadge = p.stage === 'posted'
+  const stageBadge = p.stage === 'LIVE'
     ? '<span class="badge" style="background:#3b82f6;color:#fff">Posted</span>'
     : '<span class="badge badge-green">Approved</span>';
   const score = (p.score ?? 0).toFixed(1);
@@ -2299,15 +2299,15 @@ async function renderAnalytics() {
   const scoreDist = data.score_distribution || [];
   const providers = data.ai_providers || [];
 
-  const total = (stats.pending||0)+(stats.approved||0)+(stats.posted||0)+(stats.rejected||0);
-  const approvalRate = total ? Math.round(((stats.approved||0)+(stats.posted||0))/total*100) : 0;
+  const total = (stats.SCRAPED||0)+(stats.REVIEWED||0)+(stats.LIVE||0)+(stats.REJECTED||0);
+  const approvalRate = total ? Math.round(((stats.REVIEWED||0)+(stats.LIVE||0))/total*100) : 0;
 
   // Timeline sparkline (simple)
   const tlMax = Math.max(...timeline.map(d => d.total), 1);
   const tlBars = timeline.slice(-14).map(d => {
     const h = Math.max(4, Math.round((d.total / tlMax) * 48));
-    const hA = Math.max(0, Math.round((d.approved / tlMax) * 48));
-    return `<div class="an-bar-wrap" title="${d.day}: ${d.total} added, ${d.approved} approved">
+    const hA = Math.max(0, Math.round((d.REVIEWED / tlMax) * 48));
+    return `<div class="an-bar-wrap" title="${d.day}: ${d.total} added, ${d.REVIEWED} approved">
       <div class="an-bar-total" style="height:${h}px"></div>
       <div class="an-bar-approved" style="height:${hA}px"></div>
     </div>`;
@@ -2351,9 +2351,9 @@ async function renderAnalytics() {
     <tr>
       <td>${k.keyword||'—'}</td>
       <td style="color:var(--t2)">${k.total}</td>
-      <td style="color:var(--green)">${k.approved}</td>
+      <td style="color:var(--green)">${k.REVIEWED}</td>
       <td style="color:var(--amber)">${k.avg_score??'—'}</td>
-      <td style="color:var(--t3)">${k.total?Math.round((k.approved/k.total)*100):0}%</td>
+      <td style="color:var(--t3)">${k.total?Math.round((k.REVIEWED/k.total)*100):0}%</td>
     </tr>`).join('');
 
   // AI Provider badges
@@ -2377,14 +2377,14 @@ async function renderAnalytics() {
         <div class="dash-stat-card">
           <div class="dash-stat-label">Pending → Approved → Posted</div>
           <div class="dash-stat-val" style="font-size:20px;color:var(--t1)">
-            <span style="color:var(--blue)">${stats.pending||0}</span>
+            <span style="color:var(--blue)">${stats.SCRAPED||0}</span>
             <span style="color:var(--t3);font-size:14px">→</span>
-            <span style="color:var(--green)">${stats.approved||0}</span>
+            <span style="color:var(--green)">${stats.REVIEWED||0}</span>
             <span style="color:var(--t3);font-size:14px">→</span>
-            <span style="color:var(--amber)">${stats.posted||0}</span>
+            <span style="color:var(--amber)">${stats.LIVE||0}</span>
           </div>
           <div class="dash-stat-actions">
-            <span style="color:var(--t3);font-size:11px">${stats.rejected||0} rejected total</span>
+            <span style="color:var(--t3);font-size:11px">${stats.REJECTED||0} rejected total</span>
           </div>
         </div>
         <div class="dash-stat-card">
@@ -2467,7 +2467,7 @@ function renderChatMessages() {
       actions += `<button class="chat-action-btn" onclick="chatReconsider(${JSON.stringify(meta.product_ids)})">♻️ Reconsider ${meta.product_ids.length} products</button>`;
     }
     if (meta.action === 'show_products' && (meta.product_ids||[]).length) {
-      actions += `<button class="chat-action-btn" onclick="navigate('rejected')">👀 View rejected products</button>`;
+      actions += `<button class="chat-action-btn" onclick="navigate('REJECTED')">👀 View rejected products</button>`;
     }
     if (meta.action === 'approve_products' && (meta.product_ids||[]).length) {
       actions += `<button class="chat-action-btn approve-btn" onclick="chatApproveProducts(${JSON.stringify(meta.product_ids)})">✅ Approve ${meta.product_ids.length} products</button>`;
@@ -2532,7 +2532,7 @@ function renderChatProductCard(p) {
   const imgEl = img
     ? `<img src="${API.replace('/api','')}/api/image?url=${encodeURIComponent(img)}" onerror="this.style.display='none'" loading="lazy">`
     : `<div class="chat-card-no-img">📦</div>`;
-  const actionBtns = p.id && stage === 'pending' ? `
+  const actionBtns = p.id && stage === 'SCRAPED' ? `
     <div class="chat-card-actions">
       <button class="chat-card-approve-btn" onclick="chatQuickApprove(${p.id}, this)">✅ Approve</button>
       <button class="chat-card-reject-btn" onclick="chatQuickReject(${p.id}, this)">❌ Reject</button>
@@ -2794,9 +2794,9 @@ const _navClickClose = (page) => {
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 function chooseStartPage() {
-  if ((stats.pending || 0) > 0) return 'queue';
-  if ((stats.text_edit || 0) > 0) return 'textEdit';
-  if ((stats.approved || 0) > 0) return 'approved';
+  if ((stats.SCRAPED || 0) > 0) return 'queue';
+  if ((stats.ENRICHED || 0) > 0) return 'textEdit';
+  if ((stats.REVIEWED || 0) > 0) return 'REVIEWED';
   return 'dashboard';
 }
 
@@ -2811,3 +2811,96 @@ api('/settings').then(s => { scanSource = String(s.cssbuy_source || '1688'); }).
 
 
 // v8 build 1777996588
+
+// ── Keyboard Navigation & Inline Editing ──────────────────────────────────
+let activeRowIndex = 0;
+let hotkeysEnabled = true;
+
+function applyActiveRow() {
+  document.querySelectorAll('.product-card').forEach(el => el.classList.remove('active-row'));
+  const cards = document.querySelectorAll('.product-card');
+  if (cards.length > 0 && activeRowIndex >= 0 && activeRowIndex < cards.length) {
+    const target = cards[activeRowIndex];
+    target.classList.add('active-row');
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+}
+
+document.addEventListener('keydown', (e) => {
+  if (!hotkeysEnabled || document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') return;
+  
+  const cards = document.querySelectorAll('.product-card');
+  if (!cards.length) return;
+
+  if (e.key === 'j' || e.key === 'ArrowDown') {
+    activeRowIndex = Math.min(activeRowIndex + 1, cards.length - 1);
+    applyActiveRow();
+    e.preventDefault();
+  } else if (e.key === 'k' || e.key === 'ArrowUp') {
+    activeRowIndex = Math.max(activeRowIndex - 1, 0);
+    applyActiveRow();
+    e.preventDefault();
+  } else if (e.key === 'a' || e.key === 'A') {
+    const target = cards[activeRowIndex];
+    const pidMatch = target.id.match(/card-(\d+)/);
+    if (pidMatch) {
+        const pid = parseInt(pidMatch[1]);
+        api('/products/bulk-status', 'POST', { product_ids: [pid], stage: 'QUEUED' }).then(() => {
+            toast('Moved to QUEUED', 'success');
+            target.remove();
+            applyActiveRow();
+        }).catch(err => console.error(err));
+    }
+  } else if (e.key === 'r' || e.key === 'R') {
+    const target = cards[activeRowIndex];
+    const pidMatch = target.id.match(/card-(\d+)/);
+    if (pidMatch) {
+        const pid = parseInt(pidMatch[1]);
+        api('/products/bulk-status', 'POST', { product_ids: [pid], stage: 'REJECTED' }).then(() => {
+            toast('Moved to REJECTED', 'success');
+            target.remove();
+            applyActiveRow();
+        }).catch(err => console.error(err));
+    }
+  }
+});
+
+function startEdit(id, field, el) {
+  if (el.querySelector('input')) return;
+  hotkeysEnabled = false;
+  const originalText = el.innerText.replace('₾', '');
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = originalText;
+  input.style.width = '100%';
+  
+  input.onkeydown = async (e) => {
+    if (e.key === 'Enter') {
+      const val = input.value;
+      const body = {};
+      body[field] = field === 'sell_price_eur' ? parseFloat(val) : val;
+      try {
+        await api('/products/' + id, 'PUT', body);
+        toast('Saved', 'success');
+        el.innerHTML = field === 'sell_price_eur' ? '₾' + val : val;
+        hotkeysEnabled = true;
+      } catch (err) {
+        toast('Failed to save', 'error');
+        el.innerHTML = field === 'sell_price_eur' ? '₾' + originalText : originalText;
+        hotkeysEnabled = true;
+      }
+    } else if (e.key === 'Escape') {
+      el.innerHTML = field === 'sell_price_eur' ? '₾' + originalText : originalText;
+      hotkeysEnabled = true;
+    }
+  };
+  
+  input.onblur = () => {
+    el.innerHTML = field === 'sell_price_eur' ? '₾' + originalText : originalText;
+    hotkeysEnabled = true;
+  };
+  
+  el.innerHTML = '';
+  el.appendChild(input);
+  input.focus();
+}
