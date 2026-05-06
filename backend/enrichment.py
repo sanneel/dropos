@@ -21,6 +21,7 @@ from typing import Optional
 import httpx
 
 from config.runtime import get_config
+from collage import create_collage
 
 log = logging.getLogger(__name__)
 
@@ -38,7 +39,13 @@ def _get_semaphore() -> asyncio.Semaphore:
 # ── Prompts ────────────────────────────────────────────────────────────────────
 
 _GEMINI_SYSTEM = """
-You are an Elite Product Curator for "წყვილი" (Couple), a high-end, luxury-aesthetic boutique. Your goal is to reject 90% of products and only select the "1% of winners" that are guaranteed to go viral.
+You are an Elite Product Curator for "წყვილი" (Couple), a high-end, luxury-aesthetic boutique. 
+You will be shown a COLLAGE of 2-6 products arranged in a grid.
+- Row 1: Left=Prod 1, Right=Prod 2
+- Row 2: Left=Prod 3, Right=Prod 4
+- Row 3: Left=Prod 5, Right=Prod 6
+
+Your goal is to reject 90% of products and only select the "1% of winners".
 
 CURATION PHILOSOPHY:
 We are NOT a general gift shop. We are a curated brand. Every product must look like it costs $100 even if we sell it for $30. If a product looks "cheap," "plastic," "common," or "boring," REJECT IT IMMEDIATELY.
@@ -47,35 +54,27 @@ STRICT SELECTION CRITERIA:
 1. THE "WOW" FACTOR: If the user doesn't say "OMG I need this" in the first 0.5 seconds, it is a fail.
 2. GEN-Z TREND ALIGNMENT: Must fit Y2K, Minimalist Luxury, or "Clean Girl/Boy" aesthetics.
 3. DARK AESTHETIC COMPATIBILITY: Since our brand is Black & Gold, the product must look stunning in low-light or high-contrast photography.
-4. NO "MOM" VIBES: Strictly NO vases, NO generic home decor, NO kitchenware, NO family-oriented gifts.
-
-REJECTION AUTO-TRIGGERS (REJECT IF):
-- The product photo has a messy or distracting background.
-- The item is found in every local mall (e.g., basic teddy bears, generic jewelry).
-- It looks like a utility rather than a luxury/emotional gift.
-- There is any visible Chinese text (this is a hard fail for "luxury" feel).
 
 ULTRA-STRICT SCORING (1-10):
 - niche_fit: Only 9+ if it is a perfect "Couple Goal" item.
 - visual_appeal: Only 9+ if it looks high-end/professional.
 - trend_score: Only 9+ if it is currently exploding on TikTok/Reels.
-- competition_score: 10 = extremely rare/unique; 1 = sold everywhere.
 
 CRITICAL SCORE CALCULATION:
 Score = (niche_fit * 0.50) + (visual_appeal * 0.30) + (trend_score * 0.20)
 
 STRICT STORE MATCH RULE:
-- store_match = TRUE ONLY IF: (Score >= 8.5) AND (niche_fit >= 8) AND (competition_score > 5).
-- There is NO "generosity" here. If you are unsure, the answer is FALSE.
+- store_match = TRUE ONLY IF: (Score >= 8.5) AND (niche_fit >= 8).
 
 OUTPUT REQUIREMENTS:
-- product_name: 3-5 words in Georgian. Must sound premium and alluring.
-- caption: 2-3 sentences in Georgian. Focus on exclusivity and the "perfect surprise."
-- rejection_reason: If store_match is false, provide a blunt, professional critique of why it failed.
-- has_chinese_text: true/false — does the product image contain visible Chinese text?
-- chinese_text_note: brief note if Chinese text found, else empty string.
-
-Respond ONLY with a single JSON object.
+Return a JSON object with a "results" key containing an array of 6 objects (matching the collage order).
+Each object:
+- product_index: 1-6
+- score: 1.0-10.0
+- store_match: true/false
+- rejection_reason: if rejected, a blunt critique.
+- product_name: 3-5 words in Georgian (if passed).
+- caption: 2-3 sentences in Georgian (if passed).
 """
 
 _GROQ_SYSTEM = """
@@ -263,6 +262,8 @@ async def gemini_enrich(product: dict, settings: dict) -> Optional[dict]:
         },
     }
 
+    # ── Retry loop: 3 attempts with exponential back-off on transient errors ──
+    _RETRYABLE = {429, 500, 502, 503, 504}
     for attempt in range(3):
         try:
             async with httpx.AsyncClient(timeout=30) as client:
@@ -272,10 +273,18 @@ async def gemini_enrich(product: dict, settings: dict) -> Optional[dict]:
                     json=payload,
                 )
 
+            # Hard quota exhaustion — stop trying Gemini for this session
             if resp.status_code == 429:
                 _GEMINI_QUOTA_EXHAUSTED = True
                 log.warning("Gemini 429 quota exhausted — falling back to Groq (text-only)")
                 return None
+
+            # Transient server error: wait then retry
+            if resp.status_code in _RETRYABLE:
+                wait = 3 * (attempt + 1)  # 3s, 6s, 9s
+                log.warning("Gemini API %d on attempt %d — retrying in %ds", resp.status_code, attempt + 1, wait)
+                await asyncio.sleep(wait)
+                continue
 
             if resp.status_code != 200:
                 log.warning("Gemini API %d: %s", resp.status_code, resp.text[:300])
@@ -310,9 +319,11 @@ async def gemini_enrich(product: dict, settings: dict) -> Optional[dict]:
             log.warning("Gemini JSON parse error: %s", exc)
             return None
         except Exception as exc:
-            log.warning("Gemini enrichment error (attempt %d): %s", attempt + 1, exc)
+            wait = 3 * (attempt + 1)
+            log.warning("Gemini enrichment error (attempt %d/%d, retry in %ds): %s", attempt + 1, 3, wait, exc)
             if attempt == 2:
                 return None
+            await asyncio.sleep(wait)
 
     return None
 
@@ -344,60 +355,72 @@ async def groq_enrich(product: dict, settings: dict) -> Optional[dict]:
         "Respond with ONLY a JSON object — no markdown, no explanation."
     )
 
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                _GROQ_URL,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": _GROQ_MODEL,
-                    "messages": [
-                        {"role": "system", "content": _GROQ_SYSTEM},
-                        {"role": "user",   "content": user_content},
-                    ],
-                    "max_tokens": 600,
-                    "temperature": 0.4,
-                    "response_format": {"type": "json_object"},
-                },
+    _RETRYABLE = {429, 500, 502, 503, 504}
+
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(
+                    _GROQ_URL,
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": _GROQ_MODEL,
+                        "messages": [
+                            {"role": "system", "content": _GROQ_SYSTEM},
+                            {"role": "user",   "content": user_content},
+                        ],
+                        "max_tokens": 600,
+                        "temperature": 0.4,
+                        "response_format": {"type": "json_object"},
+                    },
+                )
+
+            # Transient errors: retry with back-off
+            if resp.status_code in _RETRYABLE:
+                wait = 3 * (attempt + 1)
+                log.warning("Groq API %d on attempt %d — retrying in %ds", resp.status_code, attempt + 1, wait)
+                await asyncio.sleep(wait)
+                continue
+
+            if resp.status_code != 200:
+                log.warning("Groq API %d: %s", resp.status_code, resp.text[:300])
+                return None
+
+            text = resp.json()["choices"][0]["message"]["content"]
+            text = re.sub(r"```json|```", "", text).strip()
+            result = json.loads(text)
+
+            if "store_match" not in result:
+                result["store_match"] = float(result.get("niche_fit", 0)) >= 7.5
+            if "audience" not in result:
+                result["audience"] = infer_audience(product)
+            result["has_chinese_text"] = False   # Groq cannot detect Chinese text in images
+            result["chinese_text_note"] = ""
+            result["hashtags"] = result.get("hashtags") or _get_tags(product)
+            result["ai_provider"] = "groq"
+
+            log.info(
+                "Groq (text-only) '%s' → score=%.1f niche=%.1f match=%s",
+                title[:35],
+                result.get("score", 0),
+                result.get("niche_fit", 0),
+                result.get("store_match"),
             )
+            return result
 
-        if resp.status_code == 429:
-            log.warning("Groq 429 rate limit — falling back to mock")
+        except json.JSONDecodeError as exc:
+            log.warning("Groq JSON parse error: %s", exc)
             return None
+        except Exception as exc:
+            wait = 3 * (attempt + 1)
+            log.warning("Groq enrichment error (attempt %d/%d, retry in %ds): %s", attempt + 1, 3, wait, exc)
+            if attempt == 2:
+                return None
+            await asyncio.sleep(wait)
 
-        if resp.status_code != 200:
-            log.warning("Groq API %d: %s", resp.status_code, resp.text[:300])
-            return None
-
-        text = resp.json()["choices"][0]["message"]["content"]
-        text = re.sub(r"```json|```", "", text).strip()
-        result = json.loads(text)
-
-        if "store_match" not in result:
-            result["store_match"] = float(result.get("niche_fit", 0)) >= 7.5
-        if "audience" not in result:
-            result["audience"] = infer_audience(product)
-        result["has_chinese_text"] = False   # Groq cannot detect Chinese text in images
-        result["chinese_text_note"] = ""
-        result["hashtags"] = result.get("hashtags") or _get_tags(product)
-        result["ai_provider"] = "groq"
-
-        log.info(
-            "Groq (text-only) '%s' → score=%.1f niche=%.1f match=%s",
-            title[:35],
-            result.get("score", 0),
-            result.get("niche_fit", 0),
-            result.get("store_match"),
-        )
-        return result
-
-    except json.JSONDecodeError as exc:
-        log.warning("Groq JSON parse error: %s", exc)
-    except Exception as exc:
-        log.warning("Groq enrichment error: %s", exc)
     return None
 
 
@@ -428,3 +451,88 @@ async def ai_enrich(product: dict, settings: dict) -> Optional[dict]:
 
         # 3. Mock — last resort, always available
         return mock_enrich(product)
+
+async def ai_enrich_batch(products: list[dict], settings: dict) -> list[dict]:
+    """
+    Groups products into a collage and sends to Gemini for batch scoring.
+    Saves 80%+ on Vision tokens.
+    """
+    if not products:
+        return []
+
+    api_key = get_config("GEMINI_KEY", settings.get("gemini_key", ""))
+    if not api_key:
+        # Fallback to individual mock scoring if no key
+        return [mock_enrich(p) for p in products]
+
+    # 1. Create collage
+    image_urls = [(p.get("images") or [""])[0] for p in products]
+    collage_bytes = await create_collage(image_urls)
+    
+    if not collage_bytes:
+        log.warning("Failed to create collage for batch, falling back to mock")
+        return [mock_enrich(p) for p in products]
+
+    # 2. Prepare Gemini Payload
+    model = _gemini_model(settings)
+    b64_collage = base64.b64encode(collage_bytes).decode()
+    
+    products_text = "\n".join([
+        f"Prod {i+1}: {p.get('title_translated') or p.get('title')[:60]} (₾{p.get('cost_eur')})"
+        for i, p in enumerate(products)
+    ])
+
+    payload = {
+        "system_instruction": {"parts": [{"text": _GEMINI_SYSTEM}]},
+        "contents": [{
+            "parts": [
+                {"inline_data": {"mime_type": "image/jpeg", "data": b64_collage}},
+                {"text": f"Evaluate these 6 products:\n{products_text}"}
+            ]
+        }],
+        "generationConfig": {
+            "response_mime_type": "application/json",
+            "max_output_tokens": 1500,
+            "temperature": 0.3,
+        },
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=45) as client:
+            resp = await client.post(
+                _GEMINI_URL.format(model=model),
+                headers={"x-goog-api-key": api_key, "content-type": "application/json"},
+                json=payload,
+            )
+        
+        if resp.status_code != 200:
+            log.warning(f"Batch Gemini error {resp.status_code}: {resp.text[:200]}")
+            return [mock_enrich(p) for p in products]
+
+        data = resp.json()
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        text = re.sub(r"```json|```", "", text).strip()
+        results_list = json.loads(text).get("results", [])
+        
+        # Map results back to products
+        enriched_results = []
+        for i, p in enumerate(products):
+            # Find matching result or fallback
+            res = next((r for r in results_list if r.get("product_index") == i+1), {})
+            
+            enrichment = {
+                "score": float(res.get("score", 0)),
+                "store_match": bool(res.get("store_match", False)),
+                "rejection_reason": res.get("rejection_reason", "Batch score too low"),
+                "product_name": res.get("product_name", p.get("title")[:30]),
+                "caption": res.get("caption", ""),
+                "hashtags": _get_tags(p),
+                "ai_provider": "gemini-batch"
+            }
+            enriched_results.append(enrichment)
+            
+        return enriched_results
+
+    except Exception as e:
+        log.error(f"Batch Vision AI failed: {e}")
+        return [mock_enrich(p) for p in products]

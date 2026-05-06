@@ -16,6 +16,7 @@ Settings used:
 
 import asyncio
 import logging
+import httpx
 from typing import Callable, Coroutine
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -82,6 +83,23 @@ def create_posting_scheduler(get_settings_fn: Callable[[], Coroutine]) -> AsyncI
         except Exception as exc:
             log.error("Peak-post job crashed: %s", exc, exc_info=True)
 
+    async def _fetch_exchange_rate() -> None:
+        """Daily job: fetch latest CNY->EUR exchange rate and update settings."""
+        try:
+            log.info("Fetching latest exchange rate from Frankfurter API...")
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.get("https://api.frankfurter.app/latest?from=CNY&to=EUR")
+                r.raise_for_status()
+                data = r.json()
+                rate = data.get("rates", {}).get("EUR")
+                if rate:
+                    log.info(f"Successfully fetched exchange rate: {rate}")
+                    await db.update_settings({"exchange_rate": float(rate)})
+                else:
+                    log.warning("Exchange rate not found in API response.")
+        except Exception as exc:
+            log.error("Failed to fetch exchange rate, falling back to DB rate: %s", exc)
+
     # ── Build cron jobs from settings ─────────────────────────────────────────
     # We read settings once at startup. If the user changes post_times, they
     # need to restart the server. (Acceptable trade-off for simplicity.)
@@ -115,6 +133,17 @@ def create_posting_scheduler(get_settings_fn: Callable[[], Coroutine]) -> AsyncI
                     log.warning(
                         "Could not schedule post job '%s': %s", time_str, exc
                     )
+
+            # Schedule the daily exchange rate fetcher at midnight
+            scheduler.add_job(
+                _fetch_exchange_rate,
+                trigger=CronTrigger(hour=0, minute=0, timezone=timezone),
+                id="daily_exchange_rate_fetch",
+                replace_existing=True,
+                misfire_grace_time=300,
+            )
+            log.info("Daily exchange rate fetcher scheduled at 00:00 %s", timezone)
+
         except Exception as exc:
             log.error("Peak-post scheduler init failed: %s", exc)
 
