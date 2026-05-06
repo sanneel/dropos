@@ -194,7 +194,7 @@ async def _gemini_chat(message: str, settings: dict) -> Optional[dict]:
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
-                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
                 headers={"x-goog-api-key": api_key, "content-type": "application/json"},
                 json={
                     "system_instruction": {"parts": [{"text": _SYSTEM}]},
