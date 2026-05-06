@@ -1358,36 +1358,36 @@ async function renderSettings() {
         <div class="form-group">
           <label>Apify token</label>
           <input type="password" id="s-apify" value="${s.apify_token || ''}" placeholder="apify_api_…"/>
-          <div style="font-size:11px;margin-top:5px;color:${s.apify_token ? 'var(--green)' : 'var(--t3)'}">
-            ${s.apify_token ? '✓ Configured' : 'Not set — mock data will be used'}
+          <div style="font-size:11px;margin-top:5px;color:${s.apify_token_set ? 'var(--green)' : 'var(--t3)'}">
+            ${s.apify_token_set ? '✓ Configured' : 'Not set — mock data will be used'}
           </div>
         </div>
         <div class="form-group">
           <label>Gemini key <span style="color:var(--green);font-weight:400">— recommended (cheapest + image analysis)</span></label>
-          <input type="password" id="s-gemini" value="${s.gemini_key || ''}" placeholder="AIza…"/>
-          <div style="font-size:11px;margin-top:5px;color:${s.gemini_key ? 'var(--green)' : 'var(--t3)'}">
-            ${s.gemini_key ? '✓ Gemini 2.5 Flash-Lite active — image analysis enabled' : 'Not set — get free key at aistudio.google.com'}
+          <input type="password" id="s-gemini" value="" placeholder="${s.gemini_key_set ? '••••••••  (already set — paste to replace)' : 'AIza…'}"/>
+          <div style="font-size:11px;margin-top:5px;color:${s.gemini_key_set ? 'var(--green)' : 'var(--t3)'}">
+            ${s.gemini_key_set ? '✓ Gemini 2.5 Flash-Lite active — image analysis enabled' : 'Not set — get free key at <a href=\'https://aistudio.google.com\' target=\'_blank\' style=\'color:var(--accent)\'>aistudio.google.com</a>'}
           </div>
         </div>
         <div class="form-group">
           <label>Groq key <span style="color:var(--t3);font-weight:400">(free fallback — 14,400 req/day, text-only)</span></label>
-          <input type="password" id="s-groq" value="${s.groq_key || ''}" placeholder="gsk_…"/>
-          <div style="font-size:11px;margin-top:5px;color:${s.groq_key ? 'var(--green)' : 'var(--t3)'}">
-            ${s.groq_key ? '✓ Groq Llama 3.3 70B active' : 'Not set — get free key at console.groq.com'}
+          <input type="password" id="s-groq" value="" placeholder="${s.groq_key_set ? '••••••••  (already set — paste to replace)' : 'gsk_…'}"/>
+          <div style="font-size:11px;margin-top:5px;color:${s.groq_key_set ? 'var(--green)' : 'var(--t3)'}">
+            ${s.groq_key_set ? '✓ Groq Llama 3.3 70B active' : 'Not set — get free key at <a href=\'https://console.groq.com\' target=\'_blank\' style=\'color:var(--accent)\'>console.groq.com</a>'}
           </div>
         </div>
         <div class="form-group">
           <label>Anthropic key <span style="color:var(--t3);font-weight:400">(fallback, text-only)</span></label>
-          <input type="password" id="s-anthropic" value="${s.anthropic_key || ''}" placeholder="sk-ant-…"/>
-          <div style="font-size:11px;margin-top:5px;color:${s.anthropic_key ? 'var(--green)' : 'var(--t3)'}">
-            ${s.anthropic_key ? '✓ Claude Haiku fallback active' : 'Not set'}
+          <input type="password" id="s-anthropic" value="" placeholder="${s.anthropic_key_set ? '••••••••  (already set — paste to replace)' : 'sk-ant-…'}"/>
+          <div style="font-size:11px;margin-top:5px;color:${s.anthropic_key_set ? 'var(--green)' : 'var(--t3)'}">
+            ${s.anthropic_key_set ? '✓ Configured' : 'Not set'}
           </div>
         </div>
         <div class="card-sm" style="margin-top:4px">
           <div style="font-size:11px;color:var(--t3);line-height:1.6">
-            Priority: <b style="color:var(--t1)">Groq</b> → Gemini → Anthropic → mock rule-based.<br>
-            Groq is used first to avoid Gemini quota delays.<br>
-            Gemini is only used if Groq is unavailable and will fall back immediately on quota errors.
+            Priority: <b style="color:var(--t1)">Gemini</b> (image analysis) → Groq (free text fallback) → rule-based.<br>
+            Gemini is used first — it can see product photos for better scoring.<br>
+            Groq kicks in automatically if Gemini is unavailable (free, 14,400 req/day).
           </div>
         </div>
       </div>
@@ -1696,8 +1696,10 @@ async function saveSettings() {
   includeIfNonEmpty(data, 'ingest_api_token', g('s-ingest-token')?.value);
   try {
     await api('/settings', 'PATCH', data);
-    toast('Settings saved', 'success');
+    toast('Settings saved ✓', 'success');
     loadSchedulerStatus();
+    // Reload settings page to show updated key status indicators
+    setTimeout(() => renderSettings(), 400);
   } catch (e) {
     toast(`Settings save failed: ${e.message || e}`, 'error');
   } finally {
@@ -2361,7 +2363,7 @@ function renderChatMessages() {
     const suggestion = meta.suggestion ? `<div class="chat-suggestion">${escHtml(meta.suggestion)}</div>` : '';
     return `<div class="chat-msg assistant">
       <div class="chat-avatar">AI</div>
-      <div class="chat-bubble">${escHtml(m.text)}${editCards}${productCards}${suggestion}${actions}</div>
+      <div class="chat-bubble">${formatChatText(m.text)}${editCards}${productCards}${suggestion}${actions}</div>
     </div>`;
   }).join('');
   el.scrollTop = el.scrollHeight;
@@ -2409,6 +2411,14 @@ function renderChatProductCard(p) {
 
 function escHtml(s) {
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+}
+
+function formatChatText(s) {
+  // Escape HTML but allow line breaks as <br> and bold **text**
+  const escaped = String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return escaped
+    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+    .replace(/\n/g,'<br>');
 }
 
 async function chatBulkApprove(ids, btn) {
@@ -2459,8 +2469,16 @@ async function chatSend(msg) {
   chatAppend('user', msg);
   chatPending = true;
   document.getElementById('chat-send-btn')?.setAttribute('disabled','1');
+  // Show typing indicator
+  const typingId = 'typing-' + Date.now();
+  const messagesEl = document.getElementById('chat-messages');
+  if (messagesEl) {
+    messagesEl.insertAdjacentHTML('beforeend', `<div class="chat-msg assistant" id="${typingId}"><div class="chat-avatar">AI</div><div class="chat-bubble chat-typing-bubble"><span class="chat-typing-dot"></span><span class="chat-typing-dot"></span><span class="chat-typing-dot"></span></div></div>`);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
   try {
     const result = await api('/ai/chat', 'POST', { message: msg });
+    document.getElementById(typingId)?.remove();
     chatAppend('assistant', result.reply || 'No response.', {
       action: result.action,
       product_ids: result.product_ids || [],
@@ -2469,6 +2487,7 @@ async function chatSend(msg) {
       suggestion: result.suggestion,
     });
   } catch(e) {
+    document.getElementById(typingId)?.remove();
     chatAppend('assistant', '⚠️ Error: ' + (e.message || 'Unknown error'));
   } finally {
     chatPending = false;
@@ -2578,6 +2597,16 @@ async function chatReconsider(ids) {
   }
 }
 
+function _chatAiStatusBanner(settingsData) {
+  const hasGemini = settingsData?.gemini_key_set;
+  const hasGroq   = settingsData?.groq_key_set;
+  if (hasGemini || hasGroq) {
+    const which = hasGemini ? '✦ Gemini active' : '✦ Groq active';
+    return `<div class="chat-status-bar ready">${which} — AI powered</div>`;
+  }
+  return `<div class="chat-status-bar warn">⚠ No AI key set — <button onclick="navigate('settings')" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:11px;padding:0;text-decoration:underline">add Gemini key in Settings</button> for smart reviews</div>`;
+}
+
 async function renderChat() {
   setTitle('AI Assistant', 'Chat with your store AI');
   document.getElementById('topbar-actions').innerHTML = `
@@ -2585,6 +2614,7 @@ async function renderChat() {
 
   document.getElementById('content').innerHTML = `
     <div class="chat-page">
+      ${_chatAiStatusBanner(settingsData)}
       <div class="chat-quick-row">
         ${QUICK_ACTIONS.map(a => `<button class="chat-quick-btn" onclick="chatSend(${JSON.stringify(a.msg)})">${a.label}</button>`).join('')}
       </div>

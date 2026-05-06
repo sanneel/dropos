@@ -168,16 +168,20 @@ Rejected: {stats.get('rejected', 0)}
 
     # Rule-based fallback for review_pending (works without AI keys)
     msg_lower = message.lower()
-    if any(kw in msg_lower for kw in ["review", "pending", "queue", "approve", "which"]):
+    if any(kw in msg_lower for kw in [
+        "review", "pending", "queue", "approve", "which",
+        "show me", "evaluate", "assess", "check", "look at",
+        "pending products", "reviewed", "new products"
+    ]):
         return _rule_based_review_pending(context)
 
     return {
-        "reply": "AI services are unavailable right now. Please check your Gemini or Groq API key in Settings.",
+        "reply": "AI services are unavailable. Please add your Gemini API key in Settings (it's free at aistudio.google.com) — or a Groq key as a backup. Once set, all AI features including smart product reviews will work.",
         "action": None,
         "product_ids": [],
         "products": [],
         "edits": [],
-        "suggestion": "Configure gemini_key in Settings for best results.",
+        "suggestion": "Go to Settings → API keys → paste your Gemini key → Save.",
     }
 
 
