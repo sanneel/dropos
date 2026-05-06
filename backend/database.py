@@ -737,182 +737,180 @@ db = Database()
 
 async def init_db():
     await db.connect()
-    conn = db._db
-
-    await conn.execute("""
-        CREATE TABLE IF NOT EXISTS products (
-            id                SERIAL PRIMARY KEY,
-            job_id            INTEGER,
-            source            TEXT,
-            source_id         TEXT UNIQUE,
-            title             TEXT,
-            title_translated  TEXT,
-            product_name      TEXT,
-            price_cny         DOUBLE PRECISION,
-            cost_eur          DOUBLE PRECISION,
-            sell_price_eur    DOUBLE PRECISION,
-            margin_pct        DOUBLE PRECISION,
-            orders            INTEGER,
-            rating            DOUBLE PRECISION,
-            images_json       TEXT,
-            url               TEXT,
-            category          TEXT,
-            keyword           TEXT,
-            score             DOUBLE PRECISION,
-            niche_fit         DOUBLE PRECISION,
-            visual_appeal     DOUBLE PRECISION,
-            trend_score       DOUBLE PRECISION,
-            competition_score DOUBLE PRECISION DEFAULT 0,
-            caption           TEXT,
-            description       TEXT DEFAULT '',
-            hashtags_json     TEXT,
-            ai_provider       TEXT DEFAULT '',
-            has_chinese_text  INTEGER DEFAULT 0,
-            chinese_text_note TEXT DEFAULT '',
-            stage             TEXT DEFAULT 'SCRAPED',
-            rejection_reason  TEXT,
-            review_note       TEXT,
-            approved_at       TEXT,
-            rejected_at       TEXT,
-            posted_at         TEXT,
-            created_at        TEXT,
-            CHECK (stage IN ('SCRAPED', 'ENRICHED', 'REVIEWED', 'QUEUED', 'LIVE', 'REJECTED'))
-        )
-    """)
-
-    # ── Indexes for high-traffic query patterns ────────────────────────────────
-    # Worker polls by stage constantly; this prevents full table scans at scale.
-    await conn.execute("CREATE INDEX IF NOT EXISTS idx_products_stage ON products(stage)")
-    await conn.execute("CREATE INDEX IF NOT EXISTS idx_products_category ON products(category)")
-    # Deduplication & ingestion path (ON CONFLICT + JOIN lookups)
-    await conn.execute("CREATE INDEX IF NOT EXISTS idx_products_source_id ON products(source_id)")
-    # Filter-engine and analytics queries by platform (1688 vs taobao)
-    await conn.execute("CREATE INDEX IF NOT EXISTS idx_products_source_platform ON products(source)")
-    # Composite: the worker's most common query pattern (stage + created_at ordering)
-    await conn.execute("CREATE INDEX IF NOT EXISTS idx_products_stage_created ON products(stage, created_at)")
-
-    await conn.execute("""
-        CREATE TABLE IF NOT EXISTS jobs (
-            id           SERIAL PRIMARY KEY,
-            keywords_json TEXT,
-            status       TEXT,
-            progress     INTEGER DEFAULT 0,
-            scraped      INTEGER DEFAULT 0,
-            after_basic  INTEGER DEFAULT 0,
-            after_profit INTEGER DEFAULT 0,
-            after_dedup  INTEGER DEFAULT 0,
-            after_ai     INTEGER DEFAULT 0,
-            created_at   TEXT
-        )
-    """)
-
-    await conn.execute("""
-        CREATE TABLE IF NOT EXISTS products_raw (
-            id           SERIAL PRIMARY KEY,
-            job_id       INTEGER,
-            source       TEXT,
-            source_id    TEXT,
-            product_name TEXT,
-            price        DOUBLE PRECISION,
-            image_url    TEXT,
-            merchant     TEXT,
-            raw_data     TEXT,
-            created_at   TEXT,
-            UNIQUE(job_id, source_id)
-        )
-    """)
-
-    await conn.execute("""
-        CREATE TABLE IF NOT EXISTS post_log (
-            id         SERIAL PRIMARY KEY,
-            product_id INTEGER,
-            posted_at  TEXT
-        )
-    """)
-
-    await conn.execute("""
-        CREATE TABLE IF NOT EXISTS pipeline_products (
-            id           SERIAL PRIMARY KEY,
-            job_id       INTEGER,
-            source_id    TEXT,
-            title        TEXT,
-            product_name TEXT DEFAULT '',
-            image_url    TEXT,
-            url          TEXT DEFAULT '',
-            price_cny    DOUBLE PRECISION DEFAULT 0,
-            cost_eur     DOUBLE PRECISION DEFAULT 0,
-            sell_price_eur DOUBLE PRECISION DEFAULT 0,
-            orders       INTEGER DEFAULT 0,
-            rating       DOUBLE PRECISION DEFAULT 0,
-            margin_pct   DOUBLE PRECISION DEFAULT 0,
-            raw_score    DOUBLE PRECISION DEFAULT 0,
-            filter_stage TEXT,
-            filter_reason TEXT DEFAULT '',
-            ai_score     DOUBLE PRECISION DEFAULT 0,
-            ai_niche_fit DOUBLE PRECISION DEFAULT 0,
-            ai_visual    DOUBLE PRECISION DEFAULT 0,
-            trend_score  DOUBLE PRECISION DEFAULT 0,
-            competition_score DOUBLE PRECISION DEFAULT 0,
-            ai_provider  TEXT DEFAULT '',
-            created_at   TEXT
-        )
-    """)
-
-    await conn.execute("""
-        CREATE TABLE IF NOT EXISTS settings (
-            key   TEXT PRIMARY KEY,
-            value TEXT
-        )
-    """)
-
-    await conn.execute("""
-        CREATE TABLE IF NOT EXISTS comment_reply_log (
-            id           SERIAL PRIMARY KEY,
-            comment_id   TEXT UNIQUE,
-            reply_type   TEXT DEFAULT 'comment',
-            replied_at   TEXT,
-            matched_rule TEXT
-        )
-    """)
-
-    defaults = {
-        "instagram_auto_reply_enabled": False,
-        "instagram_reply_rules": [],
-        "instagram_dm_reply_enabled": False,
-        "instagram_dm_rules": [],
-        "instagram_webhook_token": "dropos_webhook_secret",
-        "niche": "couple gifts & romantic products",
-        "min_margin": 60.0,
-        "min_score": 6.0,
-        "min_orders": 100,
-        "min_rating": 4.5,
-        "sell_markup_low": 3.5,
-        "sell_markup_mid": 2.8,
-        "sell_markup_high": 2.2,
-        "exchange_rate": 0.353,
-        "apify_token": "",
-        "anthropic_key": "",
-        "gemini_key": "",
-        "instagram_username": "",
-        "scan_keywords": ["couple gifts", "romantic gifts for her", "gifts for boyfriend", "gifts for girlfriend", "anniversary gifts"],
-        "google_sheets_id": "",
-        "google_sheets_credentials": "",
-        "public_base_url": "",
-        "cssbuy_username": "",
-        "cssbuy_password": "",
-        "cssbuy_source": "1688",
-        "captcha_2captcha_key": "",
-        "ingest_api_token": "",
-        "local_scraping_only": False,
-        "gemini_model": "gemini-2.5-flash-lite",
-        "target_audience": "couples and people buying gifts for partners, ages 18-35",
-        "sell_price_min": 15,
-        "sell_price_max": 80,
-        "example_products": "matching couple bracelets, personalised photo frames, couple card games, romantic candle sets, love letter boxes, matching phone cases",
-    }
-    for k, v in defaults.items():
-        val = json.dumps(v) if not isinstance(v, str) else v
+    # Acquire a single connection for all DDL — keeps schema creation atomic.
+    async with db._pool.acquire() as conn:
         await conn.execute("""
-            INSERT INTO settings (key, value) VALUES ($1,$2)
-            ON CONFLICT (key) DO NOTHING
-        """, k, val)
+            CREATE TABLE IF NOT EXISTS products (
+                id                SERIAL PRIMARY KEY,
+                job_id            INTEGER,
+                source            TEXT,
+                source_id         TEXT UNIQUE,
+                title             TEXT,
+                title_translated  TEXT,
+                product_name      TEXT,
+                price_cny         DOUBLE PRECISION,
+                cost_eur          DOUBLE PRECISION,
+                sell_price_eur    DOUBLE PRECISION,
+                margin_pct        DOUBLE PRECISION,
+                orders            INTEGER,
+                rating            DOUBLE PRECISION,
+                images_json       TEXT,
+                url               TEXT,
+                category          TEXT,
+                keyword           TEXT,
+                score             DOUBLE PRECISION,
+                niche_fit         DOUBLE PRECISION,
+                visual_appeal     DOUBLE PRECISION,
+                trend_score       DOUBLE PRECISION,
+                competition_score DOUBLE PRECISION DEFAULT 0,
+                caption           TEXT,
+                description       TEXT DEFAULT '',
+                hashtags_json     TEXT,
+                ai_provider       TEXT DEFAULT '',
+                has_chinese_text  INTEGER DEFAULT 0,
+                chinese_text_note TEXT DEFAULT '',
+                stage             TEXT DEFAULT 'SCRAPED',
+                rejection_reason  TEXT,
+                review_note       TEXT,
+                approved_at       TEXT,
+                rejected_at       TEXT,
+                posted_at         TEXT,
+                created_at        TEXT,
+                CHECK (stage IN ('SCRAPED', 'ENRICHED', 'REVIEWED', 'QUEUED', 'LIVE', 'REJECTED'))
+            )
+        """)
+
+        # ── Indexes for high-traffic query patterns ────────────────────────────
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_products_stage ON products(stage)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_products_category ON products(category)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_products_source_id ON products(source_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_products_source_platform ON products(source)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_products_stage_created ON products(stage, created_at)")
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS jobs (
+                id           SERIAL PRIMARY KEY,
+                keywords_json TEXT,
+                status       TEXT,
+                progress     INTEGER DEFAULT 0,
+                scraped      INTEGER DEFAULT 0,
+                after_basic  INTEGER DEFAULT 0,
+                after_profit INTEGER DEFAULT 0,
+                after_dedup  INTEGER DEFAULT 0,
+                after_ai     INTEGER DEFAULT 0,
+                created_at   TEXT
+            )
+        """)
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS products_raw (
+                id           SERIAL PRIMARY KEY,
+                job_id       INTEGER,
+                source       TEXT,
+                source_id    TEXT,
+                product_name TEXT,
+                price        DOUBLE PRECISION,
+                image_url    TEXT,
+                merchant     TEXT,
+                raw_data     TEXT,
+                created_at   TEXT,
+                UNIQUE(job_id, source_id)
+            )
+        """)
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS post_log (
+                id         SERIAL PRIMARY KEY,
+                product_id INTEGER,
+                posted_at  TEXT
+            )
+        """)
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS pipeline_products (
+                id           SERIAL PRIMARY KEY,
+                job_id       INTEGER,
+                source_id    TEXT,
+                title        TEXT,
+                product_name TEXT DEFAULT '',
+                image_url    TEXT,
+                url          TEXT DEFAULT '',
+                price_cny    DOUBLE PRECISION DEFAULT 0,
+                cost_eur     DOUBLE PRECISION DEFAULT 0,
+                sell_price_eur DOUBLE PRECISION DEFAULT 0,
+                orders       INTEGER DEFAULT 0,
+                rating       DOUBLE PRECISION DEFAULT 0,
+                margin_pct   DOUBLE PRECISION DEFAULT 0,
+                raw_score    DOUBLE PRECISION DEFAULT 0,
+                filter_stage TEXT,
+                filter_reason TEXT DEFAULT '',
+                ai_score     DOUBLE PRECISION DEFAULT 0,
+                ai_niche_fit DOUBLE PRECISION DEFAULT 0,
+                ai_visual    DOUBLE PRECISION DEFAULT 0,
+                trend_score  DOUBLE PRECISION DEFAULT 0,
+                competition_score DOUBLE PRECISION DEFAULT 0,
+                ai_provider  TEXT DEFAULT '',
+                created_at   TEXT
+            )
+        """)
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS comment_reply_log (
+                id           SERIAL PRIMARY KEY,
+                comment_id   TEXT UNIQUE,
+                reply_type   TEXT DEFAULT 'comment',
+                replied_at   TEXT,
+                matched_rule TEXT
+            )
+        """)
+
+        defaults = {
+            "instagram_auto_reply_enabled": False,
+            "instagram_reply_rules": [],
+            "instagram_dm_reply_enabled": False,
+            "instagram_dm_rules": [],
+            "instagram_webhook_token": "dropos_webhook_secret",
+            "niche": "couple gifts & romantic products",
+            "min_margin": 60.0,
+            "min_score": 6.0,
+            "min_orders": 100,
+            "min_rating": 4.5,
+            "sell_markup_low": 3.5,
+            "sell_markup_mid": 2.8,
+            "sell_markup_high": 2.2,
+            "exchange_rate": 0.353,
+            "apify_token": "",
+            "anthropic_key": "",
+            "gemini_key": "",
+            "instagram_username": "",
+            "scan_keywords": ["couple gifts", "romantic gifts for her", "gifts for boyfriend", "gifts for girlfriend", "anniversary gifts"],
+            "google_sheets_id": "",
+            "google_sheets_credentials": "",
+            "public_base_url": "",
+            "cssbuy_username": "",
+            "cssbuy_password": "",
+            "cssbuy_source": "1688",
+            "captcha_2captcha_key": "",
+            "ingest_api_token": "",
+            "local_scraping_only": False,
+            "gemini_model": "gemini-2.5-flash-lite",
+            "target_audience": "couples and people buying gifts for partners, ages 18-35",
+            "sell_price_min": 15,
+            "sell_price_max": 80,
+            "example_products": "matching couple bracelets, personalised photo frames, couple card games, romantic candle sets, love letter boxes, matching phone cases",
+        }
+        for k, v in defaults.items():
+            val = json.dumps(v) if not isinstance(v, str) else v
+            await conn.execute("""
+                INSERT INTO settings (key, value) VALUES ($1,$2)
+                ON CONFLICT (key) DO NOTHING
+            """, k, val)
+
+
