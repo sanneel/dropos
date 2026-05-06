@@ -522,7 +522,7 @@ class Database:
             "saving",
         )
         placeholders = ",".join(f"${i+1}" for i in range(len(active_statuses)))
-        status = await self._db.execute(
+        status = await self.execute(
             f"UPDATE jobs SET status='interrupted' WHERE status IN ({placeholders})",
             *active_statuses
         )
@@ -536,7 +536,7 @@ class Database:
         for table in ("pipeline_products", "products_raw", "jobs"):
             val = await self.fetchval(f"SELECT COUNT(*) FROM {table}")
             counts[table] = val if val else 0
-            await self._db.execute(f"DELETE FROM {table}")
+            await self.execute(f"DELETE FROM {table}")
         return counts
 
     # ── Settings ──────────────────────────────────────────────────────────────
