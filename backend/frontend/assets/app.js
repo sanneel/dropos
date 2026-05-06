@@ -1210,11 +1210,11 @@ async function renderSettings() {
         </div>
         <div class="form-group">
           <label>Page Access Token</label>
-          <input type="password" id="s-ig-token" value="${s.instagram_access_token || ''}" placeholder="EAABs…"/>
-          <div style="font-size:11px;margin-top:5px;color:${s.instagram_access_token && s.instagram_user_id ? 'var(--green)' : 'var(--t3)'}">
-            ${s.instagram_access_token && s.instagram_user_id
+          <input type="password" id="s-ig-token" value="" placeholder="${s.instagram_access_token_set ? '••••  saved — paste to replace' : 'EAABs…'}"/>
+          <div style="font-size:11px;margin-top:5px;color:${s.instagram_access_token_set && s.instagram_user_id ? 'var(--green)' : 'var(--t3)'}">
+            ${s.instagram_access_token_set && s.instagram_user_id
               ? '✓ Graph API configured — posts will publish directly to Instagram'
-              : 'Not set — posts will be simulated'}
+              : 'Not set — posts will be simulated (add token + account ID above)'}
           </div>
         </div>
         <div class="form-group">
@@ -1354,40 +1354,65 @@ async function renderSettings() {
       </div>
 
       <div class="card">
-        <div class="card-title">API keys</div>
-        <div class="form-group">
-          <label>Apify token</label>
-          <input type="password" id="s-apify" value="${s.apify_token || ''}" placeholder="apify_api_…"/>
-          <div style="font-size:11px;margin-top:5px;color:${s.apify_token_set ? 'var(--green)' : 'var(--t3)'}">
-            ${s.apify_token_set ? '✓ Configured' : 'Not set — mock data will be used'}
+        <div class="card-title">AI &amp; API keys</div>
+
+        <!-- Gemini -->
+        <div class="api-key-row">
+          <div class="api-key-header">
+            <div>
+              <span class="api-key-name">🤖 Gemini AI</span>
+              <span class="api-key-badge ${s.gemini_key_set ? 'badge-active' : 'badge-missing'}">${s.gemini_key_set ? '✓ Active' : '⚠ Not set'}</span>
+            </div>
+            <button class="btn btn-sm btn-test" onclick="testApiKey('gemini')" id="test-gemini-btn">Test</button>
           </div>
+          <div style="font-size:11px;color:var(--t3);margin-bottom:8px">Image analysis · AI assistant · product scoring · <a href="https://aistudio.google.com" target="_blank" style="color:var(--accent)">Free key →</a></div>
+          <input type="password" id="s-gemini" value="" placeholder="${s.gemini_key_set ? '••••  saved — paste new key to replace' : 'AIzaSy…  (get free key at aistudio.google.com)'}"/>
+          <div id="gemini-test-result" style="font-size:11px;margin-top:5px;display:none"></div>
         </div>
-        <div class="form-group">
-          <label>Gemini key <span style="color:var(--green);font-weight:400">— recommended (cheapest + image analysis)</span></label>
-          <input type="password" id="s-gemini" value="" placeholder="${s.gemini_key_set ? '••••••••  (already set — paste to replace)' : 'AIza…'}"/>
-          <div style="font-size:11px;margin-top:5px;color:${s.gemini_key_set ? 'var(--green)' : 'var(--t3)'}">
-            ${s.gemini_key_set ? '✓ Gemini 2.5 Flash-Lite active — image analysis enabled' : 'Not set — get free key at <a href=\'https://aistudio.google.com\' target=\'_blank\' style=\'color:var(--accent)\'>aistudio.google.com</a>'}
+
+        <!-- Groq -->
+        <div class="api-key-row">
+          <div class="api-key-header">
+            <div>
+              <span class="api-key-name">⚡ Groq</span>
+              <span class="api-key-badge ${s.groq_key_set ? 'badge-active' : 'badge-missing'}">${s.groq_key_set ? '✓ Active' : '⚠ Not set'}</span>
+            </div>
+            <button class="btn btn-sm btn-test" onclick="testApiKey('groq')" id="test-groq-btn">Test</button>
           </div>
+          <div style="font-size:11px;color:var(--t3);margin-bottom:8px">Free text AI fallback · 14,400 req/day · <a href="https://console.groq.com" target="_blank" style="color:var(--accent)">Free key →</a></div>
+          <input type="password" id="s-groq" value="" placeholder="${s.groq_key_set ? '••••  saved — paste new key to replace' : 'gsk_…  (get free key at console.groq.com)'}"/>
+          <div id="groq-test-result" style="font-size:11px;margin-top:5px;display:none"></div>
         </div>
-        <div class="form-group">
-          <label>Groq key <span style="color:var(--t3);font-weight:400">(free fallback — 14,400 req/day, text-only)</span></label>
-          <input type="password" id="s-groq" value="" placeholder="${s.groq_key_set ? '••••••••  (already set — paste to replace)' : 'gsk_…'}"/>
-          <div style="font-size:11px;margin-top:5px;color:${s.groq_key_set ? 'var(--green)' : 'var(--t3)'}">
-            ${s.groq_key_set ? '✓ Groq Llama 3.3 70B active' : 'Not set — get free key at <a href=\'https://console.groq.com\' target=\'_blank\' style=\'color:var(--accent)\'>console.groq.com</a>'}
+
+        <!-- Clipdrop -->
+        <div class="api-key-row">
+          <div class="api-key-header">
+            <div>
+              <span class="api-key-name">🖼 Clipdrop</span>
+              <span class="api-key-badge ${s.clipdrop_key_set ? 'badge-active' : 'badge-missing'}">${s.clipdrop_key_set ? '✓ Active' : '⚠ Not set'}</span>
+            </div>
           </div>
+          <div style="font-size:11px;color:var(--t3);margin-bottom:8px">Remove Chinese watermarks from product images · 100 free/month · <a href="https://clipdrop.co/apis" target="_blank" style="color:var(--accent)">Get key →</a></div>
+          <input type="password" id="s-clipdrop" value="" placeholder="${s.clipdrop_key_set ? '••••  saved — paste new key to replace' : 'sk_…  (get key at clipdrop.co/apis)'}"/>
         </div>
-        <div class="form-group">
-          <label>Anthropic key <span style="color:var(--t3);font-weight:400">(fallback, text-only)</span></label>
-          <input type="password" id="s-anthropic" value="" placeholder="${s.anthropic_key_set ? '••••••••  (already set — paste to replace)' : 'sk-ant-…'}"/>
-          <div style="font-size:11px;margin-top:5px;color:${s.anthropic_key_set ? 'var(--green)' : 'var(--t3)'}">
-            ${s.anthropic_key_set ? '✓ Configured' : 'Not set'}
+
+        <!-- Apify -->
+        <div class="api-key-row" style="border-bottom:none">
+          <div class="api-key-header">
+            <div>
+              <span class="api-key-name">🕷 Apify</span>
+              <span class="api-key-badge ${s.apify_token_set ? 'badge-active' : 'badge-missing'}">${s.apify_token_set ? '✓ Active' : '⚠ Not set'}</span>
+            </div>
           </div>
+          <div style="font-size:11px;color:var(--t3);margin-bottom:8px">Product scraping from 1688/Taobao (optional — mock data used without it)</div>
+          <input type="password" id="s-apify" value="" placeholder="${s.apify_token_set ? '••••  saved — paste new key to replace' : 'apify_api_…'}"/>
         </div>
-        <div class="card-sm" style="margin-top:4px">
-          <div style="font-size:11px;color:var(--t3);line-height:1.6">
-            Priority: <b style="color:var(--t1)">Gemini</b> (image analysis) → Groq (free text fallback) → rule-based.<br>
-            Gemini is used first — it can see product photos for better scoring.<br>
-            Groq kicks in automatically if Gemini is unavailable (free, 14,400 req/day).
+
+        <div class="card-sm" style="margin-top:8px;background:rgba(var(--green-rgb,34,197,94),0.08);border-color:rgba(var(--green-rgb,34,197,94),0.2)">
+          <div style="font-size:11px;color:var(--t2);line-height:1.7">
+            <b style="color:var(--t1)">Priority:</b> Gemini first (image analysis) → Groq fallback (free) → rule-based.<br>
+            <b style="color:var(--t1)">Minimum:</b> Add Gemini key — it's 100% free at aistudio.google.com.<br>
+            <b style="color:var(--t1)">Tip:</b> After saving a key, click <b>Test</b> to verify it works.
           </div>
         </div>
       </div>
@@ -1442,9 +1467,9 @@ async function renderSettings() {
         </div>
         <div class="form-group">
           <label>2captcha API key <span style="color:var(--t3);font-weight:400">(optional — for auto captcha solve)</span></label>
-          <input type="password" id="s-captcha-key" value="${s.captcha_2captcha_key || ''}" placeholder="2captcha key…"/>
-          <div style="font-size:11px;margin-top:5px;color:var(--t3)">
-            ${s.captcha_2captcha_key ? '✓ Auto captcha enabled' : 'Not set — browser opens visibly on first login so you can solve captcha manually'}
+          <input type="password" id="s-captcha-key" value="" placeholder="${s.captcha_2captcha_key_set ? '••••  saved — paste to replace' : '2captcha key…'}"/>
+          <div style="font-size:11px;margin-top:5px;color:${s.captcha_2captcha_key_set ? 'var(--green)' : 'var(--t3)'}">
+            ${s.captcha_2captcha_key_set ? '✓ Auto captcha enabled' : 'Not set — browser opens visibly on first login so you can solve captcha manually'}
           </div>
         </div>
         <div class="card-sm" style="margin-top:4px">
@@ -1643,6 +1668,43 @@ async function restoreFromSheets() {
   }
 }
 
+async function testApiKey(provider) {
+  const btnId = `test-${provider}-btn`;
+  const resultId = `${provider}-test-result`;
+  const btn = document.getElementById(btnId);
+  const resultEl = document.getElementById(resultId);
+  if (!btn || !resultEl) return;
+
+  // Check if user typed a new key in the field
+  const inputId = provider === 'gemini' ? 's-gemini' : 's-groq';
+  const typedKey = document.getElementById(inputId)?.value?.trim() || '';
+
+  btn.disabled = true;
+  btn.textContent = 'Testing…';
+  resultEl.style.display = 'block';
+  resultEl.style.color = 'var(--t3)';
+  resultEl.textContent = 'Connecting…';
+
+  try {
+    const body = { provider };
+    if (typedKey) body.key = typedKey;
+    const res = await api('/ai/test', 'POST', body);
+    if (res.ok) {
+      resultEl.style.color = 'var(--green)';
+      resultEl.textContent = `✓ ${res.model || provider} working — ${res.latency_ms || '?'}ms`;
+    } else {
+      resultEl.style.color = 'var(--red)';
+      resultEl.textContent = `✗ ${res.error || 'Connection failed'}`;
+    }
+  } catch(e) {
+    resultEl.style.color = 'var(--red)';
+    resultEl.textContent = `✗ ${e.message || 'Request failed'}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Test';
+  }
+}
+
 async function saveSettings() {
   const saveBtn = document.getElementById('settings-save-btn');
   if (saveBtn) {
@@ -1689,6 +1751,7 @@ async function saveSettings() {
   includeIfNonEmpty(data, 'apify_token', g('s-apify')?.value);
   includeIfNonEmpty(data, 'gemini_key', g('s-gemini')?.value);
   includeIfNonEmpty(data, 'groq_key', g('s-groq')?.value);
+  includeIfNonEmpty(data, 'clipdrop_key', g('s-clipdrop')?.value);
   includeIfNonEmpty(data, 'anthropic_key', g('s-anthropic')?.value);
   includeIfNonEmpty(data, 'google_sheets_credentials', g('s-sheets-creds')?.value);
   includeIfNonEmpty(data, 'cssbuy_password', g('s-cssbuy-pass')?.value);

@@ -943,6 +943,61 @@ class ChatRequest(BaseModel):
     execute_approvals: Optional[bool] = False
 
 
+@app.post("/api/ai/test")
+async def test_ai_key(body: dict):
+    """Test if a Gemini or Groq API key works."""
+    import httpx, time
+    provider = (body.get("provider") or "gemini").lower()
+    settings = await _settings()
+
+    if provider == "gemini":
+        api_key = body.get("key") or settings.get("gemini_key") or ""
+        if not api_key:
+            return {"ok": False, "error": "No Gemini key — paste your key first or save it in Settings"}
+        start = time.time()
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(
+                    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent",
+                    headers={"x-goog-api-key": api_key, "content-type": "application/json"},
+                    json={"contents": [{"parts": [{"text": "Say OK"}]}],
+                          "generationConfig": {"max_output_tokens": 10}},
+                )
+            ms = int((time.time() - start) * 1000)
+            if resp.status_code == 200:
+                return {"ok": True, "model": "gemini-2.0-flash-lite", "latency_ms": ms}
+            else:
+                err = resp.json().get("error", {}).get("message", resp.text[:120])
+                return {"ok": False, "error": f"Gemini API error: {err}"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    elif provider == "groq":
+        api_key = body.get("key") or settings.get("groq_key") or ""
+        if not api_key:
+            return {"ok": False, "error": "No Groq key — paste your key first or save it in Settings"}
+        start = time.time()
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json={"model": "llama-3.3-70b-versatile",
+                          "messages": [{"role": "user", "content": "Say OK"}],
+                          "max_tokens": 5},
+                )
+            ms = int((time.time() - start) * 1000)
+            if resp.status_code == 200:
+                return {"ok": True, "model": "llama-3.3-70b-versatile", "latency_ms": ms}
+            else:
+                err = resp.json().get("error", {}).get("message", resp.text[:120])
+                return {"ok": False, "error": f"Groq API error: {err}"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    return {"ok": False, "error": "Unknown provider — use 'gemini' or 'groq'"}
+
+
 @app.post("/api/ai/chat")
 async def ai_chat(body: ChatRequest):
     """AI chat assistant — reviews products, answers questions, resurfaces gems."""

@@ -193,7 +193,7 @@ async def _gemini_chat(message: str, settings: dict) -> Optional[dict]:
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
-                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent",
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent",
                 headers={"x-goog-api-key": api_key, "content-type": "application/json"},
                 json={
                     "system_instruction": {"parts": [{"text": _SYSTEM}]},
@@ -206,7 +206,7 @@ async def _gemini_chat(message: str, settings: dict) -> Optional[dict]:
                 },
             )
         if resp.status_code != 200:
-            log.warning("Gemini chat %d: %s", resp.status_code, resp.text[:200])
+            log.warning("Gemini chat HTTP %d: %s", resp.status_code, resp.text[:400])
             return None
         text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
         text = re.sub(r"```json|```", "", text).strip()
