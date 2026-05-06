@@ -37,7 +37,7 @@ import sheets
 import ai_assistant
 import httpx
 from utils.google_auth import configure_google_credentials_from_env
-from worker import run_worker_loop
+from worker import run_worker_loop, process_queued_items
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
@@ -90,6 +90,7 @@ async def lifespan(app: FastAPI):
     
     # Start the autonomous worker loop
     asyncio.create_task(run_worker_loop())
+    asyncio.create_task(process_queued_items())
 
     if merged_settings.get("local_scraping_only"):
         log.info("Scheduler disabled: local scraping only mode is enabled")

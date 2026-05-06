@@ -5,6 +5,7 @@ from .database import db
 from .main import ProductStage
 from .services.enrichment import enrich_product
 from .services.images import process_image
+from .services.publisher import publish_to_instagram
 
 log = logging.getLogger(__name__)
 
@@ -69,3 +70,43 @@ async def run_worker_loop():
         except Exception as e:
             log.error(f"Worker loop error: {e}", exc_info=True)
             await asyncio.sleep(10)
+
+async def process_queued_items():
+    log.info("Started queued items publisher loop.")
+    while True:
+        try:
+            # Poll for QUEUED products
+            products = await db.get_products(stage=ProductStage.QUEUED.value, limit=5, sort="created")
+            for p in products:
+                pid = p["id"]
+                image_url = p.get("image_url")
+                
+                if not image_url:
+                    images = p.get("images")
+                    if images and isinstance(images, list):
+                        image_url = images[0]
+                
+                caption = p.get("caption", "")
+                hashtags = p.get("hashtags", [])
+                if hashtags:
+                    caption += "\n\n" + " ".join(hashtags)
+                
+                log.info(f"Publisher: Publishing product {pid}...")
+                try:
+                    await publish_to_instagram(image_url, caption)
+                    await db.set_stage(pid, ProductStage.LIVE.value)
+                    log.info(f"Publisher: Product {pid} published successfully. Moved to LIVE.")
+                except Exception as e:
+                    log.error(f"Publisher: Failed to publish {pid}: {e}")
+                    # Could set to REJECTED or add a retry count if desired.
+                    pass
+                    
+            # Wait 60 seconds if no products, else shorter
+            await asyncio.sleep(60 if not products else 5)
+            
+        except asyncio.CancelledError:
+            log.info("Publisher loop cancelled.")
+            break
+        except Exception as e:
+            log.error(f"Publisher loop error: {e}", exc_info=True)
+            await asyncio.sleep(60)
