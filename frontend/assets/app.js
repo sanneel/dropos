@@ -14,6 +14,7 @@ const IC = {
   check: `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
   analytics: `<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>`,
   chat: `<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
+  catalog: `<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>`,
 };
 
 // ── State ──────────────────────────────────────────────────────────────────
@@ -31,6 +32,7 @@ let scanSource   = 'taobao';
 let activeJob = null;
 let settingsData = {};
 let rejectTargetId = null;
+let catalogProducts = [], catalogTotal = 0, catalogStage = 'approved', catalogSearch = '', catalogPage = 0;
 
 // ── Nav ────────────────────────────────────────────────────────────────────
 const NAV_PAGES = [
@@ -41,6 +43,7 @@ const NAV_PAGES = [
   { id:'textEdit',  label:'Text edit',    icon:'settings',  stageKey:'text_edit' },
   { id:'approved',  label:'Approved',     icon:'approved',  stageKey:'approved' },
   { id:'posted',    label:'Posted',       icon:'posted'     },
+  { id:'catalog',   label:'Catalog',      icon:'catalog',   section:'Catalog'   },
   { id:'rejected',  label:'Rejected',     icon:'rejected'   },
   { id:'settings',  label:'Settings',     icon:'settings',  section:'Config'    },
   { id:'analytics', label:'Analytics',   icon:'analytics', section:'Tools'    },
@@ -94,7 +97,29 @@ function navigate(page) {
 }
 
 function imageUrl(src) {
+  if (src && src.startsWith('/')) return src;
   return src ? `/api/image?url=${encodeURIComponent(src)}` : '';
+}
+
+function firstImage(p = {}) {
+  const candidates = [p.images, p.image_urls, p.image_url, p.photo_link, p.raw_data?.images, p.raw_data?.image_url];
+  for (const value of candidates) {
+    if (Array.isArray(value)) {
+      const found = value.find(Boolean);
+      if (found) return String(found);
+    } else if (typeof value === 'string' && value.trim()) {
+      const trimmed = value.trim();
+      if (trimmed.startsWith('[')) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          const found = Array.isArray(parsed) ? parsed.find(Boolean) : '';
+          if (found) return String(found);
+        } catch(e) {}
+      }
+      return trimmed;
+    }
+  }
+  return '';
 }
 
 function setTitle(t, sub = '') {
@@ -124,6 +149,37 @@ function apiErrorMessage(text, status) {
 }
 
 // ── API ────────────────────────────────────────────────────────────────────
+// ── Client-side cache ─────────────────────────────────────────────────────────
+const _cache = {};
+const CACHE_TTL = { stats: 30000, products: 60000, analytics: 45000, default: 30000 };
+
+function _cacheKey(path) { return path; }
+function _cacheTtl(path) {
+  if (path.includes('/stats')) return CACHE_TTL.stats;
+  if (path.includes('/products')) return CACHE_TTL.products;
+  if (path.includes('/analytics')) return CACHE_TTL.analytics;
+  return CACHE_TTL.default;
+}
+function _cacheGet(path) {
+  const e = _cache[_cacheKey(path)];
+  if (!e) return null;
+  if (Date.now() - e.ts > _cacheTtl(path)) { delete _cache[_cacheKey(path)]; return null; }
+  return e.data;
+}
+function _cacheSet(path, data) { _cache[_cacheKey(path)] = { ts: Date.now(), data }; }
+function _cacheInvalidate(...patterns) {
+  for (const pat of patterns)
+    Object.keys(_cache).forEach(k => { if (k.includes(pat)) delete _cache[k]; });
+}
+
+async function cachedApi(path) {
+  const hit = _cacheGet(path);
+  if (hit !== null) return hit;
+  const data = await api(path);
+  _cacheSet(path, data);
+  return data;
+}
+
 async function api(path, method = 'GET', body = null) {
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
   if (body !== null) opts.body = JSON.stringify(body);
@@ -554,7 +610,7 @@ function renderTextEditGrid() {
 // ── Product card ───────────────────────────────────────────────────────────
 function productCard(p, mode) {
   const sel = selectedProducts.has(p.id);
-  const img = imageUrl((p.images || [])[0] || '');
+  const img = imageUrl(firstImage(p));
   const score = p.score || 0;
   const sc = score >= 8 ? 'hi' : score >= 7 ? 'mi' : 'lo';
 
@@ -568,7 +624,7 @@ function productCard(p, mode) {
   }
 
   if (mode === 'text_edit') {
-    actions = `<button class="pca-post" onclick="event.stopPropagation();markTextEdited(${p.id})">Cleaned</button>
+    actions = `<button class="pca-clean" id="clean-btn-${p.id}" onclick="event.stopPropagation();cleanImage(${p.id},this)">🧹 Clean</button>
                <button class="pca-reject" onclick="event.stopPropagation();showRejectModal(${p.id})">Reject</button>`;
   }
 
@@ -613,8 +669,6 @@ function productCard(p, mode) {
 function toggleSel(id) {
   if (selectedProducts.has(id)) {
     selectedProducts.delete(id);
-  } else if (mode === 'text_edit') {
-    actions = `<button class="btn btn-green" onclick="batchMarkTextEdited()">Mark cleaned ${n}</button>`;
   } else {
     if (selectedProducts.size >= 10) { toast('Max 10 at once', 'error'); return; }
     selectedProducts.add(id);
@@ -653,7 +707,8 @@ function updateSelBar(mode = 'approve') {
   const n = selectedProducts.size;
   let actions = '';
   if (mode === 'post') {
-    actions = `<button class="btn btn-primary" onclick="batchPost()">Post ${n} →</button>`;
+    actions = `<button class="btn btn-primary" onclick="batchPost()">Post ${n} →</button>
+      ${n >= 2 && n <= 6 ? `<button class="btn btn-collage" onclick="postCollage([...selectedProducts])">📸 Collage (${n})</button>` : ''}`;
   } else {
     actions = `<button class="btn btn-green" onclick="batchApprove()">Approve ${n}</button>
                <button class="btn btn-danger" onclick="batchReject()">Reject ${n}</button>`;
@@ -665,6 +720,7 @@ function updateSelBar(mode = 'approve') {
 }
 
 async function batchApprove() {
+  _cacheInvalidate('/products', '/stats');
   const ids = [...selectedProducts];
   try {
     const res = await api('/approve', 'POST', { product_ids: ids });
@@ -718,6 +774,7 @@ async function batchPost() {
 }
 
 async function quickApprove(id) {
+  _cacheInvalidate('/products', '/stats');
   try {
     const res = await api(`/products/${id}/approve`, 'POST');
     toast(res.stage === 'text_edit' ? 'Moved to Text edit' : 'Approved', 'success');
@@ -728,6 +785,67 @@ async function quickApprove(id) {
     renderQueueGrid();
     refreshStats();
   } catch(e) {}
+}
+
+// ── Clipdrop image clean ──────────────────────────────────────────────────────
+async function cleanImage(id, btn) {
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="clean-spinner"></span> Cleaning…'; }
+  try {
+    const r = await api(`/products/${id}/remove-text`, 'POST');
+    if (r.ok) {
+      toast('✅ Image cleaned & approved!', 'success');
+      _cacheInvalidate('/products', '/stats');
+      await refreshStats();
+      const card = document.getElementById(`card-${id}`);
+      if (card) { card.style.transition = 'opacity .5s'; card.style.opacity = '0'; setTimeout(() => card.remove(), 500); }
+    } else {
+      toast(r.detail || r.error || 'Clean failed — check Clipdrop key in Settings', 'error');
+      if (btn) { btn.disabled = false; btn.innerHTML = '🧹 Clean'; }
+    }
+  } catch(e) {
+    toast('Clean failed: ' + (e.message || 'Unknown'), 'error');
+    if (btn) { btn.disabled = false; btn.innerHTML = '🧹 Clean'; }
+  }
+}
+
+async function batchCleanImages(btn) {
+  if (!selectedProducts.size) { toast('Select products first', 'error'); return; }
+  const ids = [...selectedProducts];
+  if (btn) { btn.disabled = true; btn.textContent = `Cleaning ${ids.length}…`; }
+  let done = 0, failed = 0;
+  for (const id of ids) {
+    try {
+      const r = await api(`/products/${id}/remove-text`, 'POST');
+      if (r.ok) done++; else failed++;
+    } catch { failed++; }
+  }
+  toast(done > 0 ? `✅ Cleaned ${done}/${ids.length} images` : `❌ Clean failed — check Clipdrop key`, done > 0 ? 'success' : 'error');
+  selectedProducts.clear();
+  _cacheInvalidate('/products', '/stats');
+  await refreshStats();
+  loadTextEdit();
+}
+
+// ── Collage posting ────────────────────────────────────────────────────────────
+async function postCollage(ids) {
+  if (!ids || ids.length < 2) { toast('Select 2–6 approved products for a collage', 'error'); return; }
+  const use = [...ids].slice(0, 6);
+  if (!confirm(`Create a collage from ${use.length} product photos and post to Instagram?`)) return;
+  toast('📸 Generating collage…', 'info');
+  try {
+    const r = await api('/collage/post', 'POST', { product_ids: use });
+    if (r.ok) {
+      toast('🎉 Collage posted to Instagram!', 'success');
+      _cacheInvalidate('/products', '/stats');
+      await refreshStats();
+      selectedProducts.clear();
+      loadApproved();
+    } else {
+      toast(r.detail || r.error || 'Collage failed — check Instagram token in Settings', 'error');
+    }
+  } catch(e) {
+    toast('Collage error: ' + (e.message || 'Unknown'), 'error');
+  }
 }
 
 async function markTextEdited(id) {
@@ -842,7 +960,7 @@ async function showDetail(id) {
     actionHtml = `<button class="btn btn-primary" style="flex:1" onclick="quickPost(${p.id})">Post to Instagram →</button>
                   <button class="btn btn-danger" onclick="showRejectModal(${p.id})">Reject</button>`;
   else if (stage === 'text_edit')
-    actionHtml = `<button class="btn btn-green" style="flex:1" onclick="markTextEdited(${p.id})">Mark cleaned</button>
+    actionHtml = `<button class="btn btn-green" style="flex:1" id="clean-btn-${p.id}" onclick="cleanImage(${p.id},this)">🧹 Clean image</button>
                   <button class="btn btn-danger" onclick="showRejectModal(${p.id})">Reject</button>`;
   else if (stage === 'rejected')
     actionHtml = `<button class="btn btn-amber" style="flex:1" onclick="reconsider(${p.id})">Move back to queue</button>`;
@@ -1174,11 +1292,11 @@ async function renderSettings() {
         </div>
         <div class="form-group">
           <label>Page Access Token</label>
-          <input type="password" id="s-ig-token" value="${s.instagram_access_token || ''}" placeholder="EAABs…"/>
-          <div style="font-size:11px;margin-top:5px;color:${s.instagram_access_token && s.instagram_user_id ? 'var(--green)' : 'var(--t3)'}">
-            ${s.instagram_access_token && s.instagram_user_id
+          <input type="password" id="s-ig-token" value="" placeholder="${s.instagram_access_token_set ? '••••  saved — paste to replace' : 'EAABs…'}"/>
+          <div style="font-size:11px;margin-top:5px;color:${s.instagram_access_token_set && s.instagram_user_id ? 'var(--green)' : 'var(--t3)'}">
+            ${s.instagram_access_token_set && s.instagram_user_id
               ? '✓ Graph API configured — posts will publish directly to Instagram'
-              : 'Not set — posts will be simulated'}
+              : 'Not set — posts will be simulated (add token + account ID above)'}
           </div>
         </div>
         <div class="form-group">
@@ -1318,40 +1436,65 @@ async function renderSettings() {
       </div>
 
       <div class="card">
-        <div class="card-title">API keys</div>
-        <div class="form-group">
-          <label>Apify token</label>
-          <input type="password" id="s-apify" value="${s.apify_token || ''}" placeholder="apify_api_…"/>
-          <div style="font-size:11px;margin-top:5px;color:${s.apify_token ? 'var(--green)' : 'var(--t3)'}">
-            ${s.apify_token ? '✓ Configured' : 'Not set — mock data will be used'}
+        <div class="card-title">AI &amp; API keys</div>
+
+        <!-- Gemini -->
+        <div class="api-key-row">
+          <div class="api-key-header">
+            <div>
+              <span class="api-key-name">🤖 Gemini AI</span>
+              <span class="api-key-badge ${s.gemini_key_set ? 'badge-active' : 'badge-missing'}">${s.gemini_key_set ? '✓ Active' : '⚠ Not set'}</span>
+            </div>
+            <button class="btn btn-sm btn-test" onclick="testApiKey('gemini')" id="test-gemini-btn">Test</button>
           </div>
+          <div style="font-size:11px;color:var(--t3);margin-bottom:8px">Image analysis · AI assistant · product scoring · <a href="https://aistudio.google.com" target="_blank" style="color:var(--accent)">Free key →</a></div>
+          <input type="password" id="s-gemini" value="" placeholder="${s.gemini_key_set ? '••••  saved — paste new key to replace' : 'AIzaSy…  (get free key at aistudio.google.com)'}"/>
+          <div id="gemini-test-result" style="font-size:11px;margin-top:5px;display:none"></div>
         </div>
-        <div class="form-group">
-          <label>Gemini key <span style="color:var(--green);font-weight:400">— recommended (cheapest + image analysis)</span></label>
-          <input type="password" id="s-gemini" value="${s.gemini_key || ''}" placeholder="AIza…"/>
-          <div style="font-size:11px;margin-top:5px;color:${s.gemini_key ? 'var(--green)' : 'var(--t3)'}">
-            ${s.gemini_key ? '✓ Gemini 2.5 Flash-Lite active — image analysis enabled' : 'Not set — get free key at aistudio.google.com'}
+
+        <!-- Groq -->
+        <div class="api-key-row">
+          <div class="api-key-header">
+            <div>
+              <span class="api-key-name">⚡ Groq</span>
+              <span class="api-key-badge ${s.groq_key_set ? 'badge-active' : 'badge-missing'}">${s.groq_key_set ? '✓ Active' : '⚠ Not set'}</span>
+            </div>
+            <button class="btn btn-sm btn-test" onclick="testApiKey('groq')" id="test-groq-btn">Test</button>
           </div>
+          <div style="font-size:11px;color:var(--t3);margin-bottom:8px">Free text AI fallback · 14,400 req/day · <a href="https://console.groq.com" target="_blank" style="color:var(--accent)">Free key →</a></div>
+          <input type="password" id="s-groq" value="" placeholder="${s.groq_key_set ? '••••  saved — paste new key to replace' : 'gsk_…  (get free key at console.groq.com)'}"/>
+          <div id="groq-test-result" style="font-size:11px;margin-top:5px;display:none"></div>
         </div>
-        <div class="form-group">
-          <label>Groq key <span style="color:var(--t3);font-weight:400">(free fallback — 14,400 req/day, text-only)</span></label>
-          <input type="password" id="s-groq" value="${s.groq_key || ''}" placeholder="gsk_…"/>
-          <div style="font-size:11px;margin-top:5px;color:${s.groq_key ? 'var(--green)' : 'var(--t3)'}">
-            ${s.groq_key ? '✓ Groq Llama 3.3 70B active' : 'Not set — get free key at console.groq.com'}
+
+        <!-- Clipdrop -->
+        <div class="api-key-row">
+          <div class="api-key-header">
+            <div>
+              <span class="api-key-name">🖼 Clipdrop</span>
+              <span class="api-key-badge ${s.clipdrop_key_set ? 'badge-active' : 'badge-missing'}">${s.clipdrop_key_set ? '✓ Active' : '⚠ Not set'}</span>
+            </div>
           </div>
+          <div style="font-size:11px;color:var(--t3);margin-bottom:8px">Remove Chinese watermarks from product images · 100 free/month · <a href="https://clipdrop.co/apis" target="_blank" style="color:var(--accent)">Get key →</a></div>
+          <input type="password" id="s-clipdrop" value="" placeholder="${s.clipdrop_key_set ? '••••  saved — paste new key to replace' : 'sk_…  (get key at clipdrop.co/apis)'}"/>
         </div>
-        <div class="form-group">
-          <label>Anthropic key <span style="color:var(--t3);font-weight:400">(fallback, text-only)</span></label>
-          <input type="password" id="s-anthropic" value="${s.anthropic_key || ''}" placeholder="sk-ant-…"/>
-          <div style="font-size:11px;margin-top:5px;color:${s.anthropic_key ? 'var(--green)' : 'var(--t3)'}">
-            ${s.anthropic_key ? '✓ Claude Haiku fallback active' : 'Not set'}
+
+        <!-- Apify -->
+        <div class="api-key-row" style="border-bottom:none">
+          <div class="api-key-header">
+            <div>
+              <span class="api-key-name">🕷 Apify</span>
+              <span class="api-key-badge ${s.apify_token_set ? 'badge-active' : 'badge-missing'}">${s.apify_token_set ? '✓ Active' : '⚠ Not set'}</span>
+            </div>
           </div>
+          <div style="font-size:11px;color:var(--t3);margin-bottom:8px">Product scraping from 1688/Taobao (optional — mock data used without it)</div>
+          <input type="password" id="s-apify" value="" placeholder="${s.apify_token_set ? '••••  saved — paste new key to replace' : 'apify_api_…'}"/>
         </div>
-        <div class="card-sm" style="margin-top:4px">
-          <div style="font-size:11px;color:var(--t3);line-height:1.6">
-            Priority: <b style="color:var(--t1)">Groq</b> → Gemini → Anthropic → mock rule-based.<br>
-            Groq is used first to avoid Gemini quota delays.<br>
-            Gemini is only used if Groq is unavailable and will fall back immediately on quota errors.
+
+        <div class="card-sm" style="margin-top:8px;background:rgba(var(--green-rgb,34,197,94),0.08);border-color:rgba(var(--green-rgb,34,197,94),0.2)">
+          <div style="font-size:11px;color:var(--t2);line-height:1.7">
+            <b style="color:var(--t1)">Priority:</b> Gemini first (image analysis) → Groq fallback (free) → rule-based.<br>
+            <b style="color:var(--t1)">Minimum:</b> Add Gemini key — it's 100% free at aistudio.google.com.<br>
+            <b style="color:var(--t1)">Tip:</b> After saving a key, click <b>Test</b> to verify it works.
           </div>
         </div>
       </div>
@@ -1406,9 +1549,9 @@ async function renderSettings() {
         </div>
         <div class="form-group">
           <label>2captcha API key <span style="color:var(--t3);font-weight:400">(optional — for auto captcha solve)</span></label>
-          <input type="password" id="s-captcha-key" value="${s.captcha_2captcha_key || ''}" placeholder="2captcha key…"/>
-          <div style="font-size:11px;margin-top:5px;color:var(--t3)">
-            ${s.captcha_2captcha_key ? '✓ Auto captcha enabled' : 'Not set — browser opens visibly on first login so you can solve captcha manually'}
+          <input type="password" id="s-captcha-key" value="" placeholder="${s.captcha_2captcha_key_set ? '••••  saved — paste to replace' : '2captcha key…'}"/>
+          <div style="font-size:11px;margin-top:5px;color:${s.captcha_2captcha_key_set ? 'var(--green)' : 'var(--t3)'}">
+            ${s.captcha_2captcha_key_set ? '✓ Auto captcha enabled' : 'Not set — browser opens visibly on first login so you can solve captcha manually'}
           </div>
         </div>
         <div class="card-sm" style="margin-top:4px">
@@ -1607,6 +1750,43 @@ async function restoreFromSheets() {
   }
 }
 
+async function testApiKey(provider) {
+  const btnId = `test-${provider}-btn`;
+  const resultId = `${provider}-test-result`;
+  const btn = document.getElementById(btnId);
+  const resultEl = document.getElementById(resultId);
+  if (!btn || !resultEl) return;
+
+  // Check if user typed a new key in the field
+  const inputId = provider === 'gemini' ? 's-gemini' : 's-groq';
+  const typedKey = document.getElementById(inputId)?.value?.trim() || '';
+
+  btn.disabled = true;
+  btn.textContent = 'Testing…';
+  resultEl.style.display = 'block';
+  resultEl.style.color = 'var(--t3)';
+  resultEl.textContent = 'Connecting…';
+
+  try {
+    const body = { provider };
+    if (typedKey) body.key = typedKey;
+    const res = await api('/ai/test', 'POST', body);
+    if (res.ok) {
+      resultEl.style.color = 'var(--green)';
+      resultEl.textContent = `✓ ${res.model || provider} working — ${res.latency_ms || '?'}ms`;
+    } else {
+      resultEl.style.color = 'var(--red)';
+      resultEl.textContent = `✗ ${res.error || 'Connection failed'}`;
+    }
+  } catch(e) {
+    resultEl.style.color = 'var(--red)';
+    resultEl.textContent = `✗ ${e.message || 'Request failed'}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Test';
+  }
+}
+
 async function saveSettings() {
   const saveBtn = document.getElementById('settings-save-btn');
   if (saveBtn) {
@@ -1653,6 +1833,7 @@ async function saveSettings() {
   includeIfNonEmpty(data, 'apify_token', g('s-apify')?.value);
   includeIfNonEmpty(data, 'gemini_key', g('s-gemini')?.value);
   includeIfNonEmpty(data, 'groq_key', g('s-groq')?.value);
+  includeIfNonEmpty(data, 'clipdrop_key', g('s-clipdrop')?.value);
   includeIfNonEmpty(data, 'anthropic_key', g('s-anthropic')?.value);
   includeIfNonEmpty(data, 'google_sheets_credentials', g('s-sheets-creds')?.value);
   includeIfNonEmpty(data, 'cssbuy_password', g('s-cssbuy-pass')?.value);
@@ -1660,8 +1841,10 @@ async function saveSettings() {
   includeIfNonEmpty(data, 'ingest_api_token', g('s-ingest-token')?.value);
   try {
     await api('/settings', 'PATCH', data);
-    toast('Settings saved', 'success');
+    toast('Settings saved ✓', 'success');
     loadSchedulerStatus();
+    // Reload settings page to show updated key status indicators
+    setTimeout(() => renderSettings(), 400);
   } catch (e) {
     toast(`Settings save failed: ${e.message || e}`, 'error');
   } finally {
@@ -1850,7 +2033,242 @@ const PAGE_RENDERERS = {
   settings:  renderSettings,
   analytics: renderAnalytics,
   chat:      renderChat,
+  catalog:   renderCatalog,
 };
+
+function _fadeIn() {
+  const c = document.getElementById('content');
+  if (!c) return;
+  c.style.opacity = '0';
+  c.style.transition = 'opacity 0.15s ease';
+  requestAnimationFrame(() => { c.style.opacity = '1'; });
+}
+
+
+// ── Catalog ───────────────────────────────────────────────────────────────
+
+let _catalogEditId = null;
+
+async function renderCatalog() {
+  setTitle('Catalog', 'edit products & sync to Google Sheets');
+  document.getElementById('topbar-actions').innerHTML = `
+    <button class="btn btn-sm" onclick="loadCatalog()">↻ Refresh</button>`;
+  catalogPage = 0;
+  catalogProducts = [];
+  await loadCatalog();
+}
+
+async function loadCatalog(append = false) {
+  const offset = append ? catalogProducts.length : 0;
+  const stage = catalogStage === 'all' ? '' : catalogStage;
+  const q = catalogSearch ? `&search=${encodeURIComponent(catalogSearch)}` : '';
+  const stageParam = stage ? `stage=${stage}&` : 'stage=approved&stage=posted&';
+  // Use multi-stage fetch: approved + posted if "all"
+  let products = [], total = 0;
+  if (catalogStage === 'all') {
+    const [a, p] = await Promise.all([
+      api(`/products?stage=approved&limit=50&offset=${offset}&sort=created`).catch(() => ({ products: [], total: 0 })),
+      api(`/products?stage=posted&limit=50&offset=${offset}&sort=created`).catch(() => ({ products: [], total: 0 })),
+    ]);
+    products = [...a.products, ...p.products];
+    total = a.total + p.total;
+  } else {
+    const data = await api(`/products?stage=${catalogStage}&limit=50&offset=${offset}&sort=created`).catch(() => ({ products: [], total: 0 }));
+    products = data.products;
+    total = data.total;
+  }
+  // Client-side search filter
+  if (catalogSearch) {
+    const q = catalogSearch.toLowerCase();
+    products = products.filter(p =>
+      (p.title_translated || '').toLowerCase().includes(q) ||
+      (p.product_name || '').toLowerCase().includes(q) ||
+      (p.category || '').toLowerCase().includes(q) ||
+      (p.caption || '').toLowerCase().includes(q)
+    );
+    total = products.length;
+  }
+  catalogProducts = append ? catalogProducts.concat(products) : products;
+  catalogTotal = total;
+  renderCatalogTable();
+}
+
+function renderCatalogTable() {
+  const el = document.getElementById('content');
+  const canMore = !catalogSearch && catalogProducts.length < catalogTotal;
+
+  el.innerHTML = `
+    <div class="catalog-toolbar">
+      <div class="catalog-tabs">
+        <button class="cat-tab${catalogStage==='approved'?' active':''}" onclick="setCatalogStage('approved')">✅ Approved</button>
+        <button class="cat-tab${catalogStage==='posted'?' active':''}" onclick="setCatalogStage('posted')">📤 Posted</button>
+        <button class="cat-tab${catalogStage==='all'?' active':''}" onclick="setCatalogStage('all')">All</button>
+      </div>
+      <div class="catalog-search">
+        <input type="text" id="catalog-search-input" placeholder="Search by name, category…"
+          value="${catalogSearch}"
+          oninput="debCatalogSearch(this.value)"
+          style="width:220px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:12px">
+      </div>
+      <span style="font-size:12px;color:var(--t3);margin-left:auto">${catalogProducts.length} products${!catalogSearch && catalogTotal > catalogProducts.length ? ' of ' + catalogTotal : ''}</span>
+    </div>
+    ${catalogProducts.length === 0 ? `
+      <div class="empty" style="margin-top:48px">
+        <span class="empty-icon">🗂️</span>
+        <h3>No products found</h3>
+        <p>${catalogSearch ? 'Try a different search' : 'Approve products from the review queue first'}</p>
+      </div>` : `
+    <div class="catalog-table-wrap">
+      <table class="catalog-table">
+        <thead>
+          <tr>
+            <th style="width:60px">Photo</th>
+            <th>Name</th>
+            <th style="width:90px">Price (₾)</th>
+            <th style="width:80px">Stage</th>
+            <th style="width:60px">Score</th>
+            <th>Caption</th>
+            <th style="width:80px">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="catalog-tbody">
+          ${catalogProducts.map(p => catalogRow(p)).join('')}
+        </tbody>
+      </table>
+    </div>
+    ${canMore ? `<div style="text-align:center;margin-top:20px">
+      <button class="btn" onclick="loadCatalog(true)">Load more (${catalogTotal - catalogProducts.length} remaining)</button>
+    </div>` : ''}
+    `}
+  `;
+}
+
+function catalogRow(p, editMode = false) {
+  const img = (p.images || [])[0];
+  const name = p.product_name || p.title_translated || '—';
+  const price = p.sell_price_eur ?? 0;
+  const caption = p.caption || '';
+  const stageBadge = p.stage === 'posted'
+    ? '<span class="badge" style="background:#3b82f6;color:#fff">Posted</span>'
+    : '<span class="badge badge-green">Approved</span>';
+  const score = (p.score ?? 0).toFixed(1);
+
+  if (editMode) {
+    return `<tr id="cat-row-${p.id}" class="cat-row editing">
+      <td>
+        ${img ? `<img src="${imageUrl(img)}" class="cat-thumb" onerror="this.style.display='none'">` : '<div class="cat-thumb-ph">?</div>'}
+      </td>
+      <td>
+        <input id="cat-name-${p.id}" class="cat-input" type="text" value="${escHtml(name)}" placeholder="Product name">
+      </td>
+      <td>
+        <input id="cat-price-${p.id}" class="cat-input cat-price-input" type="number" step="0.01" min="0" value="${price}" placeholder="0.00">
+      </td>
+      <td>${stageBadge}</td>
+      <td><span class="badge badge-purple">${score}</span></td>
+      <td>
+        <textarea id="cat-caption-${p.id}" class="cat-input cat-caption-input" placeholder="Caption for Instagram">${escHtml(caption)}</textarea>
+      </td>
+      <td>
+        <button class="btn btn-sm" style="background:var(--green);color:#fff;margin-bottom:4px" onclick="saveCatalogRow(${p.id})">💾 Save</button>
+        <button class="btn btn-sm" onclick="cancelCatalogEdit(${p.id})">✕</button>
+      </td>
+    </tr>`;
+  }
+
+  return `<tr id="cat-row-${p.id}" class="cat-row">
+    <td>
+      ${img ? `<img src="${imageUrl(img)}" class="cat-thumb" onerror="this.style.display='none'">` : '<div class="cat-thumb-ph">?</div>'}
+    </td>
+    <td>
+      <div class="cat-name">${escHtml(name)}</div>
+      <div style="font-size:10px;color:var(--t3)">${escHtml(p.category || p.keyword || '')}</div>
+    </td>
+    <td>
+      <span class="cat-price-display">₾${price}</span>
+    </td>
+    <td>${stageBadge}</td>
+    <td><span class="badge badge-purple">${score}</span></td>
+    <td>
+      <div class="cat-caption-preview">${escHtml(caption.slice(0, 80))}${caption.length > 80 ? '…' : ''}</div>
+    </td>
+    <td>
+      <button class="btn btn-sm" onclick="editCatalogRow(${p.id})">✏️ Edit</button>
+    </td>
+  </tr>`;
+}
+
+function escHtml(s) {
+  return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function editCatalogRow(id) {
+  if (_catalogEditId && _catalogEditId !== id) cancelCatalogEdit(_catalogEditId);
+  _catalogEditId = id;
+  const p = catalogProducts.find(x => x.id === id);
+  if (!p) return;
+  const row = document.getElementById(`cat-row-${id}`);
+  if (row) row.outerHTML = catalogRow(p, true);
+}
+
+function cancelCatalogEdit(id) {
+  const p = catalogProducts.find(x => x.id === id);
+  if (!p) return;
+  const row = document.getElementById(`cat-row-${id}`);
+  if (row) row.outerHTML = catalogRow(p, false);
+  _catalogEditId = null;
+}
+
+async function saveCatalogRow(id) {
+  const name = document.getElementById(`cat-name-${id}`)?.value?.trim();
+  const price = parseFloat(document.getElementById(`cat-price-${id}`)?.value || '0');
+  const caption = document.getElementById(`cat-caption-${id}`)?.value?.trim();
+
+  const btn = document.querySelector(`#cat-row-${id} .btn`);
+  if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
+
+  try {
+    const result = await api(`/products/${id}`, 'PATCH', {
+      product_name: name,
+      sell_price_eur: isNaN(price) ? undefined : price,
+      caption: caption,
+    });
+
+    // Update local state
+    const idx = catalogProducts.findIndex(x => x.id === id);
+    if (idx >= 0) {
+      catalogProducts[idx] = { ...catalogProducts[idx], ...result.product };
+      const row = document.getElementById(`cat-row-${id}`);
+      if (row) row.outerHTML = catalogRow(catalogProducts[idx], false);
+    }
+    _catalogEditId = null;
+    toast('✅ Saved & synced to Sheets', 'success');
+  } catch(e) {
+    toast('❌ ' + (e.message || 'Save failed'), 'error');
+    const btn2 = document.querySelector(`#cat-row-${id} .btn`);
+    if (btn2) { btn2.textContent = '💾 Save'; btn2.disabled = false; }
+  }
+}
+
+function setCatalogStage(stage) {
+  catalogStage = stage;
+  catalogPage = 0;
+  catalogProducts = [];
+  loadCatalog();
+}
+
+let _catalogSearchTimer = null;
+function debCatalogSearch(val) {
+  catalogSearch = val;
+  clearTimeout(_catalogSearchTimer);
+  _catalogSearchTimer = setTimeout(() => {
+    catalogPage = 0;
+    catalogProducts = [];
+    loadCatalog();
+  }, 350);
+}
+
+
 
 async function renderPage() {
   const fn = PAGE_RENDERERS[currentPage];
@@ -2020,8 +2438,11 @@ let chatHistory = [];
 let chatPending = false;
 
 const QUICK_ACTIONS = [
+  { label: '🔍 Review pending', msg: 'Review all my pending products and tell me which to approve and which to reject.' },
   { label: '🔍 Find rejected gems', msg: 'Review all rejected products and find any that were wrongly rejected or have borderline scores worth reconsidering.' },
-  { label: '📊 Today's summary', msg: 'Give me a brief summary of the current pipeline status and any recommendations.' },
+  { label: "📊 Today's summary", msg: "Give me a brief summary of the current pipeline status and any recommendations." },
+  { label: '✅ Show approved', msg: 'Show me all currently approved products so I can review them.' },
+  { label: '📝 Edit pending titles', msg: 'Look at my pending products and suggest better, more premium English titles and prices for them.' },
   { label: '🔑 Keyword advice', msg: 'Based on keyword performance, what keywords should I add, remove or prioritise?' },
   { label: '✨ Best candidates', msg: 'From the rejected products, which 5-10 are the best candidates to reconsider? List them with IDs.' },
 ];
@@ -2034,33 +2455,156 @@ function chatAppend(role, text, meta = {}) {
 function renderChatMessages() {
   const el = document.getElementById('chat-messages');
   if (!el) return;
-  el.innerHTML = chatHistory.map(m => {
+  el.innerHTML = chatHistory.map((m, idx) => {
     if (m.role === 'user') {
       return `<div class="chat-msg user"><div class="chat-bubble">${escHtml(m.text)}</div></div>`;
     }
     // Assistant message
     let actions = '';
-    if (m.meta?.action === 'reconsider' && (m.meta?.product_ids||[]).length) {
-      actions = `<button class="chat-action-btn" onclick="chatReconsider(${JSON.stringify(m.meta.product_ids)})">
-        ♻️ Reconsider ${m.meta.product_ids.length} products
-      </button>`;
+    const meta = m.meta || {};
+
+    if (meta.action === 'reconsider' && (meta.product_ids||[]).length) {
+      actions += `<button class="chat-action-btn" onclick="chatReconsider(${JSON.stringify(meta.product_ids)})">♻️ Reconsider ${meta.product_ids.length} products</button>`;
     }
-    if (m.meta?.action === 'show_products' && (m.meta?.product_ids||[]).length) {
-      actions = `<button class="chat-action-btn" onclick="navigate('rejected')">
-        👀 View rejected products
-      </button>`;
+    if (meta.action === 'show_products' && (meta.product_ids||[]).length) {
+      actions += `<button class="chat-action-btn" onclick="navigate('rejected')">👀 View rejected products</button>`;
     }
-    const suggestion = m.meta?.suggestion ? `<div class="chat-suggestion">${escHtml(m.meta.suggestion)}</div>` : '';
+    if (meta.action === 'approve_products' && (meta.product_ids||[]).length) {
+      actions += `<button class="chat-action-btn approve-btn" onclick="chatApproveProducts(${JSON.stringify(meta.product_ids)})">✅ Approve ${meta.product_ids.length} products</button>`;
+    }
+    if (meta.action === 'edit_products' && (meta.edits||[]).length) {
+      actions += `<button class="chat-action-btn" onclick="chatApplyEdits(${idx})">💾 Apply ${meta.edits.length} edits</button>`;
+    }
+
+    // Inline product cards for list_products
+    let productCards = '';
+    if ((meta.action === 'list_products' || meta.action === 'show_products' || meta.action === 'review_pending') && (meta.products||[]).length) {
+      const prods = meta.products || [];
+      productCards = `<div class="chat-product-grid">${prods.map(p => renderChatProductCard(p)).join('')}</div>`;
+      // Bulk action buttons for review_pending
+      if (meta.action === 'review_pending' && prods.length > 0) {
+        const toApprove = prods.filter(p => p.recommendation === 'approve').map(p => p.id).filter(Boolean);
+        const toReject  = prods.filter(p => p.recommendation === 'reject').map(p => p.id).filter(Boolean);
+        const bulkBtns = [
+          toApprove.length ? `<button class="btn-sm chat-bulk-approve" onclick="chatBulkApprove([${toApprove.join(',')}], this)">✅ Approve ${toApprove.length} products</button>` : '',
+          toReject.length  ? `<button class="btn-sm chat-bulk-reject"  onclick="chatBulkReject([${toReject.join(',')}], this)">❌ Reject ${toReject.length} products</button>`   : '',
+        ].filter(Boolean).join('');
+        if (bulkBtns) productCards += `<div class="chat-bulk-row">${bulkBtns}</div>`;
+      }
+    }
+
+    // Edit preview cards for edit_products
+    let editCards = '';
+    if (meta.action === 'edit_products' && (meta.edits||[]).length) {
+      editCards = `<div class="chat-edit-list">${(meta.edits||[]).map(e => `
+        <div class="chat-edit-item">
+          <span class="chat-edit-id">#${e.id}</span>
+          ${e.title ? `<span class="chat-edit-field">📝 ${escHtml(e.title)}</span>` : ''}
+          ${e.price != null ? `<span class="chat-edit-field">💶 €${e.price}</span>` : ''}
+          ${e.caption ? `<span class="chat-edit-field caption-preview">💬 ${escHtml(e.caption.substring(0,60))}…</span>` : ''}
+        </div>`).join('')}</div>`;
+    }
+
+    const suggestion = meta.suggestion ? `<div class="chat-suggestion">${escHtml(meta.suggestion)}</div>` : '';
     return `<div class="chat-msg assistant">
       <div class="chat-avatar">AI</div>
-      <div class="chat-bubble">${escHtml(m.text)}${suggestion}${actions}</div>
+      <div class="chat-bubble">${formatChatText(m.text)}${editCards}${productCards}${suggestion}${actions}</div>
     </div>`;
   }).join('');
   el.scrollTop = el.scrollHeight;
 }
 
+function renderChatProductCard(p) {
+  const img = p.image_url || p.images?.[0] || '';
+  const title = p.title_translated || p.product_name || 'Product';
+  const price = p.sell_price_eur ? `€${Number(p.sell_price_eur).toFixed(2)}` : '';
+  const score = p.score ? `${p.score}` : '';
+  const niche = p.niche_fit ? `nf:${p.niche_fit}` : '';
+  const stage = p.stage || '';
+  const rec = p.recommendation || '';
+  const reason = p.reason || '';
+  const stageColor = {approved:'#22c55e',pending:'#f59e0b',rejected:'#ef4444',posted:'#3b82f6'}[stage]||'#888';
+  const recBadge = rec === 'approve'
+    ? `<span class="chat-rec approve">✅ Approve</span>`
+    : rec === 'reject'
+    ? `<span class="chat-rec reject">❌ Reject</span>`
+    : '';
+  const imgEl = img
+    ? `<img src="${API.replace('/api','')}/api/image?url=${encodeURIComponent(img)}" onerror="this.style.display='none'" loading="lazy">`
+    : `<div class="chat-card-no-img">📦</div>`;
+  const actionBtns = p.id && stage === 'pending' ? `
+    <div class="chat-card-actions">
+      <button class="chat-card-approve-btn" onclick="chatQuickApprove(${p.id}, this)">✅ Approve</button>
+      <button class="chat-card-reject-btn" onclick="chatQuickReject(${p.id}, this)">❌ Reject</button>
+    </div>` : '';
+  return `<div class="chat-product-card${rec ? ' rec-'+rec : ''}">
+    <div class="chat-card-img">${imgEl}</div>
+    <div class="chat-card-info">
+      ${recBadge}
+      <div class="chat-card-title">${escHtml(title)}</div>
+      ${reason ? `<div class="chat-card-reason">${escHtml(reason)}</div>` : ''}
+      <div class="chat-card-meta">
+        ${price ? `<span class="chat-card-price">${price}</span>` : ''}
+        ${score ? `<span class="chat-card-score">⭐${score}</span>` : ''}
+        ${niche ? `<span class="chat-card-score" style="color:#a78bfa">${niche}</span>` : ''}
+        <span class="chat-card-stage" style="color:${stageColor}">${stage}</span>
+      </div>
+      ${actionBtns}
+    </div>
+  </div>`;
+}
+
 function escHtml(s) {
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+}
+
+function formatChatText(s) {
+  // Escape HTML but allow line breaks as <br> and bold **text**
+  const escaped = String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return escaped
+    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+    .replace(/\n/g,'<br>');
+}
+
+async function chatBulkApprove(ids, btn) {
+  if (!ids?.length) return;
+  if (!confirm(`Approve ${ids.length} products?`)) return;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Approving…'; }
+  try {
+    let done = 0;
+    for (const id of ids) {
+      try { await api(`/products/${id}/approve`, 'POST'); done++; } catch(_) {}
+    }
+    _cacheInvalidate('/products', '/stats');
+    await refreshStats();
+    toast(`✅ Approved ${done} products!`, 'success');
+    if (btn) { btn.textContent = `✅ Approved ${done}`; }
+    // Gray out approved cards
+    document.querySelectorAll('.chat-product-card.rec-approve').forEach(c => c.classList.add('chat-card-done-approve'));
+  } catch(e) {
+    toast('Error: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = `✅ Approve ${ids.length} products`; }
+  }
+}
+
+async function chatBulkReject(ids, btn) {
+  if (!ids?.length) return;
+  if (!confirm(`Reject ${ids.length} products?`)) return;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Rejecting…'; }
+  try {
+    let done = 0;
+    for (const id of ids) {
+      try { await api(`/products/${id}/reject`, 'POST'); done++; } catch(_) {}
+    }
+    _cacheInvalidate('/products', '/stats');
+    await refreshStats();
+    toast(`❌ Rejected ${done} products`, 'success');
+    if (btn) { btn.textContent = `❌ Rejected ${done}`; }
+    document.querySelectorAll('.chat-product-card.rec-reject').forEach(c => c.classList.add('chat-card-done-reject'));
+  } catch(e) {
+    toast('Error: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = `❌ Reject ${ids.length} products`; }
+  }
 }
 
 async function chatSend(msg) {
@@ -2070,19 +2614,114 @@ async function chatSend(msg) {
   chatAppend('user', msg);
   chatPending = true;
   document.getElementById('chat-send-btn')?.setAttribute('disabled','1');
+  // Show typing indicator
+  const typingId = 'typing-' + Date.now();
+  const messagesEl = document.getElementById('chat-messages');
+  if (messagesEl) {
+    messagesEl.insertAdjacentHTML('beforeend', `<div class="chat-msg assistant" id="${typingId}"><div class="chat-avatar">AI</div><div class="chat-bubble chat-typing-bubble"><span class="chat-typing-dot"></span><span class="chat-typing-dot"></span><span class="chat-typing-dot"></span></div></div>`);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
   try {
     const result = await api('/ai/chat', 'POST', { message: msg });
+    document.getElementById(typingId)?.remove();
     chatAppend('assistant', result.reply || 'No response.', {
       action: result.action,
-      product_ids: result.product_ids,
+      product_ids: result.product_ids || [],
+      products: result.products || [],
+      edits: result.edits || [],
       suggestion: result.suggestion,
     });
   } catch(e) {
+    document.getElementById(typingId)?.remove();
     chatAppend('assistant', '⚠️ Error: ' + (e.message || 'Unknown error'));
   } finally {
     chatPending = false;
     document.getElementById('chat-send-btn')?.removeAttribute('disabled');
     document.getElementById('chat-input')?.focus();
+  }
+}
+
+async function chatQuickApprove(id, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    await api(`/products/${id}/approve`, 'POST');
+    _cacheInvalidate('/products', '/stats');
+    await refreshStats();
+    toast('✅ Approved!', 'success');
+    if (btn) {
+      const card = btn.closest('.chat-product-card');
+      if (card) card.classList.add('chat-card-done-approve');
+      btn.textContent = '✅ Done';
+      const rejectBtn = btn.closest('.chat-card-actions')?.querySelector('.chat-card-reject-btn');
+      if (rejectBtn) rejectBtn.style.display = 'none';
+    }
+  } catch(e) {
+    toast('Approve failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '✅ Approve'; }
+  }
+}
+
+async function chatQuickReject(id, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    await api(`/products/${id}/reject`, 'POST');
+    _cacheInvalidate('/products', '/stats');
+    await refreshStats();
+    toast('❌ Rejected', 'success');
+    if (btn) {
+      const card = btn.closest('.chat-product-card');
+      if (card) card.classList.add('chat-card-done-reject');
+      btn.textContent = '❌ Done';
+      const approveBtn = btn.closest('.chat-card-actions')?.querySelector('.chat-card-approve-btn');
+      if (approveBtn) approveBtn.style.display = 'none';
+    }
+  } catch(e) {
+    toast('Reject failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '❌ Reject'; }
+  }
+}
+
+async function chatApproveProducts(ids) {
+  if (!ids?.length) return;
+  if (!confirm(`Approve ${ids.length} products?`)) return;
+  try {
+    let count = 0;
+    for (const id of ids.slice(0, 20)) {
+      await api(`/products/${id}/approve`, 'POST').catch(() => {});
+      count++;
+    }
+    _cacheInvalidate('/products', '/stats');
+    await refreshStats();
+    toast(`✅ ${count} products approved!`, 'success');
+    chatAppend('assistant', `Done! Approved ${count} products. Check the Approved tab to see them.`);
+  } catch(e) {
+    toast('Approve failed: ' + e.message, 'error');
+  }
+}
+
+async function chatApplyEdits(msgIdx) {
+  const m = chatHistory[msgIdx];
+  if (!m?.meta?.edits?.length) return;
+  if (!confirm(`Apply ${m.meta.edits.length} AI-suggested edits to product titles/prices?`)) return;
+  try {
+    const result = await api('/ai/chat', 'POST', { message: '_execute_edits_', execute_edits: true, ...{edits: m.meta.edits} });
+    // Actually call PATCH directly for each edit
+    let count = 0;
+    for (const edit of m.meta.edits.slice(0, 20)) {
+      const fields = {};
+      if (edit.title) fields.title_translated = edit.title;
+      if (edit.price != null) fields.sell_price_eur = edit.price;
+      if (edit.caption) fields.caption = edit.caption;
+      if (Object.keys(fields).length) {
+        await api(`/products/${edit.id}`, 'PATCH', fields).catch(() => {});
+        count++;
+      }
+    }
+    _cacheInvalidate('/products', '/stats');
+    toast(`💾 ${count} products edited!`, 'success');
+    chatAppend('assistant', `Done! Updated ${count} products. Refresh the Review queue to see the changes.`);
+  } catch(e) {
+    toast('Edit failed: ' + e.message, 'error');
   }
 }
 
@@ -2103,6 +2742,16 @@ async function chatReconsider(ids) {
   }
 }
 
+function _chatAiStatusBanner(settingsData) {
+  const hasGemini = settingsData?.gemini_key_set;
+  const hasGroq   = settingsData?.groq_key_set;
+  if (hasGemini || hasGroq) {
+    const which = hasGemini ? '✦ Gemini active' : '✦ Groq active';
+    return `<div class="chat-status-bar ready">${which} — AI powered</div>`;
+  }
+  return `<div class="chat-status-bar warn">⚠ No AI key set — <button onclick="navigate('settings')" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:11px;padding:0;text-decoration:underline">add Gemini key in Settings</button> for smart reviews</div>`;
+}
+
 async function renderChat() {
   setTitle('AI Assistant', 'Chat with your store AI');
   document.getElementById('topbar-actions').innerHTML = `
@@ -2110,8 +2759,9 @@ async function renderChat() {
 
   document.getElementById('content').innerHTML = `
     <div class="chat-page">
+      ${_chatAiStatusBanner(settingsData)}
       <div class="chat-quick-row">
-        ${QUICK_ACTIONS.map(a => `<button class="chat-quick-btn" onclick="chatSend(${JSON.stringify(a.msg)})">${a.label}</button>`).join('')}
+        ${QUICK_ACTIONS.map(a => `<button class="chat-quick-btn" data-msg="${a.msg.replace(/"/g,'&quot;')}" onclick="chatSend(this.dataset.msg)">${a.label}</button>`).join('')}
       </div>
       <div class="chat-messages" id="chat-messages"></div>
       <div class="chat-input-row">

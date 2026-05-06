@@ -636,7 +636,7 @@ async def remove_product_text(product_id: int):
         raise HTTPException(400, "Clipdrop API key not configured — add clipdrop_key in Settings")
 
     images = p.get("images") or []
-    image_url = p.get("image_url") or (images[0] if images else "")
+    image_url = images[0] if images else ""
     if not image_url:
         raise HTTPException(400, "Product has no image to clean")
 
@@ -658,15 +658,15 @@ async def remove_product_text(product_id: int):
 
     new_url = f"{base}/api/products/{product_id}/cleaned-image" if base else f"/api/products/{product_id}/cleaned-image"
 
+    next_images = [new_url] + [img for img in images if img and img != image_url]
     await db.update_product_fields(product_id, {
+        "images_json": json.dumps(next_images),
         "has_chinese_text": False,
         "chinese_text_note": "",
-        "image_url": new_url,
     })
-    stage = _approval_stage(p)
-    await db.set_stage(product_id, stage)
+    await db.set_stage(product_id, "approved")
     await _backup_products_to_sheets()
-    return {"ok": True, "image_url": new_url}
+    return {"ok": True, "image_url": new_url, "product": await db.get_product(product_id)}
 
 
 @app.get("/api/products/{product_id}/cleaned-image")

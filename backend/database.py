@@ -231,6 +231,7 @@ class Database:
             "sell_price_eur",
             "caption",
             "hashtags_json",
+            "images_json",
             "category",
             "url",
             "has_chinese_text",

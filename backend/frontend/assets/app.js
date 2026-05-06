@@ -97,7 +97,29 @@ function navigate(page) {
 }
 
 function imageUrl(src) {
+  if (src && src.startsWith('/')) return src;
   return src ? `/api/image?url=${encodeURIComponent(src)}` : '';
+}
+
+function firstImage(p = {}) {
+  const candidates = [p.images, p.image_urls, p.image_url, p.photo_link, p.raw_data?.images, p.raw_data?.image_url];
+  for (const value of candidates) {
+    if (Array.isArray(value)) {
+      const found = value.find(Boolean);
+      if (found) return String(found);
+    } else if (typeof value === 'string' && value.trim()) {
+      const trimmed = value.trim();
+      if (trimmed.startsWith('[')) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          const found = Array.isArray(parsed) ? parsed.find(Boolean) : '';
+          if (found) return String(found);
+        } catch(e) {}
+      }
+      return trimmed;
+    }
+  }
+  return '';
 }
 
 function setTitle(t, sub = '') {
@@ -588,7 +610,7 @@ function renderTextEditGrid() {
 // ── Product card ───────────────────────────────────────────────────────────
 function productCard(p, mode) {
   const sel = selectedProducts.has(p.id);
-  const img = imageUrl((p.images || [])[0] || '');
+  const img = imageUrl(firstImage(p));
   const score = p.score || 0;
   const sc = score >= 8 ? 'hi' : score >= 7 ? 'mi' : 'lo';
 
@@ -647,8 +669,6 @@ function productCard(p, mode) {
 function toggleSel(id) {
   if (selectedProducts.has(id)) {
     selectedProducts.delete(id);
-  } else if (mode === 'text_edit') {
-    actions = `<button class="btn btn-green" onclick="batchCleanImages(this)">🧹 Clean all (${n})</button>`;
   } else {
     if (selectedProducts.size >= 10) { toast('Max 10 at once', 'error'); return; }
     selectedProducts.add(id);
