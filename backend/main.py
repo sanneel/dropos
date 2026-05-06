@@ -958,14 +958,14 @@ async def test_ai_key(body: dict):
         try:
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.post(
-                    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent",
+                    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
                     headers={"x-goog-api-key": api_key, "content-type": "application/json"},
                     json={"contents": [{"parts": [{"text": "Say OK"}]}],
                           "generationConfig": {"max_output_tokens": 10}},
                 )
             ms = int((time.time() - start) * 1000)
             if resp.status_code == 200:
-                return {"ok": True, "model": "gemini-2.0-flash-lite", "latency_ms": ms}
+                return {"ok": True, "model": "gemini-2.0-flash", "latency_ms": ms}
             else:
                 err = resp.json().get("error", {}).get("message", resp.text[:120])
                 return {"ok": False, "error": f"Gemini API error: {err}"}

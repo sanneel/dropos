@@ -188,14 +188,14 @@ _CAPTION_TEMPLATES = [
 
 _GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 _GEMINI_MODEL_ALIASES = {
-    "gemini-2.0-flash": "gemini-2.5-flash-lite",
-    "gemini-2.0-flash-lite": "gemini-2.5-flash-lite",
+    "gemini-2.0-flash": "gemini-2.0-flash",
+    "gemini-2.0-flash": "gemini-2.0-flash",
 }
 
 
 def _gemini_model(settings: dict) -> str:
-    configured = get_config("GEMINI_MODEL", settings.get("gemini_model", "gemini-2.5-flash-lite"))
-    model = str(configured or "gemini-2.5-flash-lite").strip()
+    configured = get_config("GEMINI_MODEL", settings.get("gemini_model", "gemini-2.0-flash"))
+    model = str(configured or "gemini-2.0-flash").strip()
     replacement = _GEMINI_MODEL_ALIASES.get(model)
     if replacement:
         log.warning("Gemini model %s is deprecated; using %s", model, replacement)
