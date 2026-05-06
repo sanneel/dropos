@@ -16,6 +16,9 @@ from pydantic import BaseModel
 sys.path.insert(0, os.path.dirname(__file__))
 
 from config.runtime import get_config, merge_env_with_settings, sanitize_settings
+from image_editor import remove_text as clipdrop_remove_text
+import uuid as _uuid
+import os as _os
 from database import db, init_db
 from runner import process_scraped_products, run_pipeline
 from scheduler import create_scheduler, get_scheduler_status
@@ -87,6 +90,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="DropOS Backoffice", lifespan=lifespan)
+
+# In-memory store for cleaned images {product_id: bytes}
+_cleaned_images: dict[int, bytes] = {}
+_COLLAGE_DIR = "/tmp/dropos_collages"
+_os.makedirs(_COLLAGE_DIR, exist_ok=True)
 
 app.add_middleware(
     CORSMiddleware,
@@ -617,6 +625,65 @@ async def mark_text_edited(product_id: int):
     return {"ok": True}
 
 
+@app.post("/api/products/{product_id}/remove-text")
+async def remove_product_text(product_id: int):
+    """Call Clipdrop to remove Chinese text/watermarks from product's first image."""
+    p = await _get_product_or_404(product_id)
+    settings = await db.get_settings()
+    merged = merge_env_with_settings(settings)
+    clipdrop_key = merged.get("clipdrop_key", "")
+    if not clipdrop_key:
+        raise HTTPException(400, "Clipdrop API key not configured — add clipdrop_key in Settings")
+
+    images = p.get("images") or []
+    image_url = p.get("image_url") or (images[0] if images else "")
+    if not image_url:
+        raise HTTPException(400, "Product has no image to clean")
+
+    cleaned_bytes = await clipdrop_remove_text(image_url, clipdrop_key)
+    if not cleaned_bytes:
+        raise HTTPException(502, "Clipdrop failed — check API key or try a different image")
+
+    _cleaned_images[product_id] = cleaned_bytes
+    disk_path = f"{_COLLAGE_DIR}/cleaned_{product_id}.jpg"
+    with open(disk_path, "wb") as fh:
+        fh.write(cleaned_bytes)
+
+    base = str(get_config("PUBLIC_BASE_URL", merged.get("public_base_url", "")) or "").rstrip("/")
+    if not base:
+        base = str(get_config("RAILWAY_PUBLIC_DOMAIN", "") or "").strip()
+        if base and not base.startswith("http"):
+            base = f"https://{base}"
+        base = base.rstrip("/")
+
+    new_url = f"{base}/api/products/{product_id}/cleaned-image" if base else f"/api/products/{product_id}/cleaned-image"
+
+    await db.update_product_fields(product_id, {
+        "has_chinese_text": False,
+        "chinese_text_note": "",
+        "image_url": new_url,
+    })
+    stage = _approval_stage(p)
+    await db.set_stage(product_id, stage)
+    await _backup_products_to_sheets()
+    return {"ok": True, "image_url": new_url}
+
+
+@app.get("/api/products/{product_id}/cleaned-image")
+async def serve_cleaned_image(product_id: int):
+    """Serve Clipdrop-cleaned image bytes."""
+    data = _cleaned_images.get(product_id)
+    if not data:
+        disk_path = f"{_COLLAGE_DIR}/cleaned_{product_id}.jpg"
+        if _os.path.exists(disk_path):
+            with open(disk_path, "rb") as fh:
+                data = fh.read()
+    if not data:
+        raise HTTPException(404, "Cleaned image not found — please clean again")
+    return Response(content=data, media_type="image/jpeg",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
 @app.patch("/api/products/{product_id}/note")
 async def update_note(product_id: int, body: NoteUpdate):
     await _get_product_or_404(product_id)
@@ -996,6 +1063,106 @@ async def test_ai_key(body: dict):
             return {"ok": False, "error": str(e)}
 
     return {"ok": False, "error": "Unknown provider — use 'gemini' or 'groq'"}
+
+
+# ── Collage ────────────────────────────────────────────────────────────────────
+
+class CollageRequest(BaseModel):
+    product_ids: list[int]
+    caption: Optional[str] = None
+
+
+@app.post("/api/collage/post")
+async def post_collage(body: CollageRequest):
+    """Generate a 2×3 product collage and post to Instagram."""
+    try:
+        from collage import create_collage
+    except ImportError:
+        raise HTTPException(501, "Pillow not installed — add Pillow>=10.0.0 to requirements.txt and redeploy")
+
+    if len(body.product_ids) < 2:
+        raise HTTPException(400, "Need at least 2 product IDs")
+
+    products = []
+    for pid in body.product_ids[:6]:
+        try:
+            p = await db.get_product(pid)
+            if p:
+                products.append(p)
+        except Exception:
+            pass
+
+    if not products:
+        raise HTTPException(404, "No valid products found")
+
+    settings = await db.get_settings()
+    merged = merge_env_with_settings(settings)
+
+    base = str(merged.get("public_base_url", "")).rstrip("/")
+    if not base:
+        base = str(get_config("PUBLIC_BASE_URL", "") or get_config("RAILWAY_PUBLIC_DOMAIN", "") or "").strip()
+        if base and not base.startswith("http"):
+            base = f"https://{base}"
+        base = base.rstrip("/")
+
+    image_urls = []
+    for p in products:
+        imgs = p.get("images") or []
+        url = p.get("image_url") or (imgs[0] if imgs else "")
+        if url and url.startswith("/api/products") and base:
+            url = f"{base}{url}"
+        if url:
+            image_urls.append(url)
+
+    if not image_urls:
+        raise HTTPException(400, "Could not find image URLs for collage")
+
+    collage_bytes = await create_collage(image_urls)
+    if not collage_bytes:
+        raise HTTPException(502, "Collage generation failed — ensure Pillow is installed")
+
+    filename = f"collage_{_uuid.uuid4().hex[:8]}.jpg"
+    collage_path = f"{_COLLAGE_DIR}/{filename}"
+    with open(collage_path, "wb") as fh:
+        fh.write(collage_bytes)
+
+    collage_url = f"{base}/api/collages/{filename}" if base else f"/api/collages/{filename}"
+
+    first = products[0]
+    caption = body.caption or first.get("caption") or first.get("product_name") or "New arrivals ✨"
+    names = [p.get("product_name") or p.get("title_translated") or "" for p in products]
+    names_str = "\n".join(f"• {n}" for n in names if n)
+    full_caption = f"{caption}\n\n{names_str}" if names_str else caption
+
+    from instagram import post_product
+    results = await post_product(
+        {"id": -1, "images": [collage_url], "caption": full_caption},
+        settings=merged,
+    )
+    if results and results[0].status in ("posted", "mock"):
+        for p in products:
+            try:
+                await db.set_stage(p["id"], "posted")
+            except Exception:
+                pass
+        await _backup_products_to_sheets()
+        return {"ok": True, "post_url": results[0].post_url, "collage_url": collage_url}
+    else:
+        err = results[0].error if results else "Unknown error"
+        raise HTTPException(502, f"Instagram posting failed: {err}")
+
+
+@app.get("/api/collages/{filename}")
+async def serve_collage(filename: str):
+    if "/" in filename or ".." in filename:
+        raise HTTPException(400, "Invalid filename")
+    path = f"{_COLLAGE_DIR}/{filename}"
+    if not _os.path.exists(path):
+        raise HTTPException(404, "Collage not found")
+    with open(path, "rb") as fh:
+        data = fh.read()
+    return Response(content=data, media_type="image/jpeg",
+                    headers={"Cache-Control": "public, max-age=3600"})
 
 
 @app.post("/api/ai/chat")

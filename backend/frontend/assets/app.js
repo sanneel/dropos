@@ -602,7 +602,7 @@ function productCard(p, mode) {
   }
 
   if (mode === 'text_edit') {
-    actions = `<button class="pca-post" onclick="event.stopPropagation();markTextEdited(${p.id})">Cleaned</button>
+    actions = `<button class="pca-clean" id="clean-btn-${p.id}" onclick="event.stopPropagation();cleanImage(${p.id},this)">🧹 Clean</button>
                <button class="pca-reject" onclick="event.stopPropagation();showRejectModal(${p.id})">Reject</button>`;
   }
 
@@ -648,7 +648,7 @@ function toggleSel(id) {
   if (selectedProducts.has(id)) {
     selectedProducts.delete(id);
   } else if (mode === 'text_edit') {
-    actions = `<button class="btn btn-green" onclick="batchMarkTextEdited()">Mark cleaned ${n}</button>`;
+    actions = `<button class="btn btn-green" onclick="batchCleanImages(this)">🧹 Clean all (${n})</button>`;
   } else {
     if (selectedProducts.size >= 10) { toast('Max 10 at once', 'error'); return; }
     selectedProducts.add(id);
@@ -687,7 +687,8 @@ function updateSelBar(mode = 'approve') {
   const n = selectedProducts.size;
   let actions = '';
   if (mode === 'post') {
-    actions = `<button class="btn btn-primary" onclick="batchPost()">Post ${n} →</button>`;
+    actions = `<button class="btn btn-primary" onclick="batchPost()">Post ${n} →</button>
+      ${n >= 2 && n <= 6 ? `<button class="btn btn-collage" onclick="postCollage([...selectedProducts])">📸 Collage (${n})</button>` : ''}`;
   } else {
     actions = `<button class="btn btn-green" onclick="batchApprove()">Approve ${n}</button>
                <button class="btn btn-danger" onclick="batchReject()">Reject ${n}</button>`;
@@ -764,6 +765,67 @@ async function quickApprove(id) {
     renderQueueGrid();
     refreshStats();
   } catch(e) {}
+}
+
+// ── Clipdrop image clean ──────────────────────────────────────────────────────
+async function cleanImage(id, btn) {
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="clean-spinner"></span> Cleaning…'; }
+  try {
+    const r = await api(`/products/${id}/remove-text`, 'POST');
+    if (r.ok) {
+      toast('✅ Image cleaned & approved!', 'success');
+      _cacheInvalidate('/products', '/stats');
+      await refreshStats();
+      const card = document.getElementById(`card-${id}`);
+      if (card) { card.style.transition = 'opacity .5s'; card.style.opacity = '0'; setTimeout(() => card.remove(), 500); }
+    } else {
+      toast(r.detail || r.error || 'Clean failed — check Clipdrop key in Settings', 'error');
+      if (btn) { btn.disabled = false; btn.innerHTML = '🧹 Clean'; }
+    }
+  } catch(e) {
+    toast('Clean failed: ' + (e.message || 'Unknown'), 'error');
+    if (btn) { btn.disabled = false; btn.innerHTML = '🧹 Clean'; }
+  }
+}
+
+async function batchCleanImages(btn) {
+  if (!selectedProducts.size) { toast('Select products first', 'error'); return; }
+  const ids = [...selectedProducts];
+  if (btn) { btn.disabled = true; btn.textContent = `Cleaning ${ids.length}…`; }
+  let done = 0, failed = 0;
+  for (const id of ids) {
+    try {
+      const r = await api(`/products/${id}/remove-text`, 'POST');
+      if (r.ok) done++; else failed++;
+    } catch { failed++; }
+  }
+  toast(done > 0 ? `✅ Cleaned ${done}/${ids.length} images` : `❌ Clean failed — check Clipdrop key`, done > 0 ? 'success' : 'error');
+  selectedProducts.clear();
+  _cacheInvalidate('/products', '/stats');
+  await refreshStats();
+  loadTextEdit();
+}
+
+// ── Collage posting ────────────────────────────────────────────────────────────
+async function postCollage(ids) {
+  if (!ids || ids.length < 2) { toast('Select 2–6 approved products for a collage', 'error'); return; }
+  const use = [...ids].slice(0, 6);
+  if (!confirm(`Create a collage from ${use.length} product photos and post to Instagram?`)) return;
+  toast('📸 Generating collage…', 'info');
+  try {
+    const r = await api('/collage/post', 'POST', { product_ids: use });
+    if (r.ok) {
+      toast('🎉 Collage posted to Instagram!', 'success');
+      _cacheInvalidate('/products', '/stats');
+      await refreshStats();
+      selectedProducts.clear();
+      loadApproved();
+    } else {
+      toast(r.detail || r.error || 'Collage failed — check Instagram token in Settings', 'error');
+    }
+  } catch(e) {
+    toast('Collage error: ' + (e.message || 'Unknown'), 'error');
+  }
 }
 
 async function markTextEdited(id) {
@@ -878,7 +940,7 @@ async function showDetail(id) {
     actionHtml = `<button class="btn btn-primary" style="flex:1" onclick="quickPost(${p.id})">Post to Instagram →</button>
                   <button class="btn btn-danger" onclick="showRejectModal(${p.id})">Reject</button>`;
   else if (stage === 'text_edit')
-    actionHtml = `<button class="btn btn-green" style="flex:1" onclick="markTextEdited(${p.id})">Mark cleaned</button>
+    actionHtml = `<button class="btn btn-green" style="flex:1" id="clean-btn-${p.id}" onclick="cleanImage(${p.id},this)">🧹 Clean image</button>
                   <button class="btn btn-danger" onclick="showRejectModal(${p.id})">Reject</button>`;
   else if (stage === 'rejected')
     actionHtml = `<button class="btn btn-amber" style="flex:1" onclick="reconsider(${p.id})">Move back to queue</button>`;
@@ -2679,7 +2741,7 @@ async function renderChat() {
     <div class="chat-page">
       ${_chatAiStatusBanner(settingsData)}
       <div class="chat-quick-row">
-        ${QUICK_ACTIONS.map(a => `<button class="chat-quick-btn" onclick="chatSend(${JSON.stringify(a.msg)})">${a.label}</button>`).join('')}
+        ${QUICK_ACTIONS.map(a => `<button class="chat-quick-btn" data-msg="${a.msg.replace(/"/g,'&quot;')}" onclick="chatSend(this.dataset.msg)">${a.label}</button>`).join('')}
       </div>
       <div class="chat-messages" id="chat-messages"></div>
       <div class="chat-input-row">

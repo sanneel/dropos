@@ -323,6 +323,23 @@ body { background: var(--bg); color: var(--t1); font-family: var(--ff-b); font-s
   border-radius: var(--r); color: var(--t3); font-size: 11.5px; cursor: pointer; transition: all .12s;
 }
 .pca-reject:hover { border-color: rgba(239,68,68,.4); color: var(--red); background: var(--red-d); }
+.pca-clean {
+  padding: 7px 12px; background: rgba(168,85,247,.12); border: 1px solid rgba(168,85,247,.3);
+  border-radius: var(--r); color: #a855f7; font-size: 11.5px; font-weight: 600; cursor: pointer; transition: all .12s;
+}
+.pca-clean:hover { background: rgba(168,85,247,.25); border-color: #a855f7; }
+.clean-spinner {
+  display: inline-block; width: 10px; height: 10px;
+  border: 2px solid rgba(168,85,247,.3); border-top-color: #a855f7;
+  border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.btn-collage {
+  background: linear-gradient(135deg, #ec4899, #a855f7); color: #fff; border: none;
+  padding: 8px 16px; border-radius: 20px; font-size: 12px; font-weight: 600;
+  cursor: pointer; transition: opacity .15s, transform .1s;
+}
+.btn-collage:hover { opacity: .88; transform: translateY(-1px); }
 
 /* ── Selection bar ────────────────────────────────────────────────────────── */
 .selection-bar {
