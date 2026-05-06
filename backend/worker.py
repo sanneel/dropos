@@ -24,10 +24,11 @@ import json
 
 # ── Absolute imports (backend/ is on sys.path, NOT a package) ──────────────────
 from database import db
-from main import ProductStage
+from models import ProductStage          # NOT from main — that causes a circular import
 from services.enrichment import enrich_product
 from services.images import process_image
 from services.publisher import publish_to_instagram
+
 
 log = logging.getLogger(__name__)
 
