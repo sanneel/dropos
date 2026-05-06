@@ -13,18 +13,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from enum import Enum
-
-class ProductStage(str, Enum):
-    SCRAPED = "SCRAPED"
-    ENRICHED = "ENRICHED"
-    REVIEWED = "REVIEWED"
-    QUEUED = "QUEUED"
-    LIVE = "LIVE"
-    REJECTED = "REJECTED"
-
 sys.path.insert(0, os.path.dirname(__file__))
 
+# ProductStage lives in models.py — importing it here AFTER sys.path is set
+# so it resolves correctly, and worker.py can also import it without pulling
+# in main.py (which would create a circular import and crash at startup).
+from models import ProductStage  # noqa: E402
 from config.runtime import get_config, merge_env_with_settings, sanitize_settings
 from image_editor import remove_text as clipdrop_remove_text
 import uuid as _uuid
