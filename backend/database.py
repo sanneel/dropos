@@ -14,6 +14,8 @@ class Database:
     async def connect(self):
         self._db = await aiosqlite.connect(DB_PATH)
         self._db.row_factory = aiosqlite.Row
+        await self._db.execute("PRAGMA journal_mode=WAL;")
+        await self._db.execute("PRAGMA synchronous=NORMAL;")
 
     async def close(self):
         if self._db:

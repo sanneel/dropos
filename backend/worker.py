@@ -21,7 +21,11 @@ async def run_worker_loop():
                 
                 # 1. AI Enrichment
                 log.info(f"Worker: Enriching product {pid}...")
-                enriched_data = await enrich_product(title, description)
+                try:
+                    enriched_data = await enrich_product(title, description)
+                except Exception as e:
+                    log.error(f"Worker: Enrichment failed for {pid}: {e}")
+                    enriched_data = {"caption": f"{title}\n\n{description}", "hashtags": []}
                 
                 # 2. Image Pipeline (process the first image)
                 log.info(f"Worker: Processing images for product {pid}...")
@@ -33,7 +37,11 @@ async def run_worker_loop():
                 
                 new_image_url = None
                 if image_url:
-                    new_image_url = await process_image(image_url)
+                    try:
+                        new_image_url = await process_image(image_url)
+                    except Exception as e:
+                        log.error(f"Worker: Image processing failed for {pid}: {e}")
+                        new_image_url = image_url
                 
                 # 3. Update DB
                 updates = {

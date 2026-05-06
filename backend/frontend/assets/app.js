@@ -637,7 +637,7 @@ function productCard(p, mode) {
     <div class="product-card${sel ? ' selected' : ''}" id="card-${p.id}" onclick="showDetail(${p.id})">
       <div class="pcard-img-wrap">
         ${img
-          ? `<img class="pcard-img" src="${img}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
+          ? `<img class="pcard-img" src="${img}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';this.nextElementSibling.innerHTML='IMAGE ERROR'">`
           : ''}
         <div class="pcard-placeholder" style="${img ? 'display:none' : ''}">◈</div>
         <div class="pcard-score ${sc}">${score.toFixed(1)}</div>
