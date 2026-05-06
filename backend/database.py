@@ -1,22 +1,85 @@
+import asyncio
 import asyncpg
 import json
+import logging
 import os
+import sys
+
 from datetime import datetime, timezone
 from typing import Optional
 
+log = logging.getLogger(__name__)
+
 class Database:
     def __init__(self):
-        self._db: Optional[asyncpg.Connection] = None
+        # Use a pool instead of a single connection so concurrent coroutines
+        # (API handlers, worker loop, publisher loop) can each acquire their
+        # own connection and never block each other.
+        self._pool: Optional[asyncpg.Pool] = None
+
+    # ── Thin helpers so all query sites stay identical ─────────────────────────
+
+    async def execute(self, query: str, *args):
+        async with self._pool.acquire() as conn:
+            return await conn.execute(query, *args)
+
+    async def fetch(self, query: str, *args):
+        async with self._pool.acquire() as conn:
+            return await conn.fetch(query, *args)
+
+    async def fetchrow(self, query: str, *args):
+        async with self._pool.acquire() as conn:
+            return await conn.fetchrow(query, *args)
+
+    async def fetchval(self, query: str, *args):
+        async with self._pool.acquire() as conn:
+            return await conn.fetchval(query, *args)
 
     async def connect(self):
         db_url = os.getenv("DATABASE_URL")
         if not db_url:
-            raise ValueError("DATABASE_URL is not set")
-        self._db = await asyncpg.connect(db_url)
+            log.critical(
+                "\n"
+                "╔══════════════════════════════════════════════════════════╗\n"
+                "║  FATAL: DATABASE_URL environment variable is not set.   ║\n"
+                "║                                                          ║\n"
+                "║  Fix:  Railway Dashboard → Service → Variables → Add:   ║\n"
+                "║        Use the Supabase SESSION POOLER connection string ║\n"
+                "║        (Settings → Database → Connection pooling)        ║\n"
+                "╚══════════════════════════════════════════════════════════╝"
+            )
+            sys.exit(1)
+
+        last_exc = None
+        for attempt in range(3):
+            try:
+                self._pool = await asyncpg.create_pool(
+                    db_url,
+                    ssl="require",
+                    statement_cache_size=0,  # Required for PgBouncer/Supabase pooler
+                    min_size=2,              # Keep 2 warm connections
+                    max_size=10,             # Allow up to 10 concurrent queries
+                )
+                log.info("Database pool created successfully (min=2, max=10).")
+                return
+            except Exception as e:
+                last_exc = e
+                log.warning("DB pool attempt %d/3 failed: %s", attempt + 1, e)
+                await asyncio.sleep(3 * (attempt + 1))
+
+        log.critical(
+            "Could not connect to the database after 3 attempts.\n"
+            "Error: %s\n"
+            "Check that DATABASE_URL uses the Supabase SESSION POOLER URL\n"
+            "(Settings → Database → Connection pooling → Session mode, port 5432)",
+            last_exc,
+        )
+        sys.exit(1)
 
     async def close(self):
-        if self._db:
-            await self._db.close()
+        if self._pool:
+            await self._pool.close()
+
 
     # ── Products ──────────────────────────────────────────────────────────────
 
@@ -72,22 +135,22 @@ class Database:
             "created": "created_at DESC",
         }
         order = sort_map.get(sort, "score DESC")
-        rows = await self._db.fetch(
+        rows = await self.fetch(
             f"SELECT * FROM products WHERE stage=$1 ORDER BY {order} LIMIT $2 OFFSET $3",
             stage, limit, offset
         )
         return [_row_to_product(r) for r in rows]
 
     async def get_all_products(self, limit: int = 5000) -> list:
-        rows = await self._db.fetch("SELECT * FROM products ORDER BY id DESC LIMIT $1", limit)
+        rows = await self.fetch("SELECT * FROM products ORDER BY id DESC LIMIT $1", limit)
         return [_row_to_product(r) for r in rows]
 
     async def count_products(self, stage: str = "SCRAPED") -> int:
-        val = await self._db.fetchval("SELECT COUNT(*) FROM products WHERE stage=$1", stage)
+        val = await self.fetchval("SELECT COUNT(*) FROM products WHERE stage=$1", stage)
         return val if val else 0
 
     async def get_product(self, pid: int) -> Optional[dict]:
-        row = await self._db.fetchrow("SELECT * FROM products WHERE id=$1", pid)
+        row = await self.fetchrow("SELECT * FROM products WHERE id=$1", pid)
         return _row_to_product(row) if row else None
 
     async def upsert_product_backup(self, p: dict) -> None:
@@ -261,7 +324,7 @@ class Database:
             )
 
     async def get_pipeline(self, job_id: int) -> dict:
-        rows = await self._db.fetch("SELECT * FROM pipeline_products WHERE job_id=$1 ORDER BY filter_stage, id", job_id)
+        rows = await self.fetch("SELECT * FROM pipeline_products WHERE job_id=$1 ORDER BY filter_stage, id", job_id)
         stages = {}
         for row in rows:
             d = dict(row)
@@ -293,11 +356,11 @@ class Database:
         )
 
     async def count_raw(self, job_id: int) -> int:
-        val = await self._db.fetchval("SELECT COUNT(*) FROM products_raw WHERE job_id=$1", job_id)
+        val = await self.fetchval("SELECT COUNT(*) FROM products_raw WHERE job_id=$1", job_id)
         return val if val else 0
 
     async def get_raw_products(self, job_id: int, limit: int = 2000) -> list:
-        rows = await self._db.fetch("SELECT * FROM products_raw WHERE job_id=$1 ORDER BY id LIMIT $2", job_id, limit)
+        rows = await self.fetch("SELECT * FROM products_raw WHERE job_id=$1 ORDER BY id LIMIT $2", job_id, limit)
         products = []
         for row in rows:
             d = dict(row)
@@ -344,7 +407,7 @@ class Database:
 
     async def get_scan_items(self, job_id: int, limit: int = 2000) -> list:
         raw_items = await self.get_raw_products(job_id, limit=limit)
-        rows = await self._db.fetch("SELECT * FROM pipeline_products WHERE job_id=$1 ORDER BY id", job_id)
+        rows = await self.fetch("SELECT * FROM pipeline_products WHERE job_id=$1 ORDER BY id", job_id)
         pipeline = [dict(row) for row in rows]
 
         merged = []
@@ -410,7 +473,7 @@ class Database:
     # ── Jobs ──────────────────────────────────────────────────────────────────
 
     async def create_job(self, keywords: list) -> int:
-        job_id = await self._db.fetchval("""
+        job_id = await self.fetchval("""
             INSERT INTO jobs (keywords_json, status, progress, scraped,
                after_basic, after_profit, after_dedup, after_ai, created_at)
             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
@@ -424,11 +487,11 @@ class Database:
         await self._db.execute(f"UPDATE jobs SET {sets} WHERE id=${len(vals)}", *vals)
 
     async def get_job(self, job_id: int) -> Optional[dict]:
-        row = await self._db.fetchrow("SELECT * FROM jobs WHERE id=$1", job_id)
+        row = await self.fetchrow("SELECT * FROM jobs WHERE id=$1", job_id)
         return _row_to_job(row) if row else None
 
     async def get_jobs(self, limit: int = 10) -> list:
-        rows = await self._db.fetch("SELECT * FROM jobs ORDER BY id DESC LIMIT $1", limit)
+        rows = await self.fetch("SELECT * FROM jobs ORDER BY id DESC LIMIT $1", limit)
         return [_row_to_job(r) for r in rows]
 
     async def get_active_job(self) -> Optional[dict]:
@@ -442,7 +505,7 @@ class Database:
             "saving",
         )
         placeholders = ",".join(f"${i+1}" for i in range(len(active_statuses)))
-        row = await self._db.fetchrow(
+        row = await self.fetchrow(
             f"SELECT * FROM jobs WHERE status IN ({placeholders}) ORDER BY id DESC LIMIT 1",
             *active_statuses
         )
@@ -471,7 +534,7 @@ class Database:
     async def clear_scan_history(self) -> dict:
         counts = {}
         for table in ("pipeline_products", "products_raw", "jobs"):
-            val = await self._db.fetchval(f"SELECT COUNT(*) FROM {table}")
+            val = await self.fetchval(f"SELECT COUNT(*) FROM {table}")
             counts[table] = val if val else 0
             await self._db.execute(f"DELETE FROM {table}")
         return counts
@@ -479,7 +542,7 @@ class Database:
     # ── Settings ──────────────────────────────────────────────────────────────
 
     async def get_settings(self) -> dict:
-        rows = await self._db.fetch("SELECT key, value FROM settings")
+        rows = await self.fetch("SELECT key, value FROM settings")
         result = {}
         for row in rows:
             k, v = row[0], row[1]
@@ -500,7 +563,7 @@ class Database:
     # ── Comment reply log ─────────────────────────────────────────────────────
 
     async def has_replied_to_comment(self, comment_id: str) -> bool:
-        val = await self._db.fetchval("SELECT id FROM comment_reply_log WHERE comment_id=$1", comment_id)
+        val = await self.fetchval("SELECT id FROM comment_reply_log WHERE comment_id=$1", comment_id)
         return val is not None
 
     async def log_comment_reply(self, comment_id: str, matched_rule: str, reply_type: str = "comment") -> None:
@@ -511,15 +574,15 @@ class Database:
         """, comment_id, reply_type, _now(), matched_rule)
 
     async def get_comment_reply_log(self, limit: int = 50) -> list:
-        rows = await self._db.fetch("SELECT * FROM comment_reply_log ORDER BY id DESC LIMIT $1", limit)
+        rows = await self.fetch("SELECT * FROM comment_reply_log ORDER BY id DESC LIMIT $1", limit)
         return [dict(r) for r in rows]
 
     # ── Stats ─────────────────────────────────────────────────────────────────
 
     async def get_analytics(self) -> dict:
-        stages_raw = await self._db.fetch("SELECT stage, COUNT(*) as cnt FROM products GROUP BY stage")
+        stages_raw = await self.fetch("SELECT stage, COUNT(*) as cnt FROM products GROUP BY stage")
         
-        score_dist = await self._db.fetch("""
+        score_dist = await self.fetch("""
             SELECT
                 CASE
                     WHEN score >= 9 THEN '9-10'
@@ -533,19 +596,19 @@ class Database:
             GROUP BY bucket ORDER BY bucket DESC
         """)
 
-        categories = await self._db.fetch("""
+        categories = await self.fetch("""
             SELECT category, COUNT(*) as cnt FROM products
             WHERE category IS NOT NULL AND category != ''
             GROUP BY category ORDER BY cnt DESC LIMIT 10
         """)
 
-        rejections = await self._db.fetch("""
+        rejections = await self.fetch("""
             SELECT rejection_reason, COUNT(*) as cnt FROM products
             WHERE stage = 'REJECTED' AND rejection_reason IS NOT NULL AND rejection_reason != ''
             GROUP BY rejection_reason ORDER BY cnt DESC LIMIT 8
         """)
 
-        timeline = await self._db.fetch("""
+        timeline = await self.fetch("""
             SELECT DATE(created_at) as day,
                    SUM(CASE WHEN stage IN ('REVIEWED','LIVE') THEN 1 ELSE 0 END) as approved,
                    SUM(CASE WHEN stage = 'REJECTED' THEN 1 ELSE 0 END) as rejected,
@@ -555,7 +618,7 @@ class Database:
             GROUP BY day ORDER BY day
         """)
 
-        keywords = await self._db.fetch("""
+        keywords = await self.fetch("""
             SELECT keyword,
                    COUNT(*) as total,
                    SUM(CASE WHEN stage IN ('REVIEWED','LIVE') THEN 1 ELSE 0 END) as approved,
@@ -565,7 +628,7 @@ class Database:
             GROUP BY keyword ORDER BY approved DESC, total DESC LIMIT 10
         """)
 
-        providers = await self._db.fetch("""
+        providers = await self.fetch("""
             SELECT ai_provider, COUNT(*) as cnt FROM products
             WHERE ai_provider IS NOT NULL AND ai_provider != ''
             GROUP BY ai_provider ORDER BY cnt DESC
@@ -582,7 +645,7 @@ class Database:
         }
 
     async def get_rejected_sample(self, limit: int = 30) -> list:
-        rows = await self._db.fetch("""
+        rows = await self.fetch("""
             SELECT id, title_translated, category, score, niche_fit, visual_appeal,
                    rejection_reason, keyword, orders, margin_pct
             FROM products
@@ -609,19 +672,19 @@ class Database:
     async def get_stats(self) -> dict:
         stats: dict = {}
         for stage in ("SCRAPED", "REVIEWED", "ENRICHED", "LIVE", "REJECTED"):
-            val = await self._db.fetchval("SELECT COUNT(*) FROM products WHERE stage=$1", stage)
+            val = await self.fetchval("SELECT COUNT(*) FROM products WHERE stage=$1", stage)
             stats[stage] = val if val else 0
 
-        val = await self._db.fetchval("SELECT COUNT(*) FROM jobs")
+        val = await self.fetchval("SELECT COUNT(*) FROM jobs")
         stats["total_jobs"] = val if val else 0
 
-        val = await self._db.fetchval("SELECT COUNT(*) FROM post_log WHERE posted_at::timestamp > (NOW() - INTERVAL '7 days')")
+        val = await self.fetchval("SELECT COUNT(*) FROM post_log WHERE posted_at::timestamp > (NOW() - INTERVAL '7 days')")
         stats["posted_7d"] = val if val else 0
 
-        val = await self._db.fetchval("SELECT AVG(margin_pct) FROM products WHERE stage='SCRAPED'")
+        val = await self.fetchval("SELECT AVG(margin_pct) FROM products WHERE stage='SCRAPED'")
         stats["avg_margin_pending"] = round(val or 0, 1)
 
-        val = await self._db.fetchval("SELECT AVG(score) FROM products WHERE stage='SCRAPED'")
+        val = await self.fetchval("SELECT AVG(score) FROM products WHERE stage='SCRAPED'")
         stats["avg_score_pending"] = round(val or 0, 1)
 
         total_reviewed = stats["REVIEWED"] + stats["ENRICHED"] + stats["REJECTED"]
