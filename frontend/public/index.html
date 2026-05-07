@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Lovu — Gifts for Two</title>
+  <meta name="description" content="A curated boutique of luxury gifts for couples. Discover something meaningful."/>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400&family=Inter:wght@300;400;500&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="assets/catalog.css"/>
+</head>
+<body>
+  <!-- Living mesh background -->
+  <div class="mesh-bg" aria-hidden="true">
+    <div class="blob blob-1"></div>
+    <div class="blob blob-2"></div>
+    <div class="blob blob-3"></div>
+    <div class="blob blob-4"></div>
+  </div>
+
+  <!-- ── Gallery View ──────────────────────────────────── -->
+  <div id="view-gallery" class="view active">
+
+    <!-- Header -->
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="wordmark" href="#">Lovu</a>
+        <p class="header-tagline">Curated gifts for two</p>
+      </div>
+    </header>
+
+    <!-- Category Switcher -->
+    <nav class="category-nav" id="category-nav" aria-label="Filter products by category">
+      <div class="category-track" id="category-track">
+        <div class="liquid-pill" id="liquid-pill"></div>
+        <button class="cat-btn active" data-cat="all"     id="cat-all">All Gifts</button>
+        <button class="cat-btn"        data-cat="jewelry" id="cat-jewelry">Jewelry</button>
+        <button class="cat-btn"        data-cat="tech"    id="cat-tech">Tech</button>
+        <button class="cat-btn"        data-cat="essentials" id="cat-essentials">Essentials</button>
+      </div>
+    </nav>
+
+    <!-- Gallery Grid -->
+    <main class="gallery-wrap" id="gallery-wrap">
+      <div class="bento-grid" id="bento-grid">
+        <!-- skeleton cards -->
+        <div class="product-card skeleton"></div>
+        <div class="product-card skeleton tall"></div>
+        <div class="product-card skeleton"></div>
+        <div class="product-card skeleton tall"></div>
+        <div class="product-card skeleton"></div>
+        <div class="product-card skeleton"></div>
+      </div>
+      <div class="load-more-wrap" id="load-more-wrap" style="display:none">
+        <button class="load-more-btn" id="load-more-btn">Load more gifts</button>
+      </div>
+      <div class="empty-state" id="empty-state" style="display:none">
+        <span class="empty-icon">🌸</span>
+        <p>More gifts coming soon</p>
+      </div>
+    </main>
+  </div>
+
+  <!-- ── Profile View ─────────────────────────────────── -->
+  <div id="view-profile" class="view">
+    <div class="profile-inner" id="profile-inner">
+      <!-- populated by catalog.js -->
+    </div>
+  </div>
+
+  <script src="assets/catalog.js"></script>
+</body>
+</html>

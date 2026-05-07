@@ -139,6 +139,17 @@ _FRONTEND_ABS = next(
 )
 log.info("Frontend path: %s", _FRONTEND_ABS)
 
+# Public boutique storefront (frontend/public/)
+_PUBLIC_ABS = next(
+    (os.path.abspath(p) for p in [
+        os.path.join(_BACKEND_DIR, "frontend", "public"),
+        os.path.join(_BACKEND_DIR, "..", "frontend", "public"),
+    ] if os.path.isdir(os.path.abspath(p))),
+    None,
+)
+log.info("Public storefront path: %s", _PUBLIC_ABS)
+
+
 @app.get("/robots.txt", response_class=PlainTextResponse)
 async def robots_txt():
     return "User-agent: *\nAllow: /\nUser-agent: facebookexternalhit\nAllow: /\n"
@@ -152,12 +163,29 @@ async def root():
             return FileResponse(index)
     return {"status": "DropOS backend running", "docs": "/docs", "api": "/api/stats"}
 
+
+@app.get("/shop")
+async def shop():
+    """Public-facing couple's boutique storefront."""
+    if _PUBLIC_ABS:
+        index = os.path.join(_PUBLIC_ABS, "index.html")
+        if os.path.exists(index):
+            return FileResponse(index)
+    return {"status": "Storefront not available"}
+
+
 # Serve static files from frontend/
 if _FRONTEND_ABS and os.path.isdir(_FRONTEND_ABS):
     app.mount("/static", StaticFiles(directory=_FRONTEND_ABS), name="static")
     assets_dir = os.path.join(_FRONTEND_ABS, "assets")
     if os.path.isdir(assets_dir):
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+# Serve public storefront assets at /shop/assets
+if _PUBLIC_ABS and os.path.isdir(_PUBLIC_ABS):
+    _pub_assets = os.path.join(_PUBLIC_ABS, "assets")
+    if os.path.isdir(_pub_assets):
+        app.mount("/shop/assets", StaticFiles(directory=_pub_assets), name="shop-assets")
 
 
 # ── Request models ─────────────────────────────────────────────────────────────
