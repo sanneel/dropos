@@ -283,6 +283,8 @@ class Database:
             "url",
             "has_chinese_text",
             "chinese_text_note",
+            "stage",
+            "rejection_reason",
         }
         updates = {k: v for k, v in (data or {}).items() if k in allowed}
         if "sell_price_eur" in updates:

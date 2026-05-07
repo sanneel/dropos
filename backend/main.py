@@ -651,6 +651,23 @@ async def ig_webhook_verify(hub_mode: str = Query(None, alias="hub.mode"), hub_v
         return PlainTextResponse(hub_challenge)
     raise HTTPException(403)
 
+@app.get("/api/scheduler/status")
+async def scheduler_status():
+    return get_scheduler_status(_scheduler)
+
+@app.get("/api/instagram/reply-log")
+async def get_ig_reply_log(limit: int = 50):
+    return await db.get_comment_reply_log(limit)
+
+class AITestRequest(BaseModel):
+    provider: str
+    key: Optional[str] = None
+
+@app.post("/api/ai/test")
+async def test_ai_connection(body: AITestRequest):
+    settings = await _settings()
+    return await ai_assistant.test_connection(body.provider, body.key, settings)
+
 @app.post("/api/instagram/webhook")
 async def ig_webhook_receive(request: Request, bg: BackgroundTasks):
     body = await request.json()

@@ -259,3 +259,25 @@ async def _groq_chat(message: str, settings: dict) -> Optional[dict]:
     except Exception as e:
         log.warning("Groq chat error: %s", e)
         return None
+async def test_connection(provider: str, key: Optional[str] = None, settings: Optional[dict] = None) -> dict:
+    """Test connectivity to an AI provider."""
+    settings = settings or {}
+    test_settings = settings.copy()
+    if key:
+        k_field = "gemini_key" if provider == "gemini" else "groq_key"
+        test_settings[k_field] = key
+
+    import time
+    start = time.time()
+    try:
+        if provider == "gemini":
+            res = await _gemini_chat("Say 'ok'", test_settings)
+        else:
+            res = await _groq_chat("Say 'ok'", test_settings)
+        
+        latency = int((time.time() - start) * 1000)
+        if res:
+            return {"ok": True, "provider": provider, "latency_ms": latency}
+        return {"ok": False, "error": "Provider returned empty response"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
