@@ -284,8 +284,13 @@ async def _settings() -> dict:
 def _remove_blank_sensitive_values(data: dict) -> None:
     for key in list(data.keys()):
         value = data[key]
-        if key in _SENSITIVE_SETTING_FIELDS and isinstance(value, str) and not value.strip():
-            data.pop(key)
+        if key in _SENSITIVE_SETTING_FIELDS and isinstance(value, str):
+            val_strip = value.strip()
+            # If the value is blank OR it's the masked representation from the UI,
+            # we remove it so it doesn't overwrite the existing real key in the DB.
+            if not val_strip or val_strip == "••••••••":
+                data.pop(key)
+
 
 async def _get_product_or_404(product_id: int) -> dict:
     product = await db.get_product(product_id)
