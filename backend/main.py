@@ -473,7 +473,7 @@ async def get_catalog(limit: int = 100, offset: int = 0, category: Optional[str]
     for p in products:
         safe_products.append({
             "id": p.get("id"),
-            "name": p.get("title_translated") or p.get("product_name") or "Product",
+            "name": p.get("product_name") or p.get("title_translated") or "Product",
             "price": p.get("sell_price_eur"),
             "images": p.get("images") or []
         })
