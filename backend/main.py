@@ -139,15 +139,17 @@ _FRONTEND_ABS = next(
 )
 log.info("Frontend path: %s", _FRONTEND_ABS)
 
-# Public boutique storefront (frontend/public/)
-_PUBLIC_ABS = next(
-    (os.path.abspath(p) for p in [
+def _resolve_public() -> str | None:
+    """Lazily resolve the public storefront directory at request time."""
+    candidates = [
         os.path.join(_BACKEND_DIR, "frontend", "public"),
         os.path.join(_BACKEND_DIR, "..", "frontend", "public"),
-    ] if os.path.isdir(os.path.abspath(p))),
-    None,
-)
-log.info("Public storefront path: %s", _PUBLIC_ABS)
+    ]
+    for p in candidates:
+        abs_p = os.path.abspath(p)
+        if os.path.isdir(abs_p):
+            return abs_p
+    return None
 
 
 @app.get("/robots.txt", response_class=PlainTextResponse)
@@ -167,11 +169,21 @@ async def root():
 @app.get("/shop")
 async def shop():
     """Public-facing couple's boutique storefront."""
-    if _PUBLIC_ABS:
-        index = os.path.join(_PUBLIC_ABS, "index.html")
+    pub = _resolve_public()
+    if pub:
+        index = os.path.join(pub, "index.html")
         if os.path.exists(index):
             return FileResponse(index)
-    return {"status": "Storefront not available"}
+    # Debug: log all candidate paths to help diagnose
+    log.warning(
+        "[/shop] index.html not found. Backend dir: %s | Candidates: %s",
+        _BACKEND_DIR,
+        [os.path.abspath(p) for p in [
+            os.path.join(_BACKEND_DIR, "frontend", "public", "index.html"),
+            os.path.join(_BACKEND_DIR, "..", "frontend", "public", "index.html"),
+        ]],
+    )
+    return {"status": "Storefront not available", "backend_dir": _BACKEND_DIR}
 
 
 # Serve static files from frontend/
@@ -182,10 +194,14 @@ if _FRONTEND_ABS and os.path.isdir(_FRONTEND_ABS):
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
 # Serve public storefront assets at /shop/assets
-if _PUBLIC_ABS and os.path.isdir(_PUBLIC_ABS):
-    _pub_assets = os.path.join(_PUBLIC_ABS, "assets")
-    if os.path.isdir(_pub_assets):
-        app.mount("/shop/assets", StaticFiles(directory=_pub_assets), name="shop-assets")
+# Use _FRONTEND_ABS as base since it's already resolved and proven to work
+if _FRONTEND_ABS:
+    _pub_assets_candidate = os.path.join(_FRONTEND_ABS, "public", "assets")
+    if os.path.isdir(_pub_assets_candidate):
+        app.mount("/shop/assets", StaticFiles(directory=_pub_assets_candidate), name="shop-assets")
+        log.info("Public assets mounted at /shop/assets from %s", _pub_assets_candidate)
+    else:
+        log.warning("Public assets dir not found at %s", _pub_assets_candidate)
 
 
 # ── Request models ─────────────────────────────────────────────────────────────
