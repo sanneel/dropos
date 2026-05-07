@@ -939,7 +939,8 @@ async def init_db():
                 await conn.execute("""
                     INSERT INTO admin_users (email, password_hash, created_at)
                     VALUES ($1, $2, $3)
-                    ON CONFLICT (email) DO NOTHING
+                    ON CONFLICT (email) DO UPDATE 
+                    SET password_hash = EXCLUDED.password_hash
                 """, admin_email.strip().lower(), admin_pass_hash, _now())
 
     log.info("Database schema initialised.")
