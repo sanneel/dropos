@@ -7,12 +7,9 @@
 'use strict';
 
 // ── Config ────────────────────────────────────────────
-const API_BASE = (() => {
-  const h = window.location.hostname;
-  return (h === 'localhost' || h === '127.0.0.1')
-    ? 'http://localhost:8000/api'
-    : window.location.origin + '/api';
-})();
+const BACKEND_URL = 'https://dropos-production.up.railway.app';
+const API_BASE     = `${BACKEND_URL}/api`;
+
 
 const IG_USERNAME = 'lovugifts'; // ← replace with your handle
 const PAGE_LIMIT  = 24;
@@ -321,12 +318,17 @@ function showEmpty() {
 
 function imageUrl(src) {
   if (!src) return null;
+  // Prepend backend URL for relative API paths (e.g. cleaned images)
+  if (src.startsWith('/api/')) {
+    return BACKEND_URL + src;
+  }
   if (src.startsWith('http')) {
     // proxy via backend to avoid CORS / mixed-content issues
     return `${API_BASE}/image?url=${encodeURIComponent(src)}`;
   }
   return src;
 }
+
 
 function lazyLoad(img) {
   const src = img.dataset.src;
