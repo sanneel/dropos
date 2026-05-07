@@ -17,10 +17,19 @@ from pydantic import BaseModel
 
 import httpx
 
-# ── Path Resolution (Railway Fix) ──────────────────────────────────────────
+# ── Path Resolution (Railway/Nixpacks Robustness) ──────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, ".."))
+
+# Robustly find PROJECT_ROOT:
+# 1. If 'frontend' exists in BASE_DIR, we are likely in a flattened structure (/app)
+# 2. Otherwise, we assume we are in 'backend/' and go up one level.
+if os.path.isdir(os.path.join(BASE_DIR, "frontend")):
+    PROJECT_ROOT = BASE_DIR
+else:
+    PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, ".."))
+
 PUBLIC_DIR = os.path.join(PROJECT_ROOT, "frontend", "public")
+
 
 # Ensure backend dir is in path for relative imports
 sys.path.insert(0, BASE_DIR)
@@ -143,18 +152,30 @@ async def robots_txt():
 @app.get("/")
 async def root():
     """Backoffice (Admin Dashboard)."""
-    index_path = os.path.join(BASE_DIR, "frontend", "index.html")
-    if os.path.exists(index_path):
-        return FileResponse(index_path)
-    return {"status": "DropOS Backoffice not found", "path": index_path, "docs": "/docs", "api": "/api/stats"}
+    # Try both backend/frontend and PROJECT_ROOT/frontend (admin is often moved around)
+    paths = [
+        os.path.join(BASE_DIR, "frontend", "index.html"),
+        os.path.join(PROJECT_ROOT, "backend", "frontend", "index.html"),
+        os.path.join(PROJECT_ROOT, "frontend", "index.html"),
+    ]
+    for p in paths:
+        if os.path.exists(p):
+            return FileResponse(p)
+    return {"status": "DropOS Backoffice not found", "searched": paths, "docs": "/docs"}
+
 
 @app.get("/shop")
 async def shop():
     """Public-facing boutique storefront."""
-    index_path = os.path.join(PUBLIC_DIR, "index.html")
-    if os.path.exists(index_path):
-        return FileResponse(index_path)
-    return {"status": "Storefront not available", "path": index_path}
+    paths = [
+        os.path.join(PUBLIC_DIR, "index.html"),
+        os.path.join(PROJECT_ROOT, "frontend", "public", "index.html"),
+    ]
+    for p in paths:
+        if os.path.exists(p):
+            return FileResponse(p)
+    return {"status": "Storefront not available", "searched": paths}
+
 
 # Mount Backoffice Assets
 admin_assets = os.path.join(BASE_DIR, "frontend", "assets")
