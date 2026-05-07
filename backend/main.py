@@ -143,6 +143,46 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def basic_auth_middleware(request: Request, call_next):
+    # 1. Bypass OPTIONS for CORS preflight (Vercel optimization)
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    # 2. Path-based bypass (allow public shop, assets and static files)
+    path = request.url.path
+    is_public = path in ["/", "/robots.txt", "/health", "/shop", "/api/catalog"] or \
+                path.startswith("/api/image") or \
+                path.startswith("/static") or \
+                path.startswith("/assets") or \
+                path.startswith("/shop/assets")
+
+    if is_public:
+        return await call_next(request)
+
+    # 3. Basic Auth logic
+    user = os.getenv("ADMIN_USER")
+    password = os.getenv("ADMIN_PASS")
+    
+    if not user or not password:
+        # Default to open if no credentials configured in environment
+        return await call_next(request)
+
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Basic "):
+        return Response("Unauthorized access", status_code=401, headers={"WWW-Authenticate": "Basic"})
+
+    try:
+        import base64
+        decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
+        u, p = decoded.split(":", 1)
+        if hmac.compare_digest(u, user) and hmac.compare_digest(p, password):
+            return await call_next(request)
+    except Exception:
+        pass
+
+    return Response("Unauthorized access", status_code=401, headers={"WWW-Authenticate": "Basic"})
+
 # ── Routes & Mounts ────────────────────────────────────────────────────────
 
 @app.exception_handler(404)
@@ -418,13 +458,29 @@ async def robots_txt_api():
     return "User-agent: *\nAllow: /\n"
 
 @app.get("/api/catalog")
-async def get_catalog(limit: int = 100, offset: int = 0):
+async def get_catalog(limit: int = 100, offset: int = 0, category: Optional[str] = None):
     """Consolidated endpoint for the public storefront."""
     reviewed = await db.get_products(stage=ProductStage.REVIEWED.value, limit=limit, offset=offset)
     live = await db.get_products(stage=ProductStage.LIVE.value, limit=limit, offset=offset)
+    products = reviewed + live
+    
+    # 1. Existing category filtering logic
+    if category:
+        products = [p for p in products if p.get("category") == category]
+        
+    # 2. Prune the payload to prevent leaking backend data (cost, margin, notes)
+    safe_products = []
+    for p in products:
+        safe_products.append({
+            "id": p.get("id"),
+            "name": p.get("title_translated") or p.get("product_name") or "Product",
+            "price": p.get("sell_price_eur"),
+            "images": p.get("images") or []
+        })
+        
     return {
-        "products": reviewed + live,
-        "total": len(reviewed) + len(live)
+        "products": safe_products,
+        "total": len(safe_products)
     }
 
 @app.get("/api/settings")
