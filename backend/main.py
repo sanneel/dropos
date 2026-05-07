@@ -434,12 +434,22 @@ async def get_settings():
 
 @app.patch("/api/settings")
 async def update_settings(body: SettingsUpdate):
-    data = body.model_dump(exclude_none=True)
-    _remove_blank_sensitive_values(data)
-    await db.update_settings(data)
-    await _configure_sheets_from_settings()
-    await _backup_settings_to_sheets()
-    return {"ok": True}
+    try:
+        data = body.model_dump(exclude_none=True)
+        _remove_blank_sensitive_values(data)
+        await db.update_settings(data)
+        
+        # Background tasks that shouldn't block the main response if they fail partially
+        try:
+            await _configure_sheets_from_settings()
+            await _backup_settings_to_sheets()
+        except Exception as e:
+            log.warning("Post-save settings sync failed: %s", e)
+            
+        return {"ok": True}
+    except Exception as e:
+        log.error("Failed to update settings: %s", e)
+        raise HTTPException(500, detail=str(e))
 
 @app.get("/api/stats")
 async def get_stats():
