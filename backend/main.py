@@ -281,7 +281,7 @@ async def spa_fallback(request: Request, exc: HTTPException):
     """Fallback for SPA routing: serve index.html for non-API 404s."""
     if not request.url.path.startswith("/api"):
         # Try Backoffice first
-        p = os.path.join(PROJECT_ROOT, "frontend", "index.html")
+        p = os.path.join(BASE_DIR, "frontend", "index.html")
         if os.path.exists(p): return FileResponse(p)
         # Then Shop
         p = os.path.join(PUBLIC_DIR, "index.html")
@@ -321,7 +321,7 @@ async def shop():
 
 
 # Mount Backoffice Assets
-admin_assets = os.path.join(PROJECT_ROOT, "frontend", "assets")
+admin_assets = os.path.join(BASE_DIR, "frontend", "assets")
 if os.path.isdir(admin_assets):
     app.mount("/assets", StaticFiles(directory=admin_assets), name="admin-assets")
 
