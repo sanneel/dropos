@@ -21,6 +21,15 @@ from passlib.context import CryptContext
 from pythonjsonlogger import jsonlogger
 import time
 from collections import defaultdict
+import ipaddress
+import socket
+
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+
+limiter = Limiter(key_func=get_remote_address)
 
 # ── Path Resolution (Railway/Nixpacks Robustness) ──────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -54,19 +63,9 @@ from worker import run_worker_loop, process_queued_items
 
 # ── Security & Auth ───────────────────────────────────────────────────────
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-login_attempts = defaultdict(list)
 
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
-
-def is_rate_limited(ip: str) -> bool:
-    now = time.time()
-    attempts = [t for t in login_attempts[ip] if now - t < 60]
-    login_attempts[ip] = attempts
-    if len(attempts) >= 5:
-        return True
-    login_attempts[ip].append(now)
-    return False
 
 # ── Logging ────────────────────────────────────────────────────────────────
 log = logging.getLogger(__name__)
@@ -171,7 +170,18 @@ async def lifespan(app: FastAPI):
     await db.close()
 
 # ── App Initialization ─────────────────────────────────────────────────────
-app = FastAPI(title="DropOS", lifespan=lifespan)
+is_dev = os.getenv("RAILWAY_ENVIRONMENT_NAME", "development").lower() in ["development", "local", ""]
+
+app = FastAPI(
+    title="DropOS", 
+    lifespan=lifespan,
+    docs_url="/docs" if is_dev else None,
+    redoc_url="/redoc" if is_dev else None,
+    openapi_url="/openapi.json" if is_dev else None
+)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 # Restrict CORS to specific domain
 frontend_domain = os.getenv("FRONTEND_DOMAIN", "http://localhost:8000")
@@ -186,7 +196,12 @@ app.add_middleware(
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
     response = await call_next(request)
-    response.headers["Content-Security-Policy"] = "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https:;"
+    supabase_url = os.getenv("SUPABASE_URL", "")
+    supabase_domain = urlparse(supabase_url).netloc if supabase_url else ""
+    csp_img = f"img-src 'self' data: blob: https://{supabase_domain};" if supabase_domain else "img-src 'self' data: blob:;"
+    
+    response.headers["Content-Security-Policy"] = f"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; {csp_img} connect-src 'self' https://{supabase_domain};"
+    response.headers["Server"] = "webserver"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -237,11 +252,8 @@ class LoginRequest(BaseModel):
     password: str
 
 @app.post("/api/auth/login")
-async def login(body: LoginRequest, request: Request, response: Response):
-    client_ip = request.client.host if request.client else "unknown"
-    if is_rate_limited(client_ip):
-        return JSONResponse({"detail": "Too many attempts"}, status_code=429)
-
+@limiter.limit("5/minute")
+async def login(request: Request, body: LoginRequest):
     user = await db.get_admin_user(body.email)
     if not user or not verify_password(body.password, user["password_hash"]):
         # Generic error message
@@ -621,9 +633,26 @@ async def update_product(product_id: int, body: ProductUpdate):
     await _backup_products_to_sheets()
     return {"ok": True, "product": updated}
 
+async def _is_private_ip(url_str: str) -> bool:
+    try:
+        hostname = urlparse(url_str).hostname
+        if not hostname: return True
+        loop = asyncio.get_running_loop()
+        addrs = await loop.getaddrinfo(hostname, None)
+        for addr in addrs:
+            ip = addr[4][0]
+            if ipaddress.ip_address(ip).is_private or ipaddress.ip_address(ip).is_loopback:
+                return True
+        return False
+    except Exception:
+        return True
+
 @app.get("/api/image")
 async def proxy_image(url: str):
     src = unquote(url or "").strip()
+    if await _is_private_ip(src):
+        raise HTTPException(403, "Access to private IP addresses is forbidden")
+    
     try:
         async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
             r = await client.get(src, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.1688.com/"})
