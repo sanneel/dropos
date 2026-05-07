@@ -151,7 +151,7 @@ async def basic_auth_middleware(request: Request, call_next):
 
     # 2. Path-based bypass (allow public shop, assets and static files)
     path = request.url.path
-    is_public = path in ["/", "/robots.txt", "/health", "/shop", "/api/catalog"] or \
+    is_public = path in ["/robots.txt", "/health", "/shop", "/api/catalog"] or \
                 path.startswith("/api/image") or \
                 path.startswith("/static") or \
                 path.startswith("/assets") or \
