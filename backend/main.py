@@ -34,7 +34,28 @@ from utils.google_auth import configure_google_credentials_from_env
 from worker import run_worker_loop, process_queued_items
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
+import os
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
+# --- PATH RESOLUTION ---
+# This file is in /app/backend/main.py
+# Your shop is in /app/frontend/public/
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, ".."))
+PUBLIC_DIR = os.path.join(PROJECT_ROOT, "frontend", "public")
+
+@app.get("/shop")
+async def serve_shop():
+    index_path = os.path.join(PUBLIC_DIR, "index.html")
+    if not os.path.exists(index_path):
+        # This will tell you EXACTLY where it's looking if it fails
+        return {"status": "error", "path_searched": index_path}
+    return FileResponse(index_path)
+
+# Important: This tells the HTML where to find the CSS/JS
+app.mount("/shop/assets", StaticFiles(directory=os.path.join(PUBLIC_DIR, "assets")), name="shop-assets")
 def _setup_app_logging():
     """Keep app loggers visible when uvicorn installs its own handlers."""
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
