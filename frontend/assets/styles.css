@@ -1383,3 +1383,19 @@ label { display: block; font-size: 11px; color: var(--t3); font-family: var(--ff
 .editable:hover {
   color: var(--accent);
 }
+
+.catalog-loading { padding: 40px; text-align: center; color: var(--t3); font-size: 13px; }
+
+/* ── Login ────────────────────────────────────────────────────────────────── */
+body.is-login #sidebar, body.is-login .topbar { display: none !important; }
+body.is-login #main { flex: 1; align-items: center; justify-content: center; background: var(--bg); }
+body.is-login #content { width: 100%; display: flex; align-items: center; justify-content: center; padding: 0; }
+
+.login-container { width: 100%; display: flex; align-items: center; justify-content: center; height: 100vh; }
+.login-box { width: 340px; background: var(--s1); border: 1px solid var(--b1); border-radius: var(--r-lg); padding: 32px 28px; box-shadow: 0 16px 40px rgba(0,0,0,.4); text-align: center; }
+.login-logo { width: 44px; height: 44px; background: var(--accent); border-radius: 12px; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center; font-family: var(--ff-d); font-size: 20px; font-weight: 800; color: #000; }
+.login-box h2 { font-family: var(--ff-d); font-size: 16px; font-weight: 700; color: var(--t1); margin-bottom: 24px; }
+.login-box .input-group { text-align: left; margin-bottom: 16px; }
+.login-box .input-group label { color: var(--t2); }
+.login-btn { width: 100%; justify-content: center; background: var(--accent); color: #000; font-weight: 700; border: none; padding: 10px; font-size: 14px; margin-top: 8px; border-radius: var(--r); }
+.login-btn:hover { opacity: .9; }

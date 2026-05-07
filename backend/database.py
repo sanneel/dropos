@@ -697,6 +697,10 @@ class Database:
 
         return stats
 
+    async def get_admin_user(self, email: str) -> Optional[dict]:
+        row = await self.fetchrow("SELECT * FROM admin_users WHERE email=$1", email.strip().lower())
+        return dict(row) if row else None
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -731,7 +735,6 @@ def _row_to_product(row) -> dict:
     if "has_chinese_text" in d:
         d["has_chinese_text"] = bool(d["has_chinese_text"])
     return d
-
 
 # ── Singleton ─────────────────────────────────────────────────────────────────
 
@@ -878,6 +881,15 @@ async def init_db():
                 )
             """)
 
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS admin_users (
+                    id            SERIAL PRIMARY KEY,
+                    email         TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    created_at    TEXT
+                )
+            """)
+
             defaults = {
                 "instagram_auto_reply_enabled": False,
                 "instagram_reply_rules": [],
@@ -919,5 +931,15 @@ async def init_db():
                     INSERT INTO settings (key, value) VALUES ($1, $2)
                     ON CONFLICT (key) DO NOTHING
                 """, k, val)
+
+            # Seed default admin user if environment variables are set
+            admin_email = os.getenv("ADMIN_EMAIL")
+            admin_pass_hash = os.getenv("ADMIN_PASSWORD_HASH")
+            if admin_email and admin_pass_hash:
+                await conn.execute("""
+                    INSERT INTO admin_users (email, password_hash, created_at)
+                    VALUES ($1, $2, $3)
+                    ON CONFLICT (email) DO NOTHING
+                """, admin_email.strip().lower(), admin_pass_hash, _now())
 
     log.info("Database schema initialised.")
