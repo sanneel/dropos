@@ -85,7 +85,7 @@ class Database:
     # ── Products ──────────────────────────────────────────────────────────────
 
     async def insert_product(self, p: dict, job_id: int):
-        await self._db.execute("""
+        await self.execute("""
             INSERT INTO products
             (job_id, source, source_id, title, title_translated, product_name,
              price_cny, cost_eur, sell_price_eur, margin_pct, orders, rating,
@@ -158,7 +158,7 @@ class Database:
         source_id = str(p.get("source_id") or "").strip()
         if not source_id:
             return
-        await self._db.execute("""
+        await self.execute("""
             INSERT INTO products
             (job_id, source, source_id, title, title_translated, product_name,
              price_cny, cost_eur, sell_price_eur, margin_pct, orders, rating,
@@ -265,10 +265,10 @@ class Database:
 
         sets = ", ".join(f"{k}=${i+1}" for i, k in enumerate(updates))
         vals = list(updates.values()) + [pid]
-        await self._db.execute(f"UPDATE products SET {sets} WHERE id=${len(vals)}", *vals)
+        await self.execute(f"UPDATE products SET {sets} WHERE id=${len(vals)}", *vals)
 
     async def update_product_note(self, pid: int, note: str):
-        await self._db.execute("UPDATE products SET review_note=$1 WHERE id=$2", note, pid)
+        await self.execute("UPDATE products SET review_note=$1 WHERE id=$2", note, pid)
 
     async def update_product_fields(self, pid: int, data: dict) -> Optional[dict]:
         allowed = {
@@ -295,17 +295,17 @@ class Database:
             return await self.get_product(pid)
         sets = ", ".join(f"{k}=${i+1}" for i, k in enumerate(updates))
         vals = list(updates.values()) + [pid]
-        await self._db.execute(f"UPDATE products SET {sets} WHERE id=${len(vals)}", *vals)
+        await self.execute(f"UPDATE products SET {sets} WHERE id=${len(vals)}", *vals)
         return await self.get_product(pid)
 
     async def log_post(self, pid: int):
-        await self._db.execute(
+        await self.execute(
             "INSERT INTO post_log (product_id, posted_at) VALUES ($1,$2)", pid, _now()
         )
 
     async def bulk_insert_pipeline(self, records: list) -> None:
         for r in records:
-            await self._db.execute("""
+            await self.execute("""
                 INSERT INTO pipeline_products
                 (job_id, source_id, title, product_name, image_url, url, price_cny,
                  cost_eur, sell_price_eur, orders, rating, margin_pct, raw_score,
@@ -339,7 +339,7 @@ class Database:
 
     async def insert_raw(self, p: dict, job_id: int) -> None:
         images = p.get("images") or []
-        await self._db.execute("""
+        await self.execute("""
             INSERT INTO products_raw
             (job_id, source, source_id, product_name, price, image_url, merchant, raw_data, created_at)
             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
@@ -485,7 +485,7 @@ class Database:
     async def update_job(self, job_id: int, **kwargs):
         sets = ", ".join(f"{k}=${i+1}" for i, k in enumerate(kwargs))
         vals = list(kwargs.values()) + [job_id]
-        await self._db.execute(f"UPDATE jobs SET {sets} WHERE id=${len(vals)}", *vals)
+        await self.execute(f"UPDATE jobs SET {sets} WHERE id=${len(vals)}", *vals)
 
     async def get_job(self, job_id: int) -> Optional[dict]:
         row = await self.fetchrow("SELECT * FROM jobs WHERE id=$1", job_id)
@@ -556,7 +556,7 @@ class Database:
     async def update_settings(self, data: dict):
         for k, v in data.items():
             val = json.dumps(v) if not isinstance(v, str) else v
-            await self._db.execute("""
+            await self.execute("""
                 INSERT INTO settings (key, value) VALUES ($1,$2)
                 ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value
             """, k, val)
@@ -568,7 +568,7 @@ class Database:
         return val is not None
 
     async def log_comment_reply(self, comment_id: str, matched_rule: str, reply_type: str = "comment") -> None:
-        await self._db.execute("""
+        await self.execute("""
             INSERT INTO comment_reply_log (comment_id, reply_type, replied_at, matched_rule)
             VALUES ($1,$2,$3,$4)
             ON CONFLICT (comment_id) DO NOTHING
