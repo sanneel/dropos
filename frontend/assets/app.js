@@ -181,7 +181,7 @@ async function cachedApi(path) {
 }
 
 async function api(path, method = 'GET', body = null) {
-  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  const opts = { method, headers: { 'Content-Type': 'application/json' }, credentials: 'include' };
   if (body !== null) opts.body = JSON.stringify(body);
   try {
     const r = await fetch(API + path, opts);

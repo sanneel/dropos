@@ -202,8 +202,7 @@ async def jwt_auth_middleware(request: Request, call_next):
     is_public = path in ["/robots.txt", "/health", "/shop", "/api/catalog", "/api/auth/login"] or \
                 path.startswith("/api/image") or \
                 path.startswith("/static") or \
-                path.startswith("/assets") or \
-                path.startswith("/shop/assets")
+                "/assets/" in path or path.endswith("/assets")
 
     if is_public:
         return await call_next(request)
@@ -253,7 +252,7 @@ async def login(body: LoginRequest, request: Request, response: Response):
         return JSONResponse({"detail": "Auth not configured"}, status_code=500)
 
     token = jwt.encode(
-        {"sub": str(user["id"]), "role": "admin", "exp": time.time() + 86400 * 7},
+        {"sub": str(user["id"]), "role": "admin", "exp": int(time.time() + 86400 * 7)},
         secret,
         algorithm="HS256"
     )
