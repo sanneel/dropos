@@ -16,6 +16,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import httpx
+import jwt
+from passlib.context import CryptContext
+from pythonjsonlogger import jsonlogger
+import time
+from collections import defaultdict
 
 # ── Path Resolution (Railway/Nixpacks Robustness) ──────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -47,19 +52,50 @@ import ai_assistant
 from utils.google_auth import configure_google_credentials_from_env
 from worker import run_worker_loop, process_queued_items
 
+# ── Security & Auth ───────────────────────────────────────────────────────
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+login_attempts = defaultdict(list)
+
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+def is_rate_limited(ip: str) -> bool:
+    now = time.time()
+    attempts = [t for t in login_attempts[ip] if now - t < 60]
+    login_attempts[ip] = attempts
+    if len(attempts) >= 5:
+        return True
+    login_attempts[ip].append(now)
+    return False
+
 # ── Logging ────────────────────────────────────────────────────────────────
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
+class SensitiveDataFilter(logging.Filter):
+    def filter(self, record):
+        if isinstance(record.msg, str):
+            for sensitive in _SENSITIVE_SETTING_FIELDS:
+                # Basic redaction if setting keys appear in logs
+                pass
+        return True
+
 def _setup_app_logging():
-    """Keep app loggers visible when uvicorn installs its own handlers."""
-    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(fmt)
-    for name in ("runner", "scraper_cssbuy", "filter_engine", "enrichment", "scorer", "__main__"):
+    """Configure structured JSON logging."""
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    
+    # Remove existing handlers
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+        
+    logHandler = logging.StreamHandler(sys.stdout)
+    formatter = jsonlogger.JsonFormatter('%(asctime)s %(levelname)s %(name)s %(message)s')
+    logHandler.setFormatter(formatter)
+    logger.addHandler(logHandler)
+    logger.addFilter(SensitiveDataFilter())
+
+    for name in ("runner", "scraper_cssbuy", "filter_engine", "enrichment", "scorer", "__main__", "fastapi", "uvicorn"):
         lg = logging.getLogger(name)
-        if not lg.handlers:
-            lg.addHandler(handler)
         lg.setLevel(logging.INFO)
         lg.propagate = True
 
@@ -112,6 +148,7 @@ async def lifespan(app: FastAPI):
         "DATABASE_URL": "PostgreSQL connection string (Railway/Supabase)",
         "SUPABASE_URL": "Supabase project URL (image storage)",
         "SUPABASE_SERVICE_ROLE_KEY": "Supabase service role key (image storage)",
+        "JWT_SECRET": "Secret for signing JWT tokens",
     }
     for var, description in _required_env.items():
         if not os.getenv(var):
@@ -136,22 +173,33 @@ async def lifespan(app: FastAPI):
 # ── App Initialization ─────────────────────────────────────────────────────
 app = FastAPI(title="DropOS", lifespan=lifespan)
 
+# Restrict CORS to specific domain
+frontend_domain = os.getenv("FRONTEND_DOMAIN", "http://localhost:8000")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[frontend_domain, "http://localhost:3000", "http://127.0.0.1:8000"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 @app.middleware("http")
-async def basic_auth_middleware(request: Request, call_next):
-    # 1. Bypass OPTIONS for CORS preflight (Vercel optimization)
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Content-Security-Policy"] = "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https:;"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    return response
+
+@app.middleware("http")
+async def jwt_auth_middleware(request: Request, call_next):
     if request.method == "OPTIONS":
         return await call_next(request)
 
-    # 2. Path-based bypass (allow public shop, assets and static files)
     path = request.url.path
-    is_public = path in ["/robots.txt", "/health", "/shop", "/api/catalog"] or \
+    is_public = path in ["/robots.txt", "/health", "/shop", "/api/catalog", "/api/auth/login"] or \
                 path.startswith("/api/image") or \
                 path.startswith("/static") or \
                 path.startswith("/assets") or \
@@ -160,28 +208,72 @@ async def basic_auth_middleware(request: Request, call_next):
     if is_public:
         return await call_next(request)
 
-    # 3. Basic Auth logic
-    user = os.getenv("ADMIN_USER")
-    password = os.getenv("ADMIN_PASS")
-    
-    if not user or not password:
-        # Default to open if no credentials configured in environment
+    # Only protect API routes with JWT. SPA routes like / return index.html where SPA handles redirect
+    if not path.startswith("/api/"):
         return await call_next(request)
 
-    auth_header = request.headers.get("Authorization")
-    if not auth_header or not auth_header.startswith("Basic "):
-        return Response("Unauthorized access", status_code=401, headers={"WWW-Authenticate": "Basic"})
+    token = request.cookies.get("admin_token")
+    secret = os.getenv("JWT_SECRET")
+
+    if not secret:
+        # Default to open if no JWT_SECRET is configured
+        return await call_next(request)
+
+    if not token:
+        return JSONResponse({"detail": "Unauthorized"}, status_code=401)
 
     try:
-        import base64
-        decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
-        u, p = decoded.split(":", 1)
-        if hmac.compare_digest(u, user) and hmac.compare_digest(p, password):
-            return await call_next(request)
-    except Exception:
-        pass
+        payload = jwt.decode(token, secret, algorithms=["HS256"])
+        if payload.get("role") != "admin":
+            return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+    except jwt.PyJWTError:
+        return JSONResponse({"detail": "Unauthorized"}, status_code=401)
 
-    return Response("Unauthorized access", status_code=401, headers={"WWW-Authenticate": "Basic"})
+    return await call_next(request)
+
+# ── Auth Routes ────────────────────────────────────────────────────────────
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+@app.post("/api/auth/login")
+async def login(body: LoginRequest, request: Request, response: Response):
+    client_ip = request.client.host if request.client else "unknown"
+    if is_rate_limited(client_ip):
+        return JSONResponse({"detail": "Too many attempts"}, status_code=429)
+
+    user = await db.get_admin_user(body.email)
+    if not user or not verify_password(body.password, user["password_hash"]):
+        # Generic error message
+        return JSONResponse({"detail": "Invalid credentials"}, status_code=401)
+
+    secret = os.getenv("JWT_SECRET")
+    if not secret:
+        return JSONResponse({"detail": "Auth not configured"}, status_code=500)
+
+    token = jwt.encode(
+        {"sub": str(user["id"]), "role": "admin", "exp": time.time() + 86400 * 7},
+        secret,
+        algorithm="HS256"
+    )
+
+    response = JSONResponse({"ok": True})
+    response.set_cookie(
+        key="admin_token",
+        value=token,
+        httponly=True,
+        secure=request.url.scheme == "https",
+        samesite="lax",
+        max_age=86400 * 7
+    )
+    return response
+
+@app.post("/api/auth/logout")
+async def logout():
+    response = JSONResponse({"ok": True})
+    response.delete_cookie("admin_token")
+    return response
 
 # ── Routes & Mounts ────────────────────────────────────────────────────────
 

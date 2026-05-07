@@ -185,13 +185,22 @@ async function api(path, method = 'GET', body = null) {
   if (body !== null) opts.body = JSON.stringify(body);
   try {
     const r = await fetch(API + path, opts);
+    if (r.status === 401 && path !== '/auth/login') {
+      currentPage = 'login';
+      renderPage();
+      throw new Error('Unauthorized');
+    }
     if (!r.ok) {
       const text = await r.text().catch(() => r.statusText);
       throw new Error(apiErrorMessage(text, r.status));
     }
     return r.json();
-  } catch(e) { toast(e.message || 'API error', 'error'); throw e; }
+  } catch(e) { 
+    if (e.message !== 'Unauthorized') toast(e.message || 'API error', 'error'); 
+    throw e; 
+  }
 }
+
 
 function refreshStats() {
   return api('/stats').then(s => { stats = s; buildNav(); }).catch(() => {});
@@ -2034,7 +2043,50 @@ const PAGE_RENDERERS = {
   analytics: renderAnalytics,
   chat:      renderChat,
   catalog:   renderCatalog,
+  login:     renderLogin,
 };
+
+async function renderLogin() {
+  document.body.classList.add('is-login');
+  const el = document.getElementById('app');
+  el.innerHTML = `
+    <div class="login-container">
+      <div class="login-box">
+        <div class="login-logo">D</div>
+        <h2>DropOS Backoffice</h2>
+        <form id="login-form" onsubmit="handleLogin(event)">
+          <div class="input-group">
+            <label>Email</label>
+            <input type="email" id="login-email" required />
+          </div>
+          <div class="input-group">
+            <label>Password</label>
+            <input type="password" id="login-password" required />
+          </div>
+          <button type="submit" class="btn login-btn" id="login-btn">Sign In</button>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+async function handleLogin(e) {
+  e.preventDefault();
+  const btn = document.getElementById('login-btn');
+  btn.textContent = 'Signing in...';
+  btn.disabled = true;
+  try {
+    const email = document.getElementById('login-email').value;
+    const password = document.getElementById('login-password').value;
+    await api('/auth/login', 'POST', { email, password });
+    document.body.classList.remove('is-login');
+    // Restore the app layout
+    window.location.reload();
+  } catch(err) {
+    btn.textContent = 'Sign In';
+    btn.disabled = false;
+  }
+}
 
 function _fadeIn() {
   const c = document.getElementById('content');
@@ -2044,6 +2096,15 @@ function _fadeIn() {
   requestAnimationFrame(() => { c.style.opacity = '1'; });
 }
 
+function renderPage() {
+  const fn = PAGE_RENDERERS[currentPage];
+  if (fn) {
+    if (currentPage !== 'login') _fadeIn();
+    fn();
+  } else {
+    console.warn('No renderer for page:', currentPage);
+  }
+}
 
 // ── Catalog ───────────────────────────────────────────────────────────────
 
@@ -2801,12 +2862,16 @@ function chooseStartPage() {
 }
 
 refreshStats().then(() => {
+  if (currentPage === 'login') return; // Do not overwrite page if login was triggered
   currentPage = chooseStartPage();
   buildNav();
   renderPage();
 });
-setInterval(refreshStats, 20000);
+setInterval(() => {
+  if (currentPage !== 'login') refreshStats();
+}, 20000);
 api('/settings').then(s => { scanSource = String(s.cssbuy_source || '1688'); }).catch(() => {});
+
 
 
 
