@@ -11,6 +11,7 @@ from urllib.parse import unquote, urlparse
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -182,6 +183,9 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
+
+# Trust proxy headers (e.g. from Railway) so slowapi gets the real client IP
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 # Restrict CORS to specific domain
 frontend_domain = os.getenv("FRONTEND_DOMAIN", "http://localhost:8000")
