@@ -93,9 +93,10 @@ def merge_env_with_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     merged = dict(settings or {})
     for env_key, setting_key in ENV_TO_SETTING.items():
         current = merged.get(setting_key)
-        if current not in (None, "", [], {}):
-            continue
-        merged[setting_key] = get_config(env_key, current)
+        # If the value in DB is None, empty, or the UI-masked placeholder string,
+        # we treat it as missing and allow the Environment Variable to take over.
+        if current in (None, "", [], {}, "••••••••"):
+            merged[setting_key] = get_config(env_key, current)
     return merged
 
 

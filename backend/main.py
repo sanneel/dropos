@@ -145,6 +145,18 @@ app.add_middleware(
 
 # ── Routes & Mounts ────────────────────────────────────────────────────────
 
+@app.exception_handler(404)
+async def spa_fallback(request: Request, exc: HTTPException):
+    """Fallback for SPA routing: serve index.html for non-API 404s."""
+    if not request.url.path.startswith("/api"):
+        # Try Backoffice first
+        p = os.path.join(BASE_DIR, "frontend", "index.html")
+        if os.path.exists(p): return FileResponse(p)
+        # Then Shop
+        p = os.path.join(PUBLIC_DIR, "index.html")
+        if os.path.exists(p): return FileResponse(p)
+    return JSONResponse(status_code=404, content={"detail": "Not Found"})
+
 @app.get("/robots.txt", response_class=PlainTextResponse)
 async def robots_txt():
     return "User-agent: *\nAllow: /\nUser-agent: facebookexternalhit\nAllow: /\n"
@@ -187,9 +199,9 @@ shop_assets = os.path.join(PUBLIC_DIR, "assets")
 if os.path.isdir(shop_assets):
     app.mount("/shop/assets", StaticFiles(directory=shop_assets), name="shop-assets")
 
-# Legacy/General static mount
-if os.path.isdir(os.path.join(BASE_DIR, "frontend")):
-    app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "frontend")), name="static")
+# Root static mount for generic files (last priority)
+if os.path.isdir(PUBLIC_DIR):
+    app.mount("/static", StaticFiles(directory=PUBLIC_DIR), name="static")
 
 # ── Request Models ──────────────────────────────────────────────────────────
 
