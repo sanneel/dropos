@@ -396,7 +396,22 @@ def _items_to_stages(items: list) -> dict:
 
 # ── API Endpoints ───────────────────────────────────────────────────────────
 
+@app.get("/api/robots.txt", response_class=PlainTextResponse)
+async def robots_txt_api():
+    return "User-agent: *\nAllow: /\n"
+
+@app.get("/api/catalog")
+async def get_catalog(limit: int = 100, offset: int = 0):
+    """Consolidated endpoint for the public storefront."""
+    reviewed = await db.get_products(stage=ProductStage.REVIEWED.value, limit=limit, offset=offset)
+    live = await db.get_products(stage=ProductStage.LIVE.value, limit=limit, offset=offset)
+    return {
+        "products": reviewed + live,
+        "total": len(reviewed) + len(live)
+    }
+
 @app.get("/api/settings")
+
 async def get_settings():
     return sanitize_settings(await _settings())
 
