@@ -931,3 +931,10 @@ async def _verify_ingest_token(auth: Optional[str], token: Optional[str]) -> Non
 async def health():
     return {"status": "ok"}
 
+@app.get("/api/debug-proxy")
+async def debug_proxy(request: Request):
+    return {
+        "direct_ip": request.client.host,
+        "x_forwarded_for": request.headers.get("x-forwarded-for"),
+    }
+
