@@ -297,24 +297,26 @@ async def login(request: Request, body: LoginRequest):
         algorithm="HS256"
     )
 
+    _secure = _env_name not in ("development", "local")
     response = JSONResponse({"ok": True})
     response.set_cookie(
         key="admin_token",
         value=token,
         httponly=True,
-        secure=request.url.scheme == "https",
+        secure=_secure,
         samesite="lax",
         max_age=86400 * 7
     )
     return response
 
 @app.post("/api/auth/logout")
-async def logout(request: Request):
+async def logout():
+    _secure = _env_name not in ("development", "local")
     response = JSONResponse({"ok": True})
     response.delete_cookie(
         key="admin_token",
         httponly=True,
-        secure=request.url.scheme == "https",
+        secure=_secure,
         samesite="lax",
     )
     return response
