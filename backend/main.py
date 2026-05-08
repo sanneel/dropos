@@ -923,3 +923,8 @@ async def _verify_ingest_token(auth: Optional[str], token: Optional[str]) -> Non
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+@app.get('/api/debug-hash')
+async def debug_hash():
+    user = await db.get_admin_user(os.getenv('ADMIN_EMAIL', ''))
+    return {'env': os.getenv('ADMIN_PASSWORD_HASH'), 'db': user.get('password_hash') if user else None}
