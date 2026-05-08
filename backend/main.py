@@ -206,7 +206,8 @@ async def security_headers_middleware(request: Request, call_next):
     supabase_domain = urlparse(supabase_url).netloc if supabase_url else ""
     csp_img = f"img-src 'self' data: blob: https://{supabase_domain};" if supabase_domain else "img-src 'self' data: blob:;"
     
-    response.headers["Content-Security-Policy"] = f"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; {csp_img} connect-src 'self' https://{supabase_domain};"
+    response.headers["Content-Security-Policy"] = f"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; {csp_img} connect-src 'self' https://{supabase_domain};"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     response.headers["Server"] = "webserver"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
@@ -668,7 +669,10 @@ async def proxy_image(url: str):
         async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
             r = await client.get(src, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.1688.com/"})
         if r.status_code != 200: raise HTTPException(r.status_code, "Fetch failed")
-        return Response(content=r.content, media_type=r.headers.get("content-type", "image/jpeg"), headers={"Cache-Control": "public, max-age=86400"})
+        content_type = r.headers.get("content-type", "")
+        if not content_type.startswith("image/"):
+            raise HTTPException(415, "URL does not point to an image")
+        return Response(content=r.content, media_type=content_type, headers={"Cache-Control": "public, max-age=86400"})
     except Exception as e:
         raise HTTPException(502, f"Proxy failed: {e}")
 

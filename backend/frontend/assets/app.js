@@ -2,6 +2,15 @@ const API = (window.location.hostname === 'localhost' || window.location.hostnam
   ? 'http://localhost:8000/api'
   : window.location.origin + '/api';
 
+function escHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function safeUrl(u) {
+  try { const p = new URL(u); return (p.protocol === 'https:' || p.protocol === 'http:') ? u : '#'; }
+  catch { return '#'; }
+}
+
 // ── Icons (SVG strings) ────────────────────────────────────────────────────
 const IC = {
   dashboard: `<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>`,
@@ -72,7 +81,7 @@ function buildNav() {
   let lastSection = null;
   for (const p of NAV_PAGES) {
     if (p.section && p.section !== lastSection) {
-      html += `<span class="nav-group-label">${p.section}</span>`;
+      html += `<span class="nav-group-label">${escHtml(p.section)}</span>`;
       lastSection = p.section;
     }
     const cnt = p.stageKey ? stats[p.stageKey] : null;
@@ -643,10 +652,10 @@ function productCard(p, mode) {
                <button class="pca-reject" onclick="event.stopPropagation();showRejectModal(${p.id})">Reject</button>`;
   }
 
-  const name = p.product_name || p.title_translated || p.title || 'Unknown';
-  const provider = p.ai_provider ? String(p.ai_provider).toUpperCase() : '';
+  const name = escHtml(p.product_name || p.title_translated || p.title || 'Unknown');
+  const provider = p.ai_provider ? escHtml(String(p.ai_provider).toUpperCase()) : '';
   const ordersLabel = p.source_platform === 'taobao' ? 'sales unknown' : `${(p.orders ?? 0).toLocaleString()} sold`;
-  const cat  = [p.keyword ? `#${p.keyword}` : '', p.category].filter(Boolean).join(' · ');
+  const cat  = [p.keyword ? `#${escHtml(p.keyword)}` : '', escHtml(p.category || '')].filter(Boolean).join(' · ');
 
   return `
     <div class="product-card${sel ? ' selected' : ''}" id="card-${p.id}" onclick="showDetail(${p.id})">
@@ -999,14 +1008,14 @@ async function showDetail(id) {
       <div class="detail-body">
         ${img ? `<img class="detail-img" src="${img}" onerror="this.style.display='none'">` : ''}
 
-        <div style="font-family:var(--ff-d);font-size:19px;font-weight:800;line-height:1.2;margin-bottom:4px">${p.product_name || '—'}</div>
-        <div style="font-size:11px;color:var(--t3);font-family:var(--ff-m);margin-bottom:${p.keyword ? '3px' : '14px'};line-height:1.5">${p.title_translated || p.title || ''}</div>
-        ${p.keyword ? `<div style="font-size:11px;color:var(--t3);margin-bottom:14px">Keyword: <span style="color:var(--accent)">${p.keyword}</span></div>` : ''}
+        <div style="font-family:var(--ff-d);font-size:19px;font-weight:800;line-height:1.2;margin-bottom:4px">${escHtml(p.product_name || '—')}</div>
+        <div style="font-size:11px;color:var(--t3);font-family:var(--ff-m);margin-bottom:${p.keyword ? '3px' : '14px'};line-height:1.5">${escHtml(p.title_translated || p.title || '')}</div>
+        ${p.keyword ? `<div style="font-size:11px;color:var(--t3);margin-bottom:14px">Keyword: <span style="color:var(--accent)">${escHtml(p.keyword)}</span></div>` : ''}
 
         ${p.has_chinese_text ? `
         <div class="detail-sec">
           <span class="detail-sec-lbl">Chinese text detected</span>
-          <div class="card-sm" style="font-size:12px;color:var(--amber);line-height:1.6">${p.chinese_text_note || 'Chinese text is visible in the product image.'}</div>
+          <div class="card-sm" style="font-size:12px;color:var(--amber);line-height:1.6">${escHtml(p.chinese_text_note || 'Chinese text is visible in the product image.')}</div>
         </div>` : ''}
 
         <div class="detail-sec">
@@ -1030,7 +1039,7 @@ async function showDetail(id) {
 
         <div class="detail-sec">
           <span class="detail-sec-lbl">Source performance
-            ${p.source_platform ? `<span class="badge badge-gray" style="margin-left:6px;font-size:10px">${p.source_platform}</span>` : ''}
+            ${p.source_platform ? `<span class="badge badge-gray" style="margin-left:6px;font-size:10px">${escHtml(p.source_platform)}</span>` : ''}
           </span>
           <div class="m3">
             <div class="mbox">
@@ -1045,7 +1054,7 @@ async function showDetail(id) {
             </div>
             <div class="mbox">
               <div class="mbox-lbl">Category</div>
-              <div class="mbox-val" style="font-size:12px">${p.category || '—'}</div>
+              <div class="mbox-val" style="font-size:12px">${escHtml(p.category || '—')}</div>
             </div>
           </div>
         </div>
@@ -1061,18 +1070,18 @@ async function showDetail(id) {
         ${p.caption ? `
         <div class="detail-sec">
           <span class="detail-sec-lbl">Instagram caption</span>
-          <div class="card-sm" style="font-size:12.5px;color:var(--t2);line-height:1.7">${p.caption}</div>
+          <div class="card-sm" style="font-size:12.5px;color:var(--t2);line-height:1.7">${escHtml(p.caption)}</div>
         </div>` : ''}
 
         <details class="detail-sec edit-box">
           <summary>Edit product</summary>
           <div class="form-group">
             <label>Store name</label>
-            <input type="text" id="edit-name" value="${(p.product_name || '').replace(/"/g,'&quot;')}"/>
+            <input type="text" id="edit-name" value="${escHtml(p.product_name || '')}"/>
           </div>
           <div class="form-group">
             <label>Short description</label>
-            <textarea id="edit-description" rows="3" style="width:100%;resize:vertical">${p.description || ''}</textarea>
+            <textarea id="edit-description" rows="3" style="width:100%;resize:vertical">${escHtml(p.description || '')}</textarea>
           </div>
           <div class="form-group">
             <label>Sell price</label>
@@ -1080,11 +1089,11 @@ async function showDetail(id) {
           </div>
           <div class="form-group">
             <label>Caption</label>
-            <textarea id="edit-caption" rows="5" style="width:100%;resize:vertical">${p.caption || ''}</textarea>
+            <textarea id="edit-caption" rows="5" style="width:100%;resize:vertical">${escHtml(p.caption || '')}</textarea>
           </div>
           <div class="form-group">
             <label>Hashtags</label>
-            <input type="text" id="edit-tags" value="${tags.join(', ')}"/>
+            <input type="text" id="edit-tags" value="${escHtml(tags.join(', '))}"/>
           </div>
           <button class="btn btn-green" onclick="saveProductEdit(${p.id})">Save product changes</button>
         </details>
@@ -1093,19 +1102,19 @@ async function showDetail(id) {
         <div class="detail-sec">
           <span class="detail-sec-lbl">Hashtags</span>
           <div style="display:flex;flex-wrap:wrap;gap:5px">
-            ${tags.map(h => `<span class="badge badge-purple">#${h.replace('#','')}</span>`).join('')}
+            ${tags.map(h => `<span class="badge badge-purple">#${escHtml(h.replace('#',''))}</span>`).join('')}
           </div>
         </div>` : ''}
 
         ${p.rejection_reason ? `
         <div class="detail-sec">
           <span class="detail-sec-lbl">Rejection reason</span>
-          <div class="card-sm" style="font-size:12px;color:var(--red)">${p.rejection_reason}</div>
+          <div class="card-sm" style="font-size:12px;color:var(--red)">${escHtml(p.rejection_reason)}</div>
         </div>` : ''}
 
         <div class="detail-sec">
           <span class="detail-sec-lbl">Review note</span>
-          <textarea id="review-note-input" rows="3" style="width:100%;resize:vertical" placeholder="Add a note…">${p.review_note || ''}</textarea>
+          <textarea id="review-note-input" rows="3" style="width:100%;resize:vertical" placeholder="Add a note…">${escHtml(p.review_note || '')}</textarea>
           <button class="btn btn-sm" style="margin-top:7px" onclick="saveNote(${p.id})">Save note</button>
         </div>
 
@@ -1119,7 +1128,7 @@ async function showDetail(id) {
           </div>
         </div>
 
-        ${p.url ? `<a href="${p.url}" target="_blank" style="display:block;text-align:center;color:var(--t3);font-size:11px;margin-top:14px;text-decoration:none;font-family:var(--ff-m)">View on source ↗</a>` : ''}
+        ${p.url ? `<a href="${safeUrl(p.url)}" target="_blank" rel="noopener noreferrer" style="display:block;text-align:center;color:var(--t3);font-size:11px;margin-top:14px;text-decoration:none;font-family:var(--ff-m)">View on source ↗</a>` : ''}
       </div>
     </div>`;
   document.body.appendChild(ov);
@@ -2265,9 +2274,6 @@ function catalogRow(p, editMode = false) {
   </tr>`;
 }
 
-function escHtml(s) {
-  return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
 
 function editCatalogRow(id) {
   if (_catalogEditId && _catalogEditId !== id) cancelCatalogEdit(_catalogEditId);
@@ -2619,10 +2625,6 @@ function renderChatProductCard(p) {
       ${actionBtns}
     </div>
   </div>`;
-}
-
-function escHtml(s) {
-  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
 }
 
 function formatChatText(s) {
