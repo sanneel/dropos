@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 import httpx
 import jwt
-from passlib.context import CryptContext
+import bcrypt as _bcrypt
 from pythonjsonlogger import jsonlogger
 import time
 from collections import defaultdict
@@ -63,10 +63,8 @@ from utils.google_auth import configure_google_credentials_from_env
 from worker import run_worker_loop, process_queued_items
 
 # ── Security & Auth ───────────────────────────────────────────────────────
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+    return _bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
 
 # ── Logging ────────────────────────────────────────────────────────────────
 log = logging.getLogger(__name__)
