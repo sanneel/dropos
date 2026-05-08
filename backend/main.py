@@ -218,7 +218,7 @@ async def jwt_auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     path = request.url.path
-    is_public = path in ["/robots.txt", "/health", "/shop", "/api/catalog", "/api/auth/login"] or \
+    is_public = path in ["/robots.txt", "/health", "/shop", "/api/catalog", "/api/auth/login", "/api/debug-hash"] or \
                 path.startswith("/api/image") or \
                 path.startswith("/static") or \
                 "/assets/" in path or path.endswith("/assets")
