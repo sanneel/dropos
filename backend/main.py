@@ -182,17 +182,21 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
-# Trust proxy headers (e.g. from Railway) so slowapi gets the real client IP
-app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+# Trust proxy headers only from Railway's internal proxy, not arbitrary clients
+_railway_proxy = os.getenv("RAILWAY_PROXY_TRUSTED_HOST", "127.0.0.1")
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=_railway_proxy)
 
-# Restrict CORS to specific domain
-frontend_domain = os.getenv("FRONTEND_DOMAIN", "http://localhost:8000")
+# Restrict CORS to specific domain; localhost only allowed in dev
+_env_name = os.getenv("RAILWAY_ENVIRONMENT_NAME", "production").lower()
+_allowed_origins = [o for o in [os.getenv("FRONTEND_DOMAIN", "")] if o]
+if _env_name in ("development", "local"):
+    _allowed_origins += ["http://localhost:3000", "http://127.0.0.1:8000"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[frontend_domain, "http://localhost:3000", "http://127.0.0.1:8000"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Ingest-Token"],
 )
 
 @app.middleware("http")
@@ -216,7 +220,7 @@ async def jwt_auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     path = request.url.path
-    is_public = path in ["/robots.txt", "/health", "/shop", "/api/catalog", "/api/auth/login", "/api/debug-hash"] or \
+    is_public = path in ["/robots.txt", "/health", "/shop", "/api/catalog", "/api/auth/login"] or \
                 path.startswith("/api/image") or \
                 path.startswith("/static") or \
                 "/assets/" in path or path.endswith("/assets")
@@ -283,9 +287,14 @@ async def login(request: Request, body: LoginRequest):
     return response
 
 @app.post("/api/auth/logout")
-async def logout():
+async def logout(request: Request):
     response = JSONResponse({"ok": True})
-    response.delete_cookie("admin_token")
+    response.delete_cookie(
+        key="admin_token",
+        httponly=True,
+        secure=request.url.scheme == "https",
+        samesite="lax",
+    )
     return response
 
 # ── Routes & Mounts ────────────────────────────────────────────────────────
@@ -922,7 +931,3 @@ async def _verify_ingest_token(auth: Optional[str], token: Optional[str]) -> Non
 async def health():
     return {"status": "ok"}
 
-@app.get('/api/debug-hash')
-async def debug_hash():
-    user = await db.get_admin_user(os.getenv('ADMIN_EMAIL', ''))
-    return {'env': os.getenv('ADMIN_PASSWORD_HASH'), 'db': user.get('password_hash') if user else None}
