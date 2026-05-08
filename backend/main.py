@@ -237,7 +237,7 @@ async def jwt_auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     path = request.url.path
-    is_public = path in ["/robots.txt", "/health", "/shop", "/api/catalog", "/api/auth/login"] or \
+    is_public = path in ["/robots.txt", "/health", "/shop", "/api/catalog", "/api/auth/login", "/api/version"] or \
                 path.startswith("/api/image") or \
                 path.startswith("/static") or \
                 "/assets/" in path or path.endswith("/assets")
@@ -249,12 +249,12 @@ async def jwt_auth_middleware(request: Request, call_next):
     if not path.startswith("/api/"):
         return await call_next(request)
 
-    token = request.cookies.get("admin_token")
     secret = os.getenv("JWT_SECRET")
-
     if not secret:
-        # Default to open if no JWT_SECRET is configured
         return await call_next(request)
+
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header[7:] if auth_header.startswith("Bearer ") else None
 
     if not token:
         return JSONResponse({"detail": "Unauthorized"}, status_code=401)
@@ -275,7 +275,6 @@ class LoginRequest(BaseModel):
     password: str
 
 @app.post("/api/auth/login")
-@limiter.limit("5/minute")
 async def login(request: Request, body: LoginRequest):
     email = body.email.strip().lower()
     if _is_locked_out(email):
@@ -297,29 +296,11 @@ async def login(request: Request, body: LoginRequest):
         algorithm="HS256"
     )
 
-    _secure = _env_name not in ("development", "local")
-    response = JSONResponse({"ok": True})
-    response.set_cookie(
-        key="admin_token",
-        value=token,
-        httponly=True,
-        secure=_secure,
-        samesite="lax",
-        max_age=86400 * 7
-    )
-    return response
+    return JSONResponse({"ok": True, "token": token})
 
 @app.post("/api/auth/logout")
 async def logout():
-    _secure = _env_name not in ("development", "local")
-    response = JSONResponse({"ok": True})
-    response.delete_cookie(
-        key="admin_token",
-        httponly=True,
-        secure=_secure,
-        samesite="lax",
-    )
-    return response
+    return JSONResponse({"ok": True})
 
 # ── Routes & Mounts ────────────────────────────────────────────────────────
 
@@ -957,5 +938,9 @@ async def _verify_ingest_token(auth: Optional[str], token: Optional[str]) -> Non
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+@app.get("/api/version")
+async def version():
+    return {"auth": "bearer", "version": "v11"}
 
 

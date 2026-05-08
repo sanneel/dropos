@@ -2,6 +2,12 @@ const API = (window.location.hostname === 'localhost' || window.location.hostnam
   ? 'http://localhost:8000/api'
   : window.location.origin + '/api';
 
+// ── Auth token (Bearer / localStorage) ────────────────────────────────────
+const TOKEN_KEY = 'dropos_admin_token';
+function getToken() { return localStorage.getItem(TOKEN_KEY); }
+function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
+function clearToken() { localStorage.removeItem(TOKEN_KEY); }
+
 function escHtml(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -193,11 +199,15 @@ async function cachedApi(path) {
 let _isLoggedOut = false;
 
 async function api(path, method = 'GET', body = null) {
-  const opts = { method, headers: { 'Content-Type': 'application/json' }, credentials: 'include' };
+  const headers = { 'Content-Type': 'application/json' };
+  const token = getToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const opts = { method, headers };
   if (body !== null) opts.body = JSON.stringify(body);
   try {
     const r = await fetch(API + path, opts);
     if (r.status === 401) {
+      clearToken();
       if (path !== '/auth/login' && !_isLoggedOut) {
         _isLoggedOut = true;
         currentPage = 'login';
@@ -211,7 +221,6 @@ async function api(path, method = 'GET', body = null) {
     }
     return r.json();
   } catch(e) {
-    // Never show toast for auth errors — the login screen handles it visually
     if (e.message !== 'Unauthorized' && !_isLoggedOut) toast(e.message || 'API error', 'error');
     throw e;
   }
@@ -2072,12 +2081,13 @@ async function renderLogin() {
         <form id="login-form" onsubmit="handleLogin(event)">
           <div class="input-group">
             <label>Email</label>
-            <input type="email" id="login-email" required />
+            <input type="email" id="login-email" required autocomplete="email" />
           </div>
           <div class="input-group">
             <label>Password</label>
-            <input type="password" id="login-password" required />
+            <input type="password" id="login-password" required autocomplete="current-password" />
           </div>
+          <div id="login-error" style="display:none;color:#e53e3e;font-size:0.875rem;margin-bottom:0.5rem;"></div>
           <button type="submit" class="btn login-btn" id="login-btn">Sign In</button>
         </form>
       </div>
@@ -2085,21 +2095,35 @@ async function renderLogin() {
   `;
 }
 
+function _loginError(msg) {
+  const btn = document.getElementById('login-btn');
+  const errEl = document.getElementById('login-error');
+  if (btn) { btn.textContent = 'Sign In'; btn.disabled = false; }
+  if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; }
+}
+
 async function handleLogin(e) {
   e.preventDefault();
-  const btn = document.getElementById('login-btn');
-  btn.textContent = 'Signing in...';
-  btn.disabled = true;
   try {
-    const email = document.getElementById('login-email').value;
+    const btn = document.getElementById('login-btn');
+    const errEl = document.getElementById('login-error');
+    if (errEl) errEl.style.display = 'none';
+    if (btn) { btn.textContent = 'Signing in...'; btn.disabled = true; }
+    const email = document.getElementById('login-email').value.trim();
     const password = document.getElementById('login-password').value;
-    await api('/auth/login', 'POST', { email, password });
-    document.body.classList.remove('is-login');
-    // Restore the app layout
-    window.location.reload();
+    const data = await api('/auth/login', 'POST', { email, password });
+    if (!data || !data.token) {
+      _loginError('Server error: no token returned.');
+      return;
+    }
+    setToken(data.token);
+    const ok = await bootApp();
+    if (!ok) _loginError('Authenticated but app failed to load. Please try again.');
   } catch(err) {
-    btn.textContent = 'Sign In';
-    btn.disabled = false;
+    const msg = err.message === 'Unauthorized'
+      ? 'Invalid email or password.'
+      : (err.message || 'Login failed. Please try again.');
+    _loginError(msg);
   }
 }
 
@@ -2111,15 +2135,6 @@ function _fadeIn() {
   requestAnimationFrame(() => { c.style.opacity = '1'; });
 }
 
-function renderPage() {
-  const fn = PAGE_RENDERERS[currentPage];
-  if (fn) {
-    if (currentPage !== 'login') _fadeIn();
-    fn();
-  } else {
-    console.warn('No renderer for page:', currentPage);
-  }
-}
 
 // ── Catalog ───────────────────────────────────────────────────────────────
 
@@ -2344,10 +2359,12 @@ function debCatalogSearch(val) {
 
 
 async function renderPage() {
+  if (currentPage !== 'login') _fadeIn();
   const fn = PAGE_RENDERERS[currentPage];
   if (fn) await fn().catch(e => {
-    document.getElementById('content').innerHTML =
-      `<div style="color:var(--red);padding:20px;font-family:var(--ff-m);font-size:12px">Error: ${e.message}</div>`;
+    const c = document.getElementById('content');
+    if (c) c.innerHTML =
+      `<div style="color:var(--red);padding:20px;font-family:var(--ff-m);font-size:12px">Error: ${escHtml(e.message)}</div>`;
   });
 }
 
@@ -2869,24 +2886,33 @@ function chooseStartPage() {
   return 'dashboard';
 }
 
-// ── Boot: check auth first, then load app ─────────────────────────────────
-(async () => {
+// ── Boot ──────────────────────────────────────────────────────────────────
+async function bootApp() {
+  if (!getToken()) {
+    _isLoggedOut = true;
+    currentPage = 'login';
+    await renderPage();
+    return false;
+  }
   try {
-    // Single auth-check request. If this 401s, the api() interceptor shows login and sets _isLoggedOut.
     stats = await api('/stats');
   } catch(e) {
-    // Not authenticated — login page is already shown, stop here.
-    return;
+    clearToken();
+    _isLoggedOut = true;
+    currentPage = 'login';
+    await renderPage();
+    return false;
   }
-  // Authenticated — boot the full app
   _isLoggedOut = false;
   currentPage = chooseStartPage();
   buildNav();
-  renderPage();
-  // Load non-critical settings silently after boot
+  await renderPage();
   api('/settings').then(s => { scanSource = String(s.cssbuy_source || '1688'); }).catch(() => {});
   setInterval(() => { if (currentPage !== 'login') refreshStats(); }, 20000);
-})();
+  return true;
+}
+
+bootApp();
 
 
 
