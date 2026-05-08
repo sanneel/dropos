@@ -66,6 +66,22 @@ from worker import run_worker_loop, process_queued_items
 def verify_password(plain_password, hashed_password):
     return _bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
 
+_LOGIN_FAILURES: dict[str, list[float]] = defaultdict(list)
+_LOCKOUT_MAX = 5
+_LOCKOUT_WINDOW = 300  # 5 minutes
+
+def _is_locked_out(email: str) -> bool:
+    now = time.time()
+    recent = [t for t in _LOGIN_FAILURES[email] if now - t < _LOCKOUT_WINDOW]
+    _LOGIN_FAILURES[email] = recent
+    return len(recent) >= _LOCKOUT_MAX
+
+def _record_failure(email: str):
+    _LOGIN_FAILURES[email].append(time.time())
+
+def _clear_failures(email: str):
+    _LOGIN_FAILURES.pop(email, None)
+
 # ── Logging ────────────────────────────────────────────────────────────────
 log = logging.getLogger(__name__)
 
@@ -261,11 +277,16 @@ class LoginRequest(BaseModel):
 @app.post("/api/auth/login")
 @limiter.limit("5/minute")
 async def login(request: Request, body: LoginRequest):
-    user = await db.get_admin_user(body.email)
+    email = body.email.strip().lower()
+    if _is_locked_out(email):
+        return JSONResponse({"detail": "Too many failed attempts. Try again later."}, status_code=429)
+
+    user = await db.get_admin_user(email)
     if not user or not verify_password(body.password, user["password_hash"]):
-        # Generic error message
+        _record_failure(email)
         return JSONResponse({"detail": "Invalid credentials"}, status_code=401)
 
+    _clear_failures(email)
     secret = os.getenv("JWT_SECRET")
     if not secret:
         return JSONResponse({"detail": "Auth not configured"}, status_code=500)

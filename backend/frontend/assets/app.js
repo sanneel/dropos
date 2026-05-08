@@ -2014,8 +2014,8 @@ async function renderPipeline() {
                   : `<div style="width:100%;aspect-ratio:1;background:var(--s3);display:flex;align-items:center;justify-content:center;color:var(--t4);font-size:20px">?</div>`
                 }
                 <div class="pl-card-body">
-                  <div class="pl-card-title">${p.title||'—'}</div>
-                  ${p.filter_reason ? `<div class="pl-card-reason">${p.filter_reason}</div>` : ''}
+                  <div class="pl-card-title">${escHtml(p.title||'—')}</div>
+                  ${p.filter_reason ? `<div class="pl-card-reason">${escHtml(p.filter_reason)}</div>` : ''}
                   <div class="pl-card-score">
                     raw ${Number(p.raw_score||0).toFixed(0)}
                     ${p.ai_score ? ` · AI ${Number(p.ai_score||0).toFixed(1)}` : ''}
