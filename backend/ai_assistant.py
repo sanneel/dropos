@@ -138,6 +138,8 @@ async def chat(message: str, context: dict, settings: dict) -> dict:
     recent_jobs = context.get("recent_jobs", [])
     active_recommendations = context.get("active_recommendations", [])
 
+    _dump = lambda obj: json.dumps(obj, ensure_ascii=False, default=str)
+
     context_block = f"""=== PIPELINE STATS ===
 Pending (ENRICHED): {stats.get('ENRICHED', 0)}
 In text-removal: {stats.get('TEXT_REMOVAL', 0)}
@@ -149,22 +151,22 @@ Posted last 7 days: {stats.get('posted_7d', 0)}
 Approval rate: {stats.get('approval_rate', 0)}%
 
 === RECENT SCANS ===
-{json.dumps(recent_jobs, ensure_ascii=False) if recent_jobs else 'No scans yet'}
+{_dump(recent_jobs) if recent_jobs else 'No scans yet'}
 
 === ANALYTICS SUMMARY ===
-{json.dumps(analytics_summary, ensure_ascii=False)}
+{_dump(analytics_summary)}
 
 === ACTIVE AI RECOMMENDATIONS ===
-{json.dumps(active_recommendations, ensure_ascii=False) if active_recommendations else 'None'}
+{_dump(active_recommendations) if active_recommendations else 'None'}
 
 === REJECTED PRODUCTS (top by score, for reconsideration) ===
-{json.dumps(rejected_sample, ensure_ascii=False)}
+{_dump(rejected_sample)}
 
 === APPROVED PRODUCTS SAMPLE ===
-{json.dumps(approved_sample, ensure_ascii=False)}
+{_dump(approved_sample)}
 
 === PENDING PRODUCTS (awaiting review) ===
-{json.dumps(pending_sample, ensure_ascii=False)}
+{_dump(pending_sample)}
 """
 
     user_msg = f"{context_block}\n\n=== USER MESSAGE ===\n{message}"
