@@ -1663,6 +1663,11 @@ async def init_db():
                 # No behavior change when false — identical to production baseline.
                 "ai_context_injection": False,
                 # Peak-hour Instagram auto-posting (Settings → Posting schedule)
+                # Content writer (second model next to Gemini)
+                "content_provider": "auto",
+                "content_rewrite_enabled": True,
+                "anthropic_model": "claude-opus-5",
+                "openai_model": "gpt-5-mini",
                 "post_schedule_enabled": False,
                 "post_times": ["19:00", "21:00"],
                 "post_timezone": "Asia/Tbilisi",

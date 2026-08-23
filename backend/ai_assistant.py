@@ -175,6 +175,13 @@ Approval rate: {stats.get('approval_rate', 0)}%
 
     # Try Gemini first (better reasoning)
     result = await _gemini_chat(user_msg, settings)
+    if result is None:
+        import content_ai
+        if content_ai.pick_provider(settings) in ("claude", "openai"):
+            raw = await content_ai.complete_json(_SYSTEM, user_msg, settings, max_tokens=4000)
+            if isinstance(raw, dict):
+                raw.setdefault("products", []); raw.setdefault("edits", []); raw.setdefault("product_ids", [])
+                result = raw
     if result:
         return result
 

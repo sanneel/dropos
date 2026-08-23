@@ -21,6 +21,7 @@ from models import ProductStage          # NOT from main — that causes a circu
 from services.images import process_image
 import activity
 import autopilot
+import content_ai
 import decision_memory
 import instagram
 
@@ -310,6 +311,7 @@ async def process_queued_items():
 
             if products:
                 settings = merge_env_with_settings(await db.get_settings())
+                products = [await content_ai.maybe_rewrite_caption(db, p, settings) for p in products]
                 results = await instagram.post_batch(products, settings)
                 for p in products:
                     pid = p["id"]

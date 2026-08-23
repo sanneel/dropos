@@ -111,7 +111,8 @@ class PipelineScheduler:
 
     async def _keyword_generation(self, settings: dict) -> None:
         """Autopilot: top up each brand's keyword pool with AI-generated candidates."""
-        if not autopilot.enabled(settings) or not autopilot.has_gemini(settings):
+        import content_ai
+        if not autopilot.enabled(settings) or not content_ai.content_ready(settings):
             return
         import keyword_lab
         for brand in await db.list_brands():

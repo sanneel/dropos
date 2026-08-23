@@ -36,6 +36,7 @@ function setupPanel(s) {
     { ok: !!(s.instagram_access_token_set && s.instagram_user_id), title: 'Instagram', desc: (s.instagram_access_token_set && s.instagram_user_id) ? `Posting to account ${escHtml(s.instagram_user_id)}.` : 'Page access token + business account ID. Until then posts are simulated.', tab: 'connections' },
     { ok: !!s.image_storage_set, soft: true, title: 'Image storage (Supabase)', desc: s.image_storage_set ? 'Photos are re-hosted on a public URL Instagram can always fetch.' : 'Optional but recommended: supplier CDN links usually work, Supabase Storage (free) always works. Set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY in .env.', tab: 'connections' },
     { ok: !!s.clipdrop_key_set, soft: true, title: 'Photo cleaning (Clipdrop)', desc: s.clipdrop_key_set ? 'Chinese text / watermarks are removed automatically.' : 'Optional: cleans Chinese text from photos so they can be posted. 100 free images / month.', tab: 'connections' },
+    { ok: !!(s.anthropic_key_set || s.openai_key_set), soft: true, title: 'Content writer (Claude / OpenAI)', desc: (s.anthropic_key_set || s.openai_key_set) ? `Captions are rewritten by ${escHtml(s.content_provider === 'auto' ? (s.anthropic_key_set ? 'Claude' : 'OpenAI') : s.content_provider || 'auto')} right before posting.` : 'Optional: a second model writes stronger Georgian captions (hook → desire → CTA) at post time, generates keywords and powers the Assistant.', tab: 'connections' },
     (() => { const sc = (ap.stages || []).find(x => x.key === 'scan') || { blockers: [] };
        const kwOk = !sc.blockers.some(b => /brands page/i.test(b));
        return { ok: kwOk, title: 'Brands & keywords', desc: kwOk ? (sc.detail || 'Keyword pools are ready.') : sc.blockers.find(b => /brands page/i.test(b)), action: `<button class="btn btn-sm ${kwOk ? '' : 'btn-primary'}" onclick="navigate('brands')">${kwOk ? 'Open Brands' : 'Set up'}</button>` }; })(),
@@ -72,6 +73,27 @@ function connectionsPanel(s) {
         <div id="groq-test-result" class="help" style="display:none"></div>
         <div class="kv" style="margin-top:14px"><span>Clipdrop <span class="muted">(photo cleaning)</span></span>${statusChip(s.clipdrop_key_set, 'Active')}</div>
         ${fieldRow('Clipdrop API key', secretInput('s-clipdrop', s.clipdrop_key_set, 'sk_…  (clipdrop.co/apis — 100 free / month)'))}
+      </div>
+
+      <div class="card">
+        <div class="card-hd"><h3>Content writer</h3><span class="muted">captions · keywords · assistant</span></div>
+        <div class="help" style="margin-bottom:10px">Gemini stays the <b>eyes</b> (it scores product photos). A second model can be the <b>writer</b>:
+          it rewrites the Instagram caption right before each post, generates keywords, and answers in the Assistant.</div>
+        ${fieldRow('Writer model', `<select id="s-content-provider">
+            <option value="auto"   ${(s.content_provider||'auto')==='auto'   ? 'selected':''}>Auto — best available (Claude → OpenAI → Gemini → Groq)</option>
+            <option value="claude" ${s.content_provider==='claude' ? 'selected':''}>Claude (Anthropic)</option>
+            <option value="openai" ${s.content_provider==='openai' ? 'selected':''}>OpenAI</option>
+            <option value="gemini" ${s.content_provider==='gemini' ? 'selected':''}>Gemini (same key as scoring)</option>
+            <option value="groq"   ${s.content_provider==='groq'   ? 'selected':''}>Groq</option>
+          </select>`)}
+        <div class="kv" style="margin-top:8px"><span>Claude</span>${statusChip(s.anthropic_key_set, 'Active')}<button class="btn btn-sm" onclick="testApiKey('claude')" id="test-claude-btn">Test</button></div>
+        ${fieldRow('Claude API key', secretInput('s-anthropic', s.anthropic_key_set, 'sk-ant-…  (console.anthropic.com)'))}
+        ${fieldRow('Claude model', `<input type="text" id="s-anthropic-model" value="${escHtml(s.anthropic_model || 'claude-opus-5')}" class="mono"/>`, 'Default claude-opus-5 (best quality). claude-sonnet-5 or claude-haiku-4-5 are cheaper — your call.')}
+        <div id="claude-test-result" class="help" style="display:none"></div>
+        <div class="kv" style="margin-top:12px"><span>OpenAI</span>${statusChip(s.openai_key_set, 'Active')}<button class="btn btn-sm" onclick="testApiKey('openai')" id="test-openai-btn">Test</button></div>
+        ${fieldRow('OpenAI API key', secretInput('s-openai', s.openai_key_set, 'sk-…  (platform.openai.com)'))}
+        ${fieldRow('OpenAI model', `<input type="text" id="s-openai-model" value="${escHtml(s.openai_model || 'gpt-5-mini')}" class="mono"/>`)}
+        <div id="openai-test-result" class="help" style="display:none"></div>
       </div>
 
       <div class="card">
@@ -182,6 +204,7 @@ function automationPanel(s) {
       <div class="card">
         <div class="card-hd"><h3>Post to Instagram</h3><span class="muted">peak hours</span></div>
         <label class="check"><input type="checkbox" id="s-post-enabled" ${s.post_schedule_enabled ? 'checked' : ''}/> Post the best approved product at each slot</label>
+        <label class="check"><input type="checkbox" id="s-content-rewrite" ${s.content_rewrite_enabled !== false ? 'checked' : ''}/> Rewrite the caption with the content writer right before posting <span class="muted">(hook → desire → order CTA)</span></label>
         <div class="form-row">
           ${fieldRow('Post times', `<input type="text" id="s-post-times" value="${escHtml((s.post_times || ['19:00','21:00']).join(', '))}" placeholder="19:00, 21:00"/>`)}
           ${fieldRow('Timezone', `<input type="text" id="s-post-tz" value="${escHtml(s.post_timezone || 'Asia/Tbilisi')}"/>`)}
@@ -259,7 +282,8 @@ async function saveSettings() {
   const txt = { 's-store-name': 'store_name', 's-audience': 'target_audience', 's-niche': 'niche', 's-examples': 'example_products',
     's-instagram': 'instagram_username', 's-ig-user-id': 'instagram_user_id', 's-public-url': 'public_base_url',
     's-cssbuy-user': 'cssbuy_username', 's-cssbuy-source': 'cssbuy_source', 's-sheets-id': 'google_sheets_id',
-    's-post-tz': 'post_timezone', 's-webhook-token': 'instagram_webhook_token', 's-gemini-model': 'gemini_model' };
+    's-post-tz': 'post_timezone', 's-webhook-token': 'instagram_webhook_token', 's-gemini-model': 'gemini_model',
+    's-content-provider': 'content_provider', 's-anthropic-model': 'anthropic_model', 's-openai-model': 'openai_model' };
   for (const [id, key] of Object.entries(txt)) if (has(id)) data[key] = (g(id).value || '').trim();
   const nums = { 's-price-min': ['sell_price_min', 40], 's-price-max': ['sell_price_max', 119], 's-margin': ['min_margin', 60], 's-rating': ['min_rating', 4.5],
     's-exchange': ['exchange_rate', 0.353], 's-ml': ['sell_markup_low', 3.5], 's-mm': ['sell_markup_mid', 2.8], 's-mh': ['sell_markup_high', 2.2],
@@ -268,7 +292,8 @@ async function saveSettings() {
   for (const [id, [key, d]] of Object.entries(nums)) if (has(id)) data[key] = num(id, d);
   const bools = { 's-local-only': 'local_scraping_only', 's-context-injection': 'ai_context_injection', 's-auto-scan': 'auto_scan_enabled',
     's-auto-approve': 'auto_approve_enabled', 's-auto-clean': 'auto_clean_images', 's-post-enabled': 'post_schedule_enabled',
-    's-autoreply-enabled': 'instagram_auto_reply_enabled', 's-dm-enabled': 'instagram_dm_reply_enabled' };
+    's-autoreply-enabled': 'instagram_auto_reply_enabled', 's-dm-enabled': 'instagram_dm_reply_enabled',
+    's-content-rewrite': 'content_rewrite_enabled' };
   for (const [id, key] of Object.entries(bools)) if (has(id)) data[key] = !!g(id).checked;
   if (has('s-scan-kw')) data.scan_keywords = g('s-scan-kw').value.split('\n').map(s => s.trim()).filter(Boolean);
   if (has('s-post-times')) { const t = g('s-post-times').value.split(',').map(x => x.trim()).filter(x => /^\d{1,2}:\d{2}$/.test(x)); data.post_times = t.length ? t : ['19:00', '21:00']; }
@@ -278,6 +303,7 @@ async function saveSettings() {
   if (has('dm-rules-list')) data.instagram_dm_rules = _collectDmRules();
   // secrets: only when typed
   const secrets = { 's-gemini': 'gemini_key', 's-groq': 'groq_key', 's-clipdrop': 'clipdrop_key', 's-ig-token': 'instagram_access_token',
+    's-anthropic': 'anthropic_key', 's-openai': 'openai_key',
     's-ig-app-secret': 'instagram_app_secret', 's-cssbuy-pass': 'cssbuy_password', 's-captcha-key': 'captcha_2captcha_key',
     's-ingest-token': 'ingest_api_token', 's-sheets-creds': 'google_sheets_credentials' };
   for (const [id, key] of Object.entries(secrets)) { const v = g(id)?.value?.trim(); if (v) data[key] = v; }
@@ -362,7 +388,8 @@ async function restoreFromSheets() {
 async function testApiKey(provider) {
   const btn = document.getElementById(`test-${provider}-btn`); const resultEl = document.getElementById(`${provider}-test-result`);
   if (!btn || !resultEl) return;
-  const typedKey = document.getElementById(provider === 'gemini' ? 's-gemini' : 's-groq')?.value?.trim() || '';
+  const inputIds = { gemini: 's-gemini', groq: 's-groq', claude: 's-anthropic', openai: 's-openai' };
+  const typedKey = document.getElementById(inputIds[provider] || 's-gemini')?.value?.trim() || '';
   btn.disabled = true; btn.textContent = 'Testing…'; resultEl.style.display = 'block'; resultEl.className = 'help'; resultEl.textContent = 'Connecting…';
   try {
     const body = { provider }; if (typedKey) body.key = typedKey;

@@ -94,6 +94,7 @@ for what it cannot decide and for fulfilling orders:
 | Auto-approve | winners above the threshold skip the review queue | `auto_approve_min_score`, `auto_approve_verdicts` |
 | Clean photos | Chinese text / watermarks removed with Clipdrop | `auto_clean_images` + Clipdrop key |
 | Post to Instagram | best approved product posted at peak hours, daily cap | `post_schedule_enabled`, `post_times`, `max_posts_per_day` |
+| Content writer | a second model (Claude / OpenAI) rewrites the caption right before each post — hook → desire → order CTA, fresh hashtags | `content_provider`, `content_rewrite_enabled` |
 | Answer comments & DMs | keyword rules reply instantly; order intent lands in **Inbox** | `instagram_*_reply_enabled`, `lead_keywords` |
 
 Everything Autopilot does is written to the activity feed on Home, and the
@@ -133,6 +134,7 @@ backend/
   config/paths.py       data directory layout
   autopilot.py          hands-off policy (what to approve/clean/scan/post) + Home status
   keyword_lab.py        per-brand keyword scoring, scan selection, AI generation
+  content_ai.py         second-model content layer (Claude via official SDK / OpenAI / Gemini / Groq)
   activity.py           activity log writer
   frontend/             the SPA — core.js (router/shell), one file per page, styles.css
 data/                   runtime data (created on first start, git-ignored)

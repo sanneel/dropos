@@ -134,6 +134,17 @@ def scan_due(settings: dict, last_job_iso: Optional[str]) -> bool:
     return datetime.now(timezone.utc) - last >= timedelta(hours=hours)
 
 
+def _content_writer(settings: dict) -> str:
+    """Short label of the content model that rewrites captions, or '' when off."""
+    try:
+        import content_ai
+        if _b(settings.get("content_rewrite_enabled"), True) and content_ai.content_ready(settings):
+            return content_ai.pick_provider(settings) or ""
+    except Exception:
+        pass
+    return ""
+
+
 def posting_allowed(settings: dict) -> bool:
     return enabled(settings) and _b(settings.get("post_schedule_enabled"), False) and has_instagram(settings)
 
@@ -216,7 +227,7 @@ async def status(db, settings: dict, posting_jobs: list | None = None, scan_loop
               detail="remove Chinese text / watermarks (Clipdrop)",
               today=counts.get("image_cleaned", 0), needs_you=stats.get("TEXT_REMOVAL", 0)),
         stage("post", "Post to Instagram", _b(settings.get("post_schedule_enabled"), False), not post_blockers, post_blockers,
-              detail=f"{', '.join(settings.get('post_times') or ['19:00','21:00'])} {tz} · max {int(_f(settings.get('max_posts_per_day'), 2))}/day",
+              detail=f"{', '.join(settings.get('post_times') or ['19:00','21:00'])} {tz} · max {int(_f(settings.get('max_posts_per_day'), 2))}/day" + (f" · captions by {_content_writer(settings)}" if _content_writer(settings) else ""),
               today=posts_today, queue=stats.get("REVIEWED", 0),
               next_run=min([j.get("next_run") for j in (posting_jobs or []) if j.get("next_run")], default=None)),
         stage("reply", "Answer comments & DMs", _b(settings.get("instagram_auto_reply_enabled")) or _b(settings.get("instagram_dm_reply_enabled")),

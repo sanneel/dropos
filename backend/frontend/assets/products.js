@@ -527,11 +527,12 @@ async function showDetail(id) {
           ${providerLabel ? `<div style="font-size:10px;color:var(--t4);font-family:var(--ff-m);margin-top:6px">scored by ${escHtml(providerLabel)}${p.confidence ? ` · confidence ${Math.round(Number(p.confidence) * 100)}%` : ''}</div>` : ''}
         </div>
 
-        ${p.caption ? `
         <div class="detail-sec">
-          <span class="detail-sec-lbl">Instagram caption</span>
-          <div class="card-sm" style="font-size:12.5px;color:var(--t2);line-height:1.7">${escHtml(p.caption)}</div>
-        </div>` : ''}
+          <span class="detail-sec-lbl" style="display:flex;align-items:center;justify-content:space-between;gap:8px">Instagram caption
+            <button class="btn btn-sm" id="rewrite-btn-${p.id}" onclick="rewriteCaption(${p.id}, this)" title="Write a fresh caption with the content model">✍ Rewrite</button>
+          </span>
+          <div class="card-sm" id="caption-box-${p.id}" style="font-size:12.5px;color:var(--t2);line-height:1.7;white-space:pre-wrap">${p.caption ? escHtml(p.caption) : '<span class="muted">no caption yet — Rewrite writes one</span>'}</div>
+        </div>
 
         <details class="detail-sec edit-box">
           <summary>Edit product</summary>
@@ -595,6 +596,20 @@ async function showDetail(id) {
 }
 
 function closeDetail() { document.getElementById('detail-overlay')?.remove(); }
+
+async function rewriteCaption(id, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Writing…'; }
+  try {
+    const r = await api(`/products/${id}/rewrite-caption`, 'POST');
+    const box = document.getElementById(`caption-box-${id}`);
+    if (box) box.textContent = r.caption;
+    [queueProducts, approvedProducts, textEditProducts, catalogProducts].forEach(list => {
+      const p = list.find(x => x.id === id); if (p) { p.caption = r.caption; if (r.hashtags?.length) p.hashtags = r.hashtags; }
+    });
+    toast(`New caption by ${r.provider}`, 'success');
+  } catch(e) {
+  } finally { if (btn) { btn.disabled = false; btn.textContent = '✍ Rewrite'; } }
+}
 
 async function saveNote(id) {
   const note = document.getElementById('review-note-input')?.value || '';

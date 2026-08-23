@@ -77,6 +77,7 @@ from scheduler import create_scheduler, get_scheduler_status
 from posting_scheduler import create_posting_scheduler, get_posting_scheduler_status
 import activity
 import autopilot
+import content_ai
 import keyword_lab
 import instagram
 import instagram_replies
@@ -177,6 +178,7 @@ _SENSITIVE_SETTING_FIELDS = {
     "anthropic_key",
     "gemini_key",
     "groq_key",
+    "openai_key",
     "instagram_access_token",
     "instagram_webhook_token",
     "instagram_app_secret",
@@ -556,6 +558,11 @@ class SettingsUpdate(BaseModel):
     anthropic_key: Optional[str] = None
     gemini_key: Optional[str] = None
     groq_key: Optional[str] = None
+    openai_key: Optional[str] = None
+    anthropic_model: Optional[str] = None
+    openai_model: Optional[str] = None
+    content_provider: Optional[str] = None
+    content_rewrite_enabled: Optional[bool] = None
     scan_keywords: Optional[List[str]] = None
     google_sheets_id: Optional[str] = None
     google_sheets_credentials: Optional[str] = None
@@ -1005,6 +1012,24 @@ async def bulk_status(body: BulkStatusRequest):
         await _backup_products_to_sheets()
     return {"ok": True, "moved": moved, "skipped": skipped}
 
+@app.post("/api/products/{product_id}/rewrite-caption")
+async def rewrite_caption(product_id: int):
+    """Write a fresh caption + hashtags with the content model (Claude/OpenAI/…)."""
+    p = await _get_product_or_404(product_id)
+    settings = await _settings()
+    if not content_ai.content_ready(settings):
+        raise HTTPException(400, "No content model configured — add a Claude or OpenAI key in Settings → Connections.")
+    brand = await db.get_brand(p.get("brand_id")) if p.get("brand_id") else None
+    result = await content_ai.generate_caption(p, settings, brand)
+    if not result:
+        raise HTTPException(502, "The content model returned nothing usable — try again.")
+    updates = {"caption": result["caption"]}
+    if result["hashtags"]:
+        updates["hashtags_json"] = json.dumps(result["hashtags"])
+    await db.update_product_fields(product_id, updates)
+    return {"ok": True, **result, "provider": content_ai.provider_label(settings)}
+
+
 @app.post("/api/products/{product_id}/post")
 async def post_product_single(product_id: int, bg: BackgroundTasks):
     p = await _get_product_or_404(product_id)
@@ -1352,8 +1377,8 @@ async def brand_keywords_generate(brand_id: int, body: GenerateBody):
     if not brand:
         raise HTTPException(404, "Brand not found")
     settings = await _settings()
-    if not autopilot.has_gemini(settings):
-        raise HTTPException(400, "Keyword generation needs a Gemini key (Settings → Connections).")
+    if not content_ai.content_ready(settings):
+        raise HTTPException(400, "Keyword generation needs an AI key — Claude, OpenAI, Gemini or Groq (Settings → Connections).")
     kws = await db.list_keywords(brand_id)
     perf = await db.keyword_performance(brand_id)
     fresh = await keyword_lab.generate(brand, kws, perf, settings, n=max(1, min(body.count, 25)))
@@ -1528,6 +1553,8 @@ class AITestRequest(BaseModel):
 @app.post("/api/ai/test")
 async def test_ai_connection(body: AITestRequest):
     settings = await _settings()
+    if body.provider in ("claude", "openai"):
+        return await content_ai.test_provider(body.provider, body.key, settings)
     return await ai_assistant.test_connection(body.provider, body.key, settings)
 
 @app.post("/api/instagram/webhook")
@@ -1676,6 +1703,7 @@ async def _post_and_export(products: list) -> None:
             await db.log_post(p["id"])
 
         settings = await _settings()
+        products = [await content_ai.maybe_rewrite_caption(db, p, settings) for p in products]
         results = await instagram.post_batch(products, settings)
         for p in products:
             res = next((r for r in results if r.product_id == p["id"]), None)

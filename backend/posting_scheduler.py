@@ -39,6 +39,7 @@ def create_posting_scheduler(get_settings_fn: Callable[[], Coroutine]) -> AsyncI
     from database import db
     import activity
     import autopilot
+    import content_ai
     import instagram
     from models import ProductStage
 
@@ -69,6 +70,7 @@ def create_posting_scheduler(get_settings_fn: Callable[[], Coroutine]) -> AsyncI
                 return
 
             log.info("Peak-post: posting %d product(s) at peak hour", len(products))
+            products = [await content_ai.maybe_rewrite_caption(db, p, settings) for p in products]
             results = await instagram.post_batch(products, settings)
 
             for product, result in zip(products, results):

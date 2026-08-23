@@ -129,9 +129,9 @@ _GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:g
 
 
 async def generate(brand: dict, keywords: list, perf_map: dict, settings: dict, n: int = GENERATE_BATCH) -> list:
-    """Ask Gemini for new keywords. Returns list of new keyword strings (not yet saved)."""
-    api_key = get_config("GEMINI_KEY", settings.get("gemini_key", ""))
-    if not api_key:
+    """Ask the content model for new keywords. Returns new keyword strings (not yet saved)."""
+    import content_ai
+    if not content_ai.content_ready(settings):
         return []
     rows = annotate(keywords, perf_map)
     winners = sorted([k for k in rows if k["tested"] and not k["loser"]], key=lambda k: -(k["perf_score"] or 0))[:8]
@@ -151,21 +151,11 @@ async def generate(brand: dict, keywords: list, perf_map: dict, settings: dict, 
         existing=", ".join(existing[:120]) or "(none)",
         n=n,
     )
-    from enrichment import _gemini_model
-    model = _gemini_model(settings)
+    import content_ai
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                _GEMINI_URL.format(model=model),
-                headers={"x-goog-api-key": api_key, "content-type": "application/json"},
-                json={"contents": [{"parts": [{"text": prompt}]}],
-                      "generationConfig": {"response_mime_type": "application/json", "max_output_tokens": 800, "temperature": 0.8}},
-            )
-        if resp.status_code != 200:
-            log.warning("keyword generation HTTP %d: %s", resp.status_code, resp.text[:200])
-            return []
-        text = re.sub(r"```json|```", "", resp.json()["candidates"][0]["content"]["parts"][0]["text"]).strip()
-        raw = json.loads(text)
+        raw = await content_ai.complete_json("You generate product-sourcing search keywords.", prompt, settings, max_tokens=800)
+        if isinstance(raw, dict):   # some models wrap the array: {"keywords": [...]}
+            raw = raw.get("keywords") or next((v for v in raw.values() if isinstance(v, list)), None)
         if not isinstance(raw, list):
             return []
         seen = {e.lower() for e in existing}
