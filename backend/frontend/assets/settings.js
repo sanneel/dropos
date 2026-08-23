@@ -33,7 +33,7 @@ function setupPanel(s) {
   const items = [
     { ok: !!s.gemini_key_set, title: 'AI scoring (Gemini)', desc: s.gemini_key_set ? `Products are scored by ${escHtml(s.gemini_model || 'gemini-2.5-flash-lite')}.` : 'Without it nothing is judged — every product lands in Review unscored. Free key at aistudio.google.com.', tab: 'connections' },
     { ok: !!(s.cssbuy_username && s.cssbuy_password_set), title: 'Product source (CSSBuy)', desc: s.cssbuy_username ? `Logged in as ${escHtml(s.cssbuy_username)} · source: ${escHtml(s.cssbuy_source || '1688')}.` : 'Your CSSBuy login lets DropOS scrape 1688 / Taobao.', tab: 'connections' },
-    { ok: !!(s.instagram_access_token_set && s.instagram_user_id), title: 'Instagram', desc: (s.instagram_access_token_set && s.instagram_user_id) ? `Posting to account ${escHtml(s.instagram_user_id)}.` : 'Page access token + business account ID. Until then posts are simulated.', tab: 'connections' },
+    { ok: !!s.instagram_connected, title: 'Instagram', desc: s.instagram_connected ? (s.instagram_mode === 'private' ? `Connected by direct login${s.ig_private_state?.username ? ' as @' + escHtml(s.ig_private_state.username) : ''} — posts, reads comments & DMs.` : `Official API — posting to ${escHtml(s.instagram_user_id || '')}.`) : 'Easiest: direct login with your Instagram username & password — no Meta developer account. Until then posts are simulated.', tab: 'connections' },
     { ok: !!s.image_storage_set, soft: true, title: 'Image storage (Supabase)', desc: s.image_storage_set ? 'Photos are re-hosted on a public URL Instagram can always fetch.' : 'Optional but recommended: supplier CDN links usually work, Supabase Storage (free) always works. Set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY in .env.', tab: 'connections' },
     { ok: !!s.clipdrop_key_set, soft: true, title: 'Photo cleaning (Clipdrop)', desc: s.clipdrop_key_set ? 'Chinese text / watermarks are removed automatically.' : 'Optional: cleans Chinese text from photos so they can be posted. 100 free images / month.', tab: 'connections' },
     { ok: !!(s.anthropic_key_set || s.openai_key_set), soft: true, title: 'Content writer (Claude / OpenAI)', desc: (s.anthropic_key_set || s.openai_key_set) ? `Captions are rewritten by ${escHtml(s.content_provider === 'auto' ? (s.anthropic_key_set ? 'Claude' : 'OpenAI') : s.content_provider || 'auto')} right before posting.` : 'Optional: a second model writes stronger Georgian captions (hook → desire → CTA) at post time, generates keywords and powers the Assistant.', tab: 'connections' },
@@ -113,12 +113,40 @@ function connectionsPanel(s) {
       </div>
 
       <div class="card">
-        <div class="card-hd"><h3>Instagram</h3>${statusChip(s.instagram_access_token_set && s.instagram_user_id, 'Connected', 'Simulated')}</div>
+        <div class="card-hd"><h3>Instagram</h3>${statusChip(s.instagram_connected, s.instagram_mode === 'private' ? 'Direct login' : 'Official API', 'Simulated')}</div>
+        ${fieldRow('Connection method', `<select id="s-ig-backend" onchange="document.getElementById('ig-private-box').style.display=this.value==='graph'?'none':'block';document.getElementById('ig-graph-box').style.display=this.value==='private'?'none':'block'">
+            <option value="auto"    ${(s.instagram_backend||'auto')==='auto'    ? 'selected':''}>Auto — direct login when set, else official API</option>
+            <option value="private" ${s.instagram_backend==='private' ? 'selected':''}>Direct login — no Meta account needed</option>
+            <option value="graph"   ${s.instagram_backend==='graph'   ? 'selected':''}>Official API (Meta developer app)</option>
+          </select>`)}
+
+        <div id="ig-private-box" style="display:${(s.instagram_backend||'auto')==='graph'?'none':'block'}">
+          <div class="hint ${s.ig_private_state?.status === 'ok' ? 'ok' : 'info'}" style="margin:8px 0 12px">
+            <b>Direct login</b> signs in like the Instagram app — just your username &amp; password, no Meta developer account.
+            It posts, reads comments &amp; DMs (checked every ${s.ig_poll_minutes || 5} min) and replies.
+            <span class="muted">Unofficial: keep volumes human (the daily post cap does this). If Instagram asks to confirm the login, approve it in the app, then press “Log in now”.</span>
+          </div>
+          <div class="form-row">
+            ${fieldRow('Instagram username', `<input type="text" id="s-igp-user" value="${escHtml(s.ig_private_username || '')}" placeholder="yourstore" autocomplete="off"/>`)}
+            ${fieldRow('Instagram password', secretInput('s-igp-pass', s.ig_private_password_set, ''))}
+          </div>
+          <div class="row" style="margin-bottom:8px">
+            <button class="btn btn-sm btn-green" onclick="igPrivateLogin(this)">Log in now</button>
+            <input type="text" id="s-igp-code" placeholder="verification code (only if asked)" style="max-width:220px"/>
+            <button class="btn btn-sm" onclick="igPrivatePoll(this)" title="Read comments & DMs right now">Check messages now</button>
+            <button class="btn btn-sm btn-danger-ghost" onclick="igPrivateReset()" title="Forget the saved session">Reset session</button>
+          </div>
+          <div id="igp-status" class="help">${s.ig_private_state?.status === 'ok' ? `✓ Logged in as @${escHtml(s.ig_private_state.username)}` : s.ig_private_state?.error ? `✗ ${escHtml(s.ig_private_state.error)}` : 'Not logged in yet — save the credentials, then “Log in now”.'}</div>
+        </div>
+
+        <div id="ig-graph-box" style="display:${s.instagram_backend==='private'?'none':'block'};margin-top:10px;border-top:1px solid var(--b1);padding-top:10px">
+          <div class="help" style="margin-bottom:8px"><b>Official API</b> — needs a Meta developer app. Skip this if you use direct login.</div>
         ${fieldRow('Page access token', secretInput('s-ig-token', s.instagram_access_token_set, 'EAABs…'))}
         ${fieldRow('Business account ID', `<div class="row"><input type="text" id="s-ig-user-id" value="${escHtml(s.instagram_user_id || '')}" placeholder="17841400000000000" style="flex:1"/><button class="btn btn-sm" onclick="detectIgAccount()">Auto-detect</button></div><div id="ig-detect-result" class="help">Paste the token, save, then Auto-detect fills the ID.</div>`)}
         ${fieldRow('Instagram username <span class="muted">(display only)</span>', `<input type="text" id="s-instagram" value="${escHtml(s.instagram_username || '')}" placeholder="@yourstore"/>`)}
         ${fieldRow('Public app URL <span class="muted">(optional)</span>', `<input type="text" id="s-public-url" value="${escHtml(s.public_base_url || '')}" placeholder="https://dropos.example.com"/>`, 'Only if this server is reachable from the internet (hosting or tunnel). Needed for the webhook (auto-reply / inbox) and used as an image proxy.')}
         ${fieldRow('Meta app secret <span class="muted">(optional)</span>', secretInput('s-ig-app-secret', s.instagram_app_secret_set, 'App Dashboard → Settings → Basic'), 'Verifies webhook signatures.')}
+        </div>
         <div class="hint ${s.image_storage_set ? 'ok' : 'warn'}" style="margin-top:6px">${s.image_storage_set
           ? 'Image storage (Supabase) configured — photos are re-hosted on a public URL Instagram can always fetch.'
           : 'Image storage not configured: Instagram downloads photos straight from the supplier CDN, which usually works. For reliability add <code>SUPABASE_URL</code> + <code>SUPABASE_SERVICE_ROLE_KEY</code> to <code>.env</code> and restart.'}</div>
@@ -283,7 +311,8 @@ async function saveSettings() {
     's-instagram': 'instagram_username', 's-ig-user-id': 'instagram_user_id', 's-public-url': 'public_base_url',
     's-cssbuy-user': 'cssbuy_username', 's-cssbuy-source': 'cssbuy_source', 's-sheets-id': 'google_sheets_id',
     's-post-tz': 'post_timezone', 's-webhook-token': 'instagram_webhook_token', 's-gemini-model': 'gemini_model',
-    's-content-provider': 'content_provider', 's-anthropic-model': 'anthropic_model', 's-openai-model': 'openai_model' };
+    's-content-provider': 'content_provider', 's-anthropic-model': 'anthropic_model', 's-openai-model': 'openai_model',
+    's-ig-backend': 'instagram_backend', 's-igp-user': 'ig_private_username' };
   for (const [id, key] of Object.entries(txt)) if (has(id)) data[key] = (g(id).value || '').trim();
   const nums = { 's-price-min': ['sell_price_min', 40], 's-price-max': ['sell_price_max', 119], 's-margin': ['min_margin', 60], 's-rating': ['min_rating', 4.5],
     's-exchange': ['exchange_rate', 0.353], 's-ml': ['sell_markup_low', 3.5], 's-mm': ['sell_markup_mid', 2.8], 's-mh': ['sell_markup_high', 2.2],
@@ -303,7 +332,7 @@ async function saveSettings() {
   if (has('dm-rules-list')) data.instagram_dm_rules = _collectDmRules();
   // secrets: only when typed
   const secrets = { 's-gemini': 'gemini_key', 's-groq': 'groq_key', 's-clipdrop': 'clipdrop_key', 's-ig-token': 'instagram_access_token',
-    's-anthropic': 'anthropic_key', 's-openai': 'openai_key',
+    's-anthropic': 'anthropic_key', 's-openai': 'openai_key', 's-igp-pass': 'ig_private_password',
     's-ig-app-secret': 'instagram_app_secret', 's-cssbuy-pass': 'cssbuy_password', 's-captcha-key': 'captcha_2captcha_key',
     's-ingest-token': 'ingest_api_token', 's-sheets-creds': 'google_sheets_credentials' };
   for (const [id, key] of Object.entries(secrets)) { const v = g(id)?.value?.trim(); if (v) data[key] = v; }
@@ -356,6 +385,40 @@ async function resetDatabase() {
   if (!confirm('Final confirmation: wipe the entire catalog?')) return;
   try { const res = await api('/admin/reset-database', 'POST'); if (res.ok) { toast('Database reset', 'success'); refreshStats(); navigate('home'); } } catch(e) {}
 }
+async function igPrivateLogin(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Logging in…'; }
+  const el = document.getElementById('igp-status');
+  try {
+    // save typed credentials first so the backend has them
+    const u = document.getElementById('s-igp-user')?.value?.trim();
+    const p = document.getElementById('s-igp-pass')?.value?.trim();
+    const body = {};
+    if (u) body.ig_private_username = u;
+    if (p) body.ig_private_password = p;
+    if (Object.keys(body).length) await api('/settings', 'PATCH', body);
+    const code = document.getElementById('s-igp-code')?.value?.trim() || null;
+    const r = await api('/instagram/private/login', 'POST', { verification_code: code });
+    if (el) { el.className = 'help ok-txt'; el.textContent = `✓ Logged in as @${r.state.username}`; }
+    toast('Instagram connected (direct login)', 'success');
+    refreshStats();
+  } catch(e) {
+    if (el) { el.className = 'help err-txt'; el.textContent = `✗ ${e.message || 'Login failed'} — if Instagram asked to confirm, approve it in the app or enter the code, then retry.`; }
+  } finally { if (btn) { btn.disabled = false; btn.textContent = 'Log in now'; } }
+}
+async function igPrivatePoll(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  try {
+    const r = await api('/instagram/private/poll', 'POST', {});
+    const s2 = r.stats || {};
+    toast(r.ok ? `Checked: ${s2.new || 0} new message${(s2.new||0)===1?'':'s'} (${s2.comments_seen||0} comments, ${s2.dms_seen||0} DMs seen)` : `Problem: ${s2.error || 'unknown'}`, r.ok ? 'success' : 'error', 5000);
+    refreshStats();
+  } catch(e) {
+  } finally { if (btn) { btn.disabled = false; btn.textContent = 'Check messages now'; } }
+}
+async function igPrivateReset() {
+  try { await api('/instagram/private/reset', 'POST', {}); toast('Session cleared — log in again when ready', 'info'); renderSettings(currentTab); } catch(e) {}
+}
+
 async function detectIgAccount() {
   const el = document.getElementById('ig-detect-result'); el.className = 'help'; el.textContent = 'Detecting…';
   const token = document.getElementById('s-ig-token')?.value?.trim();

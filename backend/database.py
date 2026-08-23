@@ -1663,6 +1663,11 @@ async def init_db():
                 # No behavior change when false — identical to production baseline.
                 "ai_context_injection": False,
                 # Peak-hour Instagram auto-posting (Settings → Posting schedule)
+                # Instagram connection (graph = official API, private = direct login)
+                "instagram_backend": "auto",
+                "ig_private_username": "",
+                "ig_private_password": "",
+                "ig_poll_minutes": 5,
                 # Content writer (second model next to Gemini)
                 "content_provider": "auto",
                 "content_rewrite_enabled": True,

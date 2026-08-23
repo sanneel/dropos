@@ -25,8 +25,8 @@ async function loadApproved(append = false) {
 
 function _postingSummary() {
   const st = (autopilotData?.stages || []).find(s => s.key === 'post');
-  const ig = !!(settingsData.instagram_access_token_set && settingsData.instagram_user_id);
-  if (!ig) return { cls: 'warn', text: `Instagram is not connected — posts are simulated. <a href="#" onclick="navigate('settings','connections');return false">Connect it</a>.` };
+  const ig = !!settingsData.instagram_connected;
+  if (!ig) return { cls: 'warn', text: `Instagram is not connected — posts are simulated. Direct login needs no Meta account: <a href="#" onclick="navigate('settings','connections');return false">connect it</a>.` };
   if (!autopilotData?.enabled || !settingsData.post_schedule_enabled) return { cls: 'info', text: `Auto-posting is off — post manually below or <a href="#" onclick="navigate('home');return false">turn on Autopilot</a>.` };
   const next = st?.next_run ? `next post ${untilTime(st.next_run)} (${new Date(st.next_run).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })})` : 'no slot planned';
   return { cls: 'ok', text: `Autopilot posts the top product at ${escHtml((settingsData.post_times || ['19:00', '21:00']).join(', '))} · ${next} · ${st?.today || 0} posted today (max ${settingsData.max_posts_per_day || 2}/day).` };

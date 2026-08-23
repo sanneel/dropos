@@ -11,16 +11,18 @@ async function renderInbox() {
   const data = await api(`/inbox?all=${inboxFilter === 'all'}&limit=200`).catch(() => ({ items: [], counts: {} }));
   _inboxItems = data.items || [];
   const counts = data.counts || {};
-  const ig = !!(settingsData.instagram_access_token_set && settingsData.instagram_user_id);
+  const ig = !!settingsData.instagram_connected;
+  const priv = settingsData.instagram_mode === 'private';
   const publicUrl = /^https:/.test(settingsData.public_base_url || '');
   let list = _inboxItems;
   if (inboxFilter === 'leads') list = list.filter(i => i.is_lead);
 
   const chip = (id, label, n) => `<button class="fchip ${inboxFilter === id ? 'active' : ''}" onclick="inboxFilter='${id}';renderInbox()">${label}${n ? ` <b>${n}</b>` : ''}</button>`;
   el.innerHTML = `
-    ${!ig || !publicUrl ? `<div class="hint ${!ig ? 'warn' : 'info'}">
-      ${!ig ? 'Instagram is not connected, so nothing can arrive here yet. ' : ''}
-      ${!publicUrl ? 'The Meta webhook needs a <b>public HTTPS</b> URL for this app (hosting or a tunnel like Cloudflare Tunnel / ngrok) — set it as “Public app URL” and register <code>/api/instagram/webhook</code> in your Meta app. ' : ''}
+    ${priv ? `<div class="hint ok">Direct login is reading your comments &amp; DMs every ${settingsData.ig_poll_minutes || 5} minutes — no Meta account needed. <a href="#" onclick="igPrivatePoll(this);return false">Check now</a>.</div>`
+    : (!ig || !publicUrl) ? `<div class="hint ${!ig ? 'warn' : 'info'}">
+      ${!ig ? 'Instagram is not connected, so nothing can arrive here yet. Easiest fix: <b>direct login</b> (username + password, no Meta account) in Settings → Connections. ' : ''}
+      ${ig && !publicUrl ? 'The official API webhook needs a <b>public HTTPS</b> URL — or switch to direct login, which polls instead. ' : ''}
       <a href="#" onclick="navigate('settings','connections');return false">Settings → Connections</a>
       · <a href="#" onclick="simulateInbox();return false">send a test message</a> to see how it works.
     </div>` : ''}

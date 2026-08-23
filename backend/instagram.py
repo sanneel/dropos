@@ -43,6 +43,20 @@ def _graph(settings: dict = None) -> str:
     return f"https://graph.facebook.com/{version}"
 
 
+def backend_mode(settings: dict) -> str:
+    """Which Instagram backend is usable: 'private' | 'graph' | 'none'.
+    'auto' prefers direct login (no Meta account needed) when its creds exist."""
+    import instagram_private
+    pref = str((settings or {}).get("instagram_backend") or "auto").strip().lower()
+    graph_ok = bool(_token(settings) and str((settings or {}).get("instagram_user_id") or "").strip())
+    private_ok = instagram_private.configured(settings or {})
+    if pref == "graph":
+        return "graph" if graph_ok else ("private" if private_ok else "none")
+    if pref == "private":
+        return "private" if private_ok else ("graph" if graph_ok else "none")
+    return "private" if private_ok else ("graph" if graph_ok else "none")
+
+
 def _token(settings: dict) -> str:
     raw = str((settings or {}).get("instagram_access_token") or "")
     return "".join(raw.split())
@@ -246,6 +260,32 @@ async def post_product(product: dict, settings: dict) -> PostResult:
     # Build publishable image URLs (max carousel limit)
     raw_images   = product.get("images") or []
     image_urls   = [u for u in (_publishable_image_url(img, settings) for img in raw_images if img) if u][:_MAX_CAROUSEL_IMAGES]
+
+    # ── Direct-login backend (no Meta developer account) ──────────────────────
+    if backend_mode(settings) == "private":
+        import instagram_private
+        from config.paths import CLEANED_DIR
+        import os as _os
+        urls = []
+        for img in raw_images:
+            img = (img or "").strip()
+            if img.startswith(("http://", "https://")):
+                urls.append(img)
+            elif "/cleaned-image" in img:
+                # local cleaned file — the private uploader reads it from disk
+                try:
+                    _pid = img.split("/products/")[1].split("/")[0]
+                    local = _os.path.join(str(CLEANED_DIR), f"cleaned_{_pid}.jpg")
+                    if _os.path.exists(local):
+                        urls.append("file://" + local)
+                except Exception:
+                    pass
+        if not urls:
+            return PostResult(product_id=pid, status="error", error="Product has no usable image")
+        res = await instagram_private.post_photos(urls, full_caption, settings)
+        if res.get("ok"):
+            return PostResult(product_id=pid, status="posted", post_url=res.get("url") or "")
+        return PostResult(product_id=pid, status="error", error=res.get("error") or "Direct-login post failed")
 
     if not token or not user_id:
         log.info("Instagram: no API credentials — simulating post for product %s", pid)

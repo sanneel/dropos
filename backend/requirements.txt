@@ -18,6 +18,7 @@ PyJWT>=2.8.0
 
 # AI
 anthropic>=1.0.0
+instagrapi>=2.1.0
 
 # Integrations
 apscheduler>=3.10.0

@@ -80,6 +80,7 @@ import autopilot
 import content_ai
 import keyword_lab
 import instagram
+import instagram_private
 import instagram_replies
 import sheets
 import ai_assistant
@@ -182,6 +183,7 @@ _SENSITIVE_SETTING_FIELDS = {
     "instagram_access_token",
     "instagram_webhook_token",
     "instagram_app_secret",
+    "ig_private_password",
     "cssbuy_password",
     "captcha_2captcha_key",
     "google_sheets_credentials",
@@ -229,6 +231,7 @@ async def lifespan(app: FastAPI):
     # Autonomous worker loops
     asyncio.create_task(run_worker_loop())
     asyncio.create_task(process_queued_items())
+    asyncio.create_task(instagram_private.poll_loop(db, _settings))
 
     if merged_settings.get("local_scraping_only"):
         log.info("Scheduler disabled: local scraping only mode is enabled")
@@ -554,6 +557,10 @@ class SettingsUpdate(BaseModel):
     instagram_dm_rules: Optional[list] = None
     instagram_webhook_token: Optional[str] = None
     instagram_app_secret: Optional[str] = None
+    instagram_backend: Optional[str] = None
+    ig_private_username: Optional[str] = None
+    ig_private_password: Optional[str] = None
+    ig_poll_minutes: Optional[float] = None
     apify_token: Optional[str] = None
     anthropic_key: Optional[str] = None
     gemini_key: Optional[str] = None
@@ -791,6 +798,10 @@ async def get_settings():
     data = sanitize_settings(await _settings())
     # Runtime facts the UI needs to give honest guidance
     data["image_storage_set"] = bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
+    merged = await _settings()
+    data["instagram_mode"] = instagram.backend_mode(merged)
+    data["instagram_connected"] = data["instagram_mode"] != "none"
+    data["ig_private_state"] = instagram_private.state()
     data["runtime"] = {
         "data_dir": str(DATA_DIR),
         "embedded_db": bool(getattr(db, "embedded", False)),
@@ -1465,8 +1476,14 @@ async def inbox_reply(message_id: int, body: InboxReply):
         raise HTTPException(400, "Reply text is empty")
     settings = await _settings()
     if not autopilot.has_instagram(settings):
-        raise HTTPException(400, "Connect Instagram (token + account ID) to send replies")
-    ok = await instagram_replies.send_reply(msg, text, settings)
+        raise HTTPException(400, "Connect Instagram (direct login or token) to send replies")
+    ext = str(msg.get("external_id") or "")
+    if ext.startswith("pc:"):
+        ok = await instagram_private.reply_comment(str(msg.get("media_id") or ""), text, settings, ext.removeprefix("pc:"))
+    elif ext.startswith("pm:"):
+        ok = await instagram_private.reply_dm(str(msg.get("media_id") or ""), text, settings)
+    else:
+        ok = await instagram_replies.send_reply(msg, text, settings)
     if not ok:
         raise HTTPException(502, "Instagram did not accept the reply — check token permissions")
     await db.inbox_set_handled(message_id, True)
@@ -1527,6 +1544,36 @@ async def instagram_accounts():
 @app.get("/api/instagram/diagnostics")
 async def instagram_diagnostics(product_id: Optional[int] = None):
     return {"status": "ok"}
+
+class PrivateLoginBody(BaseModel):
+    verification_code: Optional[str] = None
+
+@app.post("/api/instagram/private/login")
+async def ig_private_login(body: PrivateLoginBody):
+    """Log the direct-login backend in now (optionally with an SMS/e-mail code)."""
+    settings = await _settings()
+    if not instagram_private.configured(settings):
+        raise HTTPException(400, "Enter the Instagram username and password first, then Save.")
+    cl = await instagram_private.get_client(settings, verification_code=(body.verification_code or "").strip())
+    st = instagram_private.state()
+    if cl is None:
+        raise HTTPException(502, st.get("error") or "Login failed")
+    await activity.record("config", f"Instagram direct login OK as @{st.get('username')}")
+    return {"ok": True, "state": st}
+
+@app.post("/api/instagram/private/reset")
+async def ig_private_reset():
+    instagram_private.reset_session()
+    return {"ok": True, "state": instagram_private.state()}
+
+@app.post("/api/instagram/private/poll")
+async def ig_private_poll_now():
+    """Read Instagram communications right now (manual poll)."""
+    settings = await _settings()
+    if not instagram_private.configured(settings):
+        raise HTTPException(400, "Direct login is not configured.")
+    stats = await instagram_private.process_incoming(db, settings)
+    return {"ok": not stats.get("error"), "stats": stats}
 
 @app.get("/api/instagram/webhook")
 async def ig_webhook_verify(hub_mode: str = Query(None, alias="hub.mode"), hub_verify_token: str = Query(None, alias="hub.verify_token"), hub_challenge: str = Query(None, alias="hub.challenge")):

@@ -77,7 +77,13 @@ def has_scraper(settings: dict) -> bool:
 
 
 def has_instagram(settings: dict) -> bool:
-    return bool(str(settings.get("instagram_access_token") or "").strip() and str(settings.get("instagram_user_id") or "").strip())
+    import instagram
+    return instagram.backend_mode(settings) != "none"
+
+
+def instagram_mode(settings: dict) -> str:
+    import instagram
+    return instagram.backend_mode(settings)
 
 
 def has_clipdrop(settings: dict) -> bool:
@@ -204,12 +210,13 @@ async def status(db, settings: dict, posting_jobs: list | None = None, scan_loop
 
     approve_blockers = [] if has_ai(settings) else ["Needs AI scoring to judge products"]
     clean_blockers = [] if has_clipdrop(settings) else ["Add a Clipdrop key in Settings → Connections"]
-    post_blockers = [] if has_instagram(settings) else ["Connect Instagram (token + account ID) in Settings → Connections"]
+    ig_mode = instagram_mode(settings)
+    post_blockers = [] if ig_mode != "none" else ["Connect Instagram in Settings → Connections (direct login — no Meta account needed)"]
     reply_blockers = []
-    if not has_instagram(settings):
-        reply_blockers.append("Connect Instagram first")
-    if not has_public_url(settings):
-        reply_blockers.append("Needs a public HTTPS URL for the Meta webhook (tunnel or hosting)")
+    if ig_mode == "none":
+        reply_blockers.append("Connect Instagram first (direct login works without a Meta account)")
+    elif ig_mode == "graph" and not has_public_url(settings):
+        reply_blockers.append("Official API needs a public HTTPS webhook URL — or switch to direct login (polls instead)")
 
     stages = [
         stage("scan", "Find products", _b(settings.get("auto_scan_enabled"), True), not scan_blockers, scan_blockers,
@@ -232,7 +239,8 @@ async def status(db, settings: dict, posting_jobs: list | None = None, scan_loop
               next_run=min([j.get("next_run") for j in (posting_jobs or []) if j.get("next_run")], default=None)),
         stage("reply", "Answer comments & DMs", _b(settings.get("instagram_auto_reply_enabled")) or _b(settings.get("instagram_dm_reply_enabled")),
               not reply_blockers, reply_blockers,
-              detail=f"{len(settings.get('instagram_reply_rules') or [])} comment rules · {len(settings.get('instagram_dm_rules') or [])} DM rules",
+              detail=f"{len(settings.get('instagram_reply_rules') or [])} comment rules · {len(settings.get('instagram_dm_rules') or [])} DM rules"
+                     + (f" · polls every {int(_f(settings.get('ig_poll_minutes'), 5))}m" if ig_mode == "private" else " · webhook"),
               today=counts.get("reply_sent", 0), leads=inbox.get("leads", 0), open=inbox.get("open", 0)),
     ]
 
