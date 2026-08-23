@@ -852,7 +852,8 @@ async function cleanImage(id, btn) {
   try {
     const r = await api(`/products/${id}/remove-text`, 'POST');
     if (r.ok) {
-      toast('✅ Image cleaned & approved!', 'success');
+      if (r.public === false) toast('Image cleaned & approved — but it is only stored on this machine. Add Supabase Storage (Settings → Instagram) so the cleaned photo can be posted.', 'error', 7000);
+      else toast('✅ Image cleaned & approved!', 'success');
       _cacheInvalidate('/products', '/stats');
       await refreshStats();
       const card = document.getElementById(`card-${id}`);
@@ -1426,9 +1427,16 @@ async function renderSettings() {
           </div>
         </div>
         <div class="form-group">
-          <label>Public app URL</label>
-          <input type="text" id="s-public-url" value="${s.public_base_url || ''}" placeholder="https://your-app.up.railway.app"/>
-          <div style="font-size:11px;color:var(--t3);margin-top:5px">Used as an image proxy for Instagram if supplier image URLs block Meta.</div>
+          <label>Public app URL <span style="color:var(--t3);font-weight:400">(optional)</span></label>
+          <input type="text" id="s-public-url" value="${escHtml(s.public_base_url || '')}" placeholder="https://dropos.example.com"/>
+          <div style="font-size:11px;color:var(--t3);margin-top:5px">Only if this server is reachable from the internet (hosted or tunnelled). Used for the webhook URL and as an image proxy for Instagram.</div>
+        </div>
+        <div class="card-sm" style="margin-top:4px;border-color:${s.image_storage_set ? 'rgba(34,197,94,.3)' : 'rgba(245,158,11,.35)'}">
+          <div style="font-size:11px;line-height:1.6;color:${s.image_storage_set ? 'var(--green)' : 'var(--amber)'}">
+            ${s.image_storage_set
+              ? '✓ Image storage (Supabase) configured — approved product photos are re-hosted on a public URL Instagram can fetch.'
+              : 'Image storage not configured. Instagram can only post images it can download from a <b>public</b> URL — supplier CDN links usually work, but for reliability add <code>SUPABASE_URL</code> + <code>SUPABASE_SERVICE_ROLE_KEY</code> (free tier) to <code>.env</code> and restart.'}
+          </div>
         </div>
         <div class="card-sm" style="margin-top:4px">
           <div style="font-size:11px;color:var(--t3);line-height:1.6">
@@ -1445,9 +1453,11 @@ async function renderSettings() {
       </div>
 
       <div class="card" style="grid-column:1/-1">
-        <div class="card-title">Comment &amp; DM auto-reply <span class="badge badge-amber" style="margin-left:8px;font-size:9px;vertical-align:middle">not active yet</span></div>
-        <div class="card-sm" style="margin-bottom:12px;font-size:11px;color:var(--amber);line-height:1.6">
-          The webhook endpoint is live and verifies with Meta, but replies are not sent yet — rules you save here are kept for when the reply engine ships.
+        <div class="card-title">Comment &amp; DM auto-reply</div>
+        <div class="card-sm" style="margin-bottom:12px;font-size:11px;color:var(--t3);line-height:1.6">
+          Replies are sent through the Graph API when a comment / DM matches a rule below. Meta must be able to reach this server:
+          the webhook URL has to be <b>public HTTPS</b> (a hosted deployment or a tunnel such as Cloudflare Tunnel / ngrok when running on your PC).
+          Token permissions: <code>instagram_manage_comments</code>, <code>instagram_manage_messages</code>.
         </div>
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none">
@@ -1464,12 +1474,15 @@ async function renderSettings() {
             <div>
               <label style="font-size:11px;color:var(--t3);display:block;margin-bottom:4px">Webhook URL <span style="color:var(--t4)">(paste into Meta App Dashboard → Webhooks)</span></label>
               <div style="font-family:var(--ff-m);font-size:11px;background:var(--s3);padding:7px 10px;border-radius:var(--r);color:var(--accent);word-break:break-all" id="webhook-url-display">
-                ${window.location.origin.replace(':5173','').replace('http://localhost','http://YOUR-SERVER-IP')}/api/instagram/webhook
+                ${escHtml((s.public_base_url || window.location.origin).replace(/\/$/, ''))}/api/instagram/webhook
               </div>
+              ${!/^https:/.test(s.public_base_url || window.location.origin) ? `<div style="font-size:10px;color:var(--amber);margin-top:4px">Not HTTPS / not public — set “Public app URL” above to your tunnel or host URL.</div>` : ''}
             </div>
             <div>
               <label style="font-size:11px;color:var(--t3);display:block;margin-bottom:4px">Verify token <span style="color:var(--t4)">(copy this into Meta webhook verify token field)</span></label>
-              <input type="text" id="s-webhook-token" value="${s.instagram_webhook_token || 'dropos_webhook_secret'}" style="font-family:var(--ff-m);font-size:12px"/>
+              <input type="text" id="s-webhook-token" value="${escHtml(s.instagram_webhook_token || 'dropos_webhook_secret')}" style="font-family:var(--ff-m);font-size:12px"/>
+              <label style="font-size:11px;color:var(--t3);display:block;margin:8px 0 4px">Meta app secret <span style="color:var(--t4)">(optional — verifies webhook signatures)</span></label>
+              <input type="password" id="s-ig-app-secret" value="" placeholder="${s.instagram_app_secret_set ? '••••  saved — paste to replace' : 'App Dashboard → Settings → Basic → App secret'}" style="font-family:var(--ff-m);font-size:12px"/>
             </div>
           </div>
 
@@ -1580,6 +1593,10 @@ async function renderSettings() {
           </div>
           <div style="font-size:11px;color:var(--t3);margin-bottom:8px">Image analysis · AI assistant · product scoring · <a href="https://aistudio.google.com" target="_blank" style="color:var(--accent)">Free key →</a></div>
           <input type="password" id="s-gemini" value="" placeholder="${s.gemini_key_set ? '••••  saved — paste new key to replace' : 'AIzaSy…  (get free key at aistudio.google.com)'}"/>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+            <label style="font-size:11px;color:var(--t3);white-space:nowrap;margin:0">Model</label>
+            <input type="text" id="s-gemini-model" value="${escHtml(s.gemini_model || 'gemini-2.5-flash-lite')}" placeholder="gemini-2.5-flash-lite" style="font-family:var(--ff-m);font-size:12px"/>
+          </div>
           <div id="gemini-test-result" style="font-size:11px;margin-top:5px;display:none"></div>
         </div>
 
@@ -1731,6 +1748,17 @@ async function renderSettings() {
           <button class="btn btn-sm btn-amber" onclick="restoreFromSheets()">Restore from Sheets</button>
           <button class="btn btn-sm" onclick="exportToSheets()">Export approved list</button>
         </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">This installation</div>
+        <div style="font-size:11px;color:var(--t3);line-height:1.9;font-family:var(--ff-m)">
+          <div>Database: <span style="color:var(--t1)">${s.runtime?.embedded_db ? 'embedded PostgreSQL (data/pg)' : 'external PostgreSQL (DATABASE_URL)'}</span></div>
+          <div>Data dir: <span style="color:var(--t1)">${escHtml(s.runtime?.data_dir || '—')}</span></div>
+          <div>Mode: <span style="color:var(--t1)">${s.runtime?.production ? 'production' : 'development'}</span> · API docs ${s.runtime?.production ? 'hidden' : `<a href="/docs" target="_blank" style="color:var(--accent)">/docs</a>`}</div>
+          <div>Image storage: <span style="color:${s.image_storage_set ? 'var(--green)' : 'var(--amber)'}">${s.image_storage_set ? 'Supabase' : 'none (supplier CDN URLs)'}</span></div>
+        </div>
+        <div style="font-size:11px;color:var(--t3);margin-top:8px;line-height:1.6">Back up by copying the data directory (and your <code>.env</code>). Keys pasted here are stored in the database.</div>
       </div>
 
       <div class="card" style="border:1px solid var(--red-d)">
@@ -2029,6 +2057,8 @@ async function saveSettings() {
   };
   includeIfNonEmpty(data, 'instagram_access_token', g('s-ig-token')?.value);
   includeIfNonEmpty(data, 'instagram_webhook_token', g('s-webhook-token')?.value);
+  includeIfNonEmpty(data, 'instagram_app_secret', g('s-ig-app-secret')?.value);
+  includeIfNonEmpty(data, 'gemini_model', g('s-gemini-model')?.value);
   includeIfNonEmpty(data, 'gemini_key', g('s-gemini')?.value);
   includeIfNonEmpty(data, 'groq_key', g('s-groq')?.value);
   includeIfNonEmpty(data, 'clipdrop_key', g('s-clipdrop')?.value);
@@ -2337,6 +2367,35 @@ const PAGE_RENDERERS = {
 async function renderLogin() {
   document.body.classList.add('is-login');
   const el = document.getElementById('content');
+  // First run on a fresh install: no admin exists yet → show the setup form
+  let needsSetup = false;
+  try {
+    const st = await fetch(API + '/auth/status').then(r => r.ok ? r.json() : null);
+    needsSetup = !!(st && st.needs_setup);
+  } catch(e) {}
+  if (needsSetup) {
+    el.innerHTML = `
+      <div class="login-container">
+        <div class="login-box">
+          <div class="login-logo">D</div>
+          <h2>Welcome to DropOS</h2>
+          <p style="font-size:12px;color:var(--t3);margin:-6px 0 16px;line-height:1.6">Create the admin account for this installation. You'll use it to sign in from now on.</p>
+          <form id="setup-form" onsubmit="handleSetup(event)">
+            <div class="input-group">
+              <label>Email</label>
+              <input type="email" id="setup-email" required autocomplete="username" />
+            </div>
+            <div class="input-group">
+              <label>Password <span style="color:var(--t4);font-weight:400">(min 8 characters)</span></label>
+              <input type="password" id="setup-password" required minlength="8" autocomplete="new-password" />
+            </div>
+            <div id="login-error" style="display:none;color:var(--red,#e55);font-size:12px;margin-bottom:8px;text-align:center"></div>
+            <button type="submit" class="btn login-btn" id="login-btn">Create account</button>
+          </form>
+        </div>
+      </div>`;
+    return;
+  }
   el.innerHTML = `
     <div class="login-container">
       <div class="login-box">
@@ -2393,6 +2452,29 @@ async function handleLogin(ev) {
   }
 }
 
+async function handleSetup(ev) {
+  ev.preventDefault();
+  const btn = document.getElementById('login-btn');
+  const errEl = document.getElementById('login-error');
+  if (errEl) errEl.style.display = 'none';
+  if (btn) { btn.textContent = 'Creating…'; btn.disabled = true; }
+  const email = (document.getElementById('setup-email')?.value || '').trim();
+  const password = document.getElementById('setup-password')?.value || '';
+  try {
+    const r = await fetch(API + '/auth/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) });
+    const text = await r.text();
+    if (!r.ok) { _loginError(apiErrorMessage(text, r.status)); if (btn) btn.textContent = 'Create account'; return; }
+    const data = JSON.parse(text);
+    setToken(data.token);
+    toast('Admin account created — welcome!', 'success');
+    const ok = await bootApp();
+    if (!ok) _loginError('Account created but the session failed to load. Please sign in.');
+  } catch(err) {
+    _loginError(err.message || 'Setup failed. Please try again.');
+    if (btn) btn.textContent = 'Create account';
+  }
+}
+
 function _fadeIn() {
   const c = document.getElementById('content');
   if (!c) return;
@@ -2418,33 +2500,20 @@ async function renderCatalog() {
 
 async function loadCatalog(append = false) {
   const offset = append ? catalogProducts.length : 0;
-  const stage = catalogStage === 'all' ? '' : catalogStage;
-  const q = catalogSearch ? `&search=${encodeURIComponent(catalogSearch)}` : '';
-  const stageParam = stage ? `stage=${stage}&` : 'stage=REVIEWED&stage=LIVE&';
-  // Use multi-stage fetch: approved + posted if "all"
+  const q = catalogSearch ? `&q=${encodeURIComponent(catalogSearch)}` : '';
+  // "all" = approved + posted; the server does the text search
   let products = [], total = 0;
   if (catalogStage === 'all') {
     const [a, p] = await Promise.all([
-      api(`/products?stage=REVIEWED&limit=50&offset=${offset}&sort=created`).catch(() => ({ products: [], total: 0 })),
-      api(`/products?stage=LIVE&limit=50&offset=${offset}&sort=created`).catch(() => ({ products: [], total: 0 })),
+      api(`/products?stage=REVIEWED&limit=50&offset=${offset}&sort=created${q}`).catch(() => ({ products: [], total: 0 })),
+      api(`/products?stage=LIVE&limit=50&offset=${offset}&sort=created${q}`).catch(() => ({ products: [], total: 0 })),
     ]);
     products = [...a.products, ...p.products];
     total = a.total + p.total;
   } else {
-    const data = await api(`/products?stage=${catalogStage}&limit=50&offset=${offset}&sort=created`).catch(() => ({ products: [], total: 0 }));
+    const data = await api(`/products?stage=${catalogStage}&limit=50&offset=${offset}&sort=created${q}`).catch(() => ({ products: [], total: 0 }));
     products = data.products;
     total = data.total;
-  }
-  // Client-side search filter
-  if (catalogSearch) {
-    const q = catalogSearch.toLowerCase();
-    products = products.filter(p =>
-      (p.title_translated || '').toLowerCase().includes(q) ||
-      (p.product_name || '').toLowerCase().includes(q) ||
-      (p.category || '').toLowerCase().includes(q) ||
-      (p.caption || '').toLowerCase().includes(q)
-    );
-    total = products.length;
   }
   catalogProducts = append ? catalogProducts.concat(products) : products;
   catalogTotal = total;
@@ -2453,7 +2522,7 @@ async function loadCatalog(append = false) {
 
 function renderCatalogTable() {
   const el = document.getElementById('content');
-  const canMore = !catalogSearch && catalogProducts.length < catalogTotal;
+  const canMore = catalogProducts.length < catalogTotal;
 
   el.innerHTML = `
     <div class="catalog-toolbar">
@@ -3094,8 +3163,6 @@ async function chatApplyEdits(msgIdx) {
   if (!m?.meta?.edits?.length) return;
   if (!confirm(`Apply ${m.meta.edits.length} AI-suggested edits to product titles/prices?`)) return;
   try {
-    const result = await api('/ai/chat', 'POST', { message: '_execute_edits_', execute_edits: true, ...{edits: m.meta.edits} });
-    // Actually call PATCH directly for each edit
     let count = 0;
     for (const edit of m.meta.edits.slice(0, 20)) {
       const fields = {};
@@ -3119,8 +3186,6 @@ async function chatReconsider(ids) {
   if (!ids?.length) return;
   if (!confirm(`Move ${ids.length} products back to Pending for review?`)) return;
   try {
-    await api('/ai/chat', 'POST', { message: 'confirm reconsider', reconsider: true });
-    // Actually call reconsider for each
     for (const id of ids.slice(0,20)) {
       await api(`/products/${id}/reconsider`, 'POST').catch(()=>{});
     }

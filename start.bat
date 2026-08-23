@@ -35,13 +35,11 @@ if exist "%SCRIPT_DIR%.env" (
     )
     echo   Loaded .env
 ) else (
-    echo   [WARN] No .env found - copy .env.example to .env first
+    echo   No .env - running with defaults (embedded DB, first-run setup in the browser)
 )
 
 if not defined DATABASE_URL (
-    echo [ERROR] DATABASE_URL is not set. Add it to .env
-    pause
-    exit /b 1
+    echo   No DATABASE_URL - using the embedded PostgreSQL in .\data\pg
 )
 
 :: Kill old backend if running
@@ -54,11 +52,13 @@ if exist "%PID_FILE%" (
 :: Install dependencies if missing
 echo   Checking dependencies...
 cd /d "%BACKEND_DIR%"
-%PY% -c "import fastapi,uvicorn,asyncpg,httpx,apscheduler,bcrypt,jwt,slowapi" >nul 2>&1
+%PY% -c "import fastapi,uvicorn,asyncpg,httpx,apscheduler,bcrypt,jwt,slowapi,pgserver,playwright" >nul 2>&1
 if errorlevel 1 (
-    echo   Installing dependencies...
+    echo   Installing dependencies (first run can take a few minutes)...
     %PY% -m pip install -r requirements.txt -q
 )
+:: Chromium for the CSSBuy scraper (no-op when already installed)
+%PY% -m playwright install chromium >nul 2>&1
 
 :: Start backend
 echo   Starting backend on port 8000...

@@ -47,6 +47,31 @@ _SEL_SUBMIT      = "p#login"
 Source = Literal["1688", "taobao", "both"]
 
 
+def _should_run_headless(captcha_key: str) -> bool:
+    """
+    Decide whether to show the browser window.
+
+      PLAYWRIGHT_HEADED=1   → always headed
+      PLAYWRIGHT_HEADLESS=1 → always headless
+      otherwise: headed on a desktop (Windows/macOS, or Linux with a DISPLAY)
+      when there is no captcha solver — so a human can pass the CSSBuy captcha
+      on first login; headless on servers/containers or when 2captcha is set.
+    """
+    forced_headed = str(os.getenv("PLAYWRIGHT_HEADED", "")).lower() in {"1", "true", "yes"}
+    forced_headless = str(os.getenv("PLAYWRIGHT_HEADLESS", "")).lower() in {"1", "true", "yes"}
+    if forced_headed:
+        return False
+    if forced_headless:
+        return True
+    if captcha_key:
+        return True
+    import sys
+    on_desktop = sys.platform.startswith(("win", "darwin")) or bool(os.getenv("DISPLAY"))
+    if os.path.exists("/.dockerenv") or os.getenv("RAILWAY_ENVIRONMENT_NAME"):
+        on_desktop = False
+    return not on_desktop
+
+
 # ── Public entry point ─────────────────────────────────────────────────────────
 
 async def scrape(
@@ -68,10 +93,8 @@ async def scrape(
         log.error("Playwright not installed. Run: pip install playwright && playwright install chromium")
         return []
 
-    # Run headless by default in server environments (e.g. Railway).
-    # Set PLAYWRIGHT_HEADED=1 only for local interactive debugging.
-    force_headed = str(os.getenv("PLAYWRIGHT_HEADED", "")).lower() in {"1", "true", "yes"}
-    headless = not force_headed
+    headless = _should_run_headless(captcha_key)
+    log.info("CSSBuy: launching Chromium (%s)", "headless" if headless else "headed — solve the captcha in the window if asked")
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
@@ -602,7 +625,8 @@ async def _login(page, username: str, password: str, captcha_key: str) -> None:
     else:
         log.info("CSSBuy: submitting password login without captcha solver")
         await page.click(_SEL_SUBMIT)
-        timeout_ms = 45000
+        # Headed on a desktop: give the human time to solve a captcha by hand.
+        timeout_ms = 45000 if _should_run_headless("") else 240000
 
     try:
         await page.wait_for_function(

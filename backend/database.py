@@ -16,6 +16,7 @@ class Database:
         # (API handlers, worker loop, publisher loop) can each acquire their
         # own connection and never block each other.
         self._pool: Optional[asyncpg.Pool] = None
+        self.embedded: bool = False  # True when running the bundled pgserver cluster
 
     # ── Thin helpers so all query sites stay identical ─────────────────────────
 
@@ -45,17 +46,16 @@ class Database:
     async def connect(self):
         db_url = os.getenv("DATABASE_URL")
         if not db_url:
-            log.critical(
-                "\n"
-                "╔══════════════════════════════════════════════════════════╗\n"
-                "║  FATAL: DATABASE_URL environment variable is not set.   ║\n"
-                "║                                                          ║\n"
-                "║  Fix:  Railway Dashboard → Service → Variables → Add:   ║\n"
-                "║        Use the Supabase SESSION POOLER connection string ║\n"
-                "║        (Settings → Database → Connection pooling)        ║\n"
-                "╚══════════════════════════════════════════════════════════╝"
-            )
-            sys.exit(1)
+            db_url = await asyncio.to_thread(_start_embedded_postgres)
+            if not db_url:
+                log.critical(
+                    "FATAL: no database. Either set DATABASE_URL (any PostgreSQL, e.g. the "
+                    "Supabase SESSION POOLER string) or install the embedded database with "
+                    "`pip install pgserver` — DropOS then runs a local Postgres in ./data/pg."
+                )
+                sys.exit(1)
+            os.environ["DATABASE_URL"] = db_url
+            self.embedded = True
 
         # SSL: hosted Postgres (Supabase/Railway) needs it; a local dev DB usually
         # has no TLS at all.  DATABASE_SSL=require|disable overrides auto-detect.
@@ -153,7 +153,7 @@ class Database:
             now if p.get("stage") == "REJECTED" else None,
         )
 
-    async def get_products(self, stage: str = "SCRAPED", limit: int = 50, offset: int = 0, sort: str = "score") -> list:
+    async def get_products(self, stage: str = "SCRAPED", limit: int = 50, offset: int = 0, sort: str = "score", q: str = "") -> list:
         sort_map = {
             "score": "score DESC",
             "margin": "margin_pct DESC",
@@ -161,9 +161,16 @@ class Database:
             "created": "created_at DESC",
         }
         order = sort_map.get(sort, "score DESC")
+        where, args = "stage=$1", [stage]
+        if q:
+            args.append(f"%{q.strip()}%")
+            where += (f" AND (product_name ILIKE ${len(args)} OR title_translated ILIKE ${len(args)}"
+                      f" OR title ILIKE ${len(args)} OR category ILIKE ${len(args)} OR caption ILIKE ${len(args)}"
+                      f" OR keyword ILIKE ${len(args)})")
+        args += [limit, offset]
         rows = await self.fetch(
-            f"SELECT * FROM products WHERE stage=$1 ORDER BY {order} LIMIT $2 OFFSET $3",
-            stage, limit, offset
+            f"SELECT * FROM products WHERE {where} ORDER BY {order} LIMIT ${len(args)-1} OFFSET ${len(args)}",
+            *args
         )
         return [_row_to_product(r) for r in rows]
 
@@ -171,8 +178,16 @@ class Database:
         rows = await self.fetch("SELECT * FROM products ORDER BY id DESC LIMIT $1", limit)
         return [_row_to_product(r) for r in rows]
 
-    async def count_products(self, stage: str = "SCRAPED") -> int:
-        val = await self.fetchval("SELECT COUNT(*) FROM products WHERE stage=$1", stage)
+    async def count_products(self, stage: str = "SCRAPED", q: str = "") -> int:
+        if q:
+            like = f"%{q.strip()}%"
+            val = await self.fetchval("""
+                SELECT COUNT(*) FROM products WHERE stage=$1 AND (
+                    product_name ILIKE $2 OR title_translated ILIKE $2 OR title ILIKE $2
+                    OR category ILIKE $2 OR caption ILIKE $2 OR keyword ILIKE $2)
+            """, stage, like)
+        else:
+            val = await self.fetchval("SELECT COUNT(*) FROM products WHERE stage=$1", stage)
         return val if val else 0
 
     async def get_product(self, pid: int) -> Optional[dict]:
@@ -847,6 +862,18 @@ class Database:
 
         return stats
 
+    async def count_admin_users(self) -> int:
+        return int(await self.fetchval("SELECT COUNT(*) FROM admin_users") or 0)
+
+    async def create_admin_user(self, email: str, password_hash: str) -> int:
+        row = await self.fetchrow("""
+            INSERT INTO admin_users (email, password_hash, created_at)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash
+            RETURNING id
+        """, email.strip().lower(), password_hash, _now())
+        return int(row["id"])
+
     async def get_admin_user(self, email: str) -> Optional[dict]:
         row = await self.fetchrow("SELECT * FROM admin_users WHERE email=$1", email.strip().lower())
         return dict(row) if row else None
@@ -1001,6 +1028,32 @@ class Database:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+_embedded_pg = None  # keep the pgserver handle alive for the life of the process
+
+
+def _start_embedded_postgres() -> str | None:
+    """
+    Start (or attach to) an embedded PostgreSQL cluster in DATA_DIR/pg using the
+    `pgserver` package. Returns a connection URI, or None if pgserver is missing.
+    Used when DATABASE_URL is not set — i.e. the zero-config self-hosted mode.
+    """
+    global _embedded_pg
+    try:
+        import pgserver  # type: ignore
+    except Exception:
+        log.warning("DATABASE_URL not set and `pgserver` is not installed.")
+        return None
+    try:
+        from config.paths import PG_DIR
+        _embedded_pg = pgserver.get_server(str(PG_DIR))
+        uri = _embedded_pg.get_uri()
+        log.info("Embedded PostgreSQL started at %s (data dir %s)", uri.split("@")[-1], PG_DIR)
+        return uri
+    except Exception as exc:
+        log.error("Embedded PostgreSQL failed to start: %s", exc)
+        return None
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()

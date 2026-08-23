@@ -1,31 +1,42 @@
-# Local Scraping Mode
+# Scraping on your PC for a hosted DropOS
 
-Use this when the website should only store/process data, while CSSBuy scraping runs on your PC.
+You only need this when DropOS itself runs on a server that cannot scrape
+(datacenter IP blocked by CSSBuy, no browser in the container…). If you run
+DropOS on your own PC with `start.sh` / `start.bat`, scraping already happens
+locally — skip this file.
 
-## Website setup
+## Hosted instance setup
 
-Set these in the hosted app settings or environment:
+In the hosted app's **Settings → CSSBuy scraper**:
 
-- `LOCAL_SCRAPING_ONLY=true`
-- `INGEST_API_TOKEN=<a private random token>`
+- tick **Store data here, scrape locally only**
+- set an **Ingest API token** (any private random string)
 
-When local-only mode is enabled, `/api/scan` and scheduled server-side scans are disabled. The website still stores raw products, runs filters/scoring/AI enrichment, and shows the review queue.
+(or set the env vars `LOCAL_SCRAPING_ONLY=true` and `INGEST_API_TOKEN=…`).
 
-## Local run
+With local-only mode on, `/api/scan` and the server scan loop are disabled. The
+hosted app still filters, scores, enriches and shows the review queue.
 
-From this repo on your PC:
+## On your PC
+
+From this repo:
 
 ```powershell
-$env:WEBSITE_URL="https://your-website.example.com"
-$env:INGEST_API_TOKEN="same-token-as-hosted-site"
+pip install -r backend/requirements.txt
+python -m playwright install chromium
+
+$env:WEBSITE_URL="https://your-hosted-dropos.example.com"
+$env:INGEST_API_TOKEN="same-token-as-the-hosted-app"
 $env:CSSBUY_USERNAME="your-cssbuy-email"
 $env:CSSBUY_PASSWORD="your-cssbuy-password"
 $env:SCAN_KEYWORDS="couple gifts,anniversary gifts"
 $env:CSSBUY_SOURCE="1688"
 $env:MAX_PER_KEYWORD="100"
-$env:PLAYWRIGHT_HEADED="1"
 python backend/local_scrape_upload.py
 ```
 
-The script logs into CSSBuy locally, scrapes results, and uploads them to `/api/ingest/products`.
-`PLAYWRIGHT_HEADED=1` is useful for the first run if you need to solve a login captcha manually.
+The script logs into CSSBuy (the browser window opens on a desktop so you can
+pass the captcha on the first login; the session is saved afterwards), scrapes
+each keyword and uploads the results to `/api/ingest/products` — one keyword at
+a time. It runs once by default; set `SCRAPE_INTERVAL=3600` (or `--interval 3600`)
+to keep looping.

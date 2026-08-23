@@ -270,6 +270,11 @@ def save_scan_items(job_id: int, items: list) -> dict:
     return _exporter.save_scan_items(job_id, items)
 
 
+def is_configured() -> bool:
+    """True when a spreadsheet id and credentials are set (cheap, no network)."""
+    return bool(_exporter.spreadsheet_id and (_exporter.credentials_path or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")))
+
+
 def verify_writable() -> bool:
     try:
         return _exporter._connect()

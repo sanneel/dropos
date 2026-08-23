@@ -15,3 +15,7 @@ backend/*_session.json
 
 # Claude local settings — may contain credentials
 .claude/settings.local.json
+
+# Runtime data (embedded Postgres, generated secret, collages, cleaned images)
+data/
+backend/data/

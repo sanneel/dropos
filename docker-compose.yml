@@ -1,35 +1,37 @@
-version: '3.8'
-
 services:
-  dropos-engine:
+  dropos:
     build: .
     ports:
       - "8000:8000"
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
-      - DATABASE_URL=postgresql://user:password@postgres:5432/dropos
+      - DATABASE_URL=postgresql://dropos:dropos@postgres:5432/dropos
+      - DATABASE_SSL=disable
+      - APP_ENV=production
+    volumes:
+      - dropos_data:/data
     depends_on:
       postgres:
         condition: service_healthy
     restart: unless-stopped
 
   postgres:
-    image: postgres:15-alpine
+    image: postgres:16-alpine
     environment:
-      - POSTGRES_USER=user
-      - POSTGRES_PASSWORD=password
+      - POSTGRES_USER=dropos
+      - POSTGRES_PASSWORD=dropos
       - POSTGRES_DB=dropos
-    ports:
-      - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U user -d dropos"]
+      test: ["CMD-SHELL", "pg_isready -U dropos -d dropos"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
 
 volumes:
   postgres_data:
+  dropos_data:

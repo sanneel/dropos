@@ -207,10 +207,12 @@ async def _gemini_chat(message: str, settings: dict) -> Optional[dict]:
     if not api_key:
         return None
 
+    from enrichment import _gemini_model
+    model = _gemini_model(settings)
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=45) as client:
             resp = await client.post(
-                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
                 headers={"x-goog-api-key": api_key, "content-type": "application/json"},
                 json={
                     "system_instruction": {"parts": [{"text": _SYSTEM}]},

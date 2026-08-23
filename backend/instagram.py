@@ -62,11 +62,26 @@ def _public_base_url(settings: dict) -> str:
 
 
 def _publishable_image_url(image_url: str, settings: dict) -> str:
+    """
+    Return a URL Meta can download, or "" if there is none.
+    - Relative URLs (e.g. /api/products/1/cleaned-image on a PC without a public
+      address) can only be published when a public base URL is configured.
+    - Absolute URLs are proxied through our server when a public base exists
+      (supplier CDNs sometimes block Meta), otherwise used as-is.
+    """
+    image_url = (image_url or "").strip()
     base = _public_base_url(settings)
+    if image_url.startswith("/"):
+        return f"{base}{image_url}" if base else ""
+    if not image_url.startswith(("http://", "https://")):
+        return ""
     if not base:
         return image_url
     # Already hosted on our server — serve directly, no extra proxy layer
     if image_url.startswith(base + "/"):
+        return image_url
+    # Supabase / other permanent public hosts don't need the proxy
+    if ".supabase.co/" in image_url:
         return image_url
     return f"{base}/api/image?url={quote(image_url, safe='')}"
 
@@ -230,10 +245,7 @@ async def post_product(product: dict, settings: dict) -> PostResult:
 
     # Build publishable image URLs (max carousel limit)
     raw_images   = product.get("images") or []
-    image_urls   = [
-        _publishable_image_url(img, settings)
-        for img in raw_images if img
-    ][:_MAX_CAROUSEL_IMAGES]
+    image_urls   = [u for u in (_publishable_image_url(img, settings) for img in raw_images if img) if u][:_MAX_CAROUSEL_IMAGES]
 
     if not token or not user_id:
         log.info("Instagram: no API credentials — simulating post for product %s", pid)
@@ -242,7 +254,7 @@ async def post_product(product: dict, settings: dict) -> PostResult:
 
     if not image_urls:
         return PostResult(product_id=pid, status="error",
-                          error="Product has no image URL")
+                          error="No publicly reachable image URL — configure Supabase Storage or a public app URL")
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:

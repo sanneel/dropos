@@ -49,11 +49,11 @@ if [ -f "$SCRIPT_DIR/.env" ]; then
   done < "$SCRIPT_DIR/.env"
   echo -e "  ${CYAN}Loaded .env${NC}"
 else
-  echo -e "  ${YELLOW}No .env found — copy .env.example to .env first${NC}"
+  echo -e "  ${CYAN}No .env — running with defaults (embedded DB, first-run setup in the browser)${NC}"
 fi
 
 if [ -z "$DATABASE_URL" ]; then
-  echo -e "  ${RED}DATABASE_URL is not set. Add it to .env${NC}"; exit 1
+  echo -e "  ${CYAN}No DATABASE_URL — using the embedded PostgreSQL in ./data/pg${NC}"
 fi
 
 # Kill any existing backend
@@ -68,10 +68,12 @@ fi
 
 echo -e "  ${CYAN}Checking dependencies...${NC}"
 cd "$BACKEND_DIR"
-if ! $PY -c "import fastapi,uvicorn,asyncpg,httpx,apscheduler,bcrypt,jwt,slowapi" 2>/dev/null; then
-  echo -e "  ${YELLOW}Installing dependencies...${NC}"
+if ! $PY -c "import fastapi,uvicorn,asyncpg,httpx,apscheduler,bcrypt,jwt,slowapi,pgserver,playwright" 2>/dev/null; then
+  echo -e "  ${YELLOW}Installing dependencies (first run can take a few minutes)...${NC}"
   $PY -m pip install -r requirements.txt -q
 fi
+# Chromium for the CSSBuy scraper (no-op when already installed)
+$PY -m playwright install chromium >/dev/null 2>&1 || echo -e "  ${YELLOW}Playwright Chromium install failed — scraping will not work until you run: $PY -m playwright install chromium${NC}"
 
 echo -e "  ${CYAN}Starting backend on port 8000...${NC}"
 nohup $PY -m uvicorn main:app --host 0.0.0.0 --port 8000 > "$SCRIPT_DIR/backend.log" 2>&1 &

@@ -66,6 +66,7 @@ sys.path.insert(0, BASE_DIR)
 # Import local modules
 from models import ProductStage
 from config.runtime import get_config, merge_env_with_settings, sanitize_settings
+from config.paths import DATA_DIR, COLLAGE_DIR, CLEANED_DIR, SECRET_FILE, data_path
 from image_editor import remove_text as clipdrop_remove_text, _convert_to_jpeg
 from collage import create_collage
 from services.images import upload_product_image
@@ -74,6 +75,7 @@ from runner import process_scraped_products, run_pipeline
 from scheduler import create_scheduler, get_scheduler_status
 from posting_scheduler import create_posting_scheduler, get_posting_scheduler_status
 import instagram
+import instagram_replies
 import sheets
 import ai_assistant
 import decision_memory
@@ -88,6 +90,31 @@ def verify_password(plain_password, hashed_password):
     except Exception as exc:
         log.error("bcrypt.checkpw raised: %s", exc)
         return False
+
+_JWT_SECRET_CACHE: Optional[str] = None
+
+def _jwt_secret() -> str:
+    """JWT signing secret: JWT_SECRET env var, else a random secret generated once
+    and kept in DATA_DIR/jwt_secret so sessions survive restarts (self-hosted mode)."""
+    global _JWT_SECRET_CACHE
+    if _JWT_SECRET_CACHE:
+        return _JWT_SECRET_CACHE
+    secret = (os.getenv("JWT_SECRET") or "").strip()
+    if not secret:
+        try:
+            if SECRET_FILE.exists():
+                secret = SECRET_FILE.read_text(encoding="utf-8").strip()
+            if not secret:
+                import secrets as _secrets
+                secret = _secrets.token_hex(32)
+                SECRET_FILE.write_text(secret, encoding="utf-8")
+                log.info("Generated a new JWT secret in %s", SECRET_FILE)
+        except Exception as exc:
+            log.error("Could not read/write %s (%s) — using a per-process secret", SECRET_FILE, exc)
+            import secrets as _secrets
+            secret = _secrets.token_hex(32)
+    _JWT_SECRET_CACHE = secret
+    return secret
 
 _LOGIN_FAILURES: dict[str, list[float]] = defaultdict(list)
 _LOCKOUT_MAX = 5
@@ -148,6 +175,7 @@ _SENSITIVE_SETTING_FIELDS = {
     "groq_key",
     "instagram_access_token",
     "instagram_webhook_token",
+    "instagram_app_secret",
     "cssbuy_password",
     "captcha_2captcha_key",
     "google_sheets_credentials",
@@ -155,9 +183,10 @@ _SENSITIVE_SETTING_FIELDS = {
     "clipdrop_key",
 }
 _cleaned_images: dict[int, bytes] = {}
-_COLLAGE_DIR = "/tmp/dropos_collages"
-os.makedirs(_COLLAGE_DIR, exist_ok=True)
-_CSSBUY_DEBUG_DIR = os.getenv("CSSBUY_DEBUG_DIR") or "/tmp/cssbuy_debug"
+_COLLAGE_DIR = str(COLLAGE_DIR)
+_CLEANED_DIR = str(CLEANED_DIR)
+_CSSBUY_DEBUG_DIR = os.getenv("CSSBUY_DEBUG_DIR") or str(data_path("cssbuy_debug"))
+os.environ.setdefault("CSSBUY_DEBUG_DIR", _CSSBUY_DEBUG_DIR)
 
 # ── Lifespan ───────────────────────────────────────────────────────────────
 @asynccontextmanager
@@ -181,16 +210,15 @@ async def lifespan(app: FastAPI):
     if merged_settings.get("google_sheets_id"):
         asyncio.create_task(_sync_sheets_after_startup())
 
-    # Environment audit
-    _required_env = {
-        "DATABASE_URL": "PostgreSQL connection string (Railway/Supabase)",
-        "SUPABASE_URL": "Supabase project URL (image storage)",
-        "SUPABASE_SERVICE_ROLE_KEY": "Supabase service role key (image storage)",
-        "JWT_SECRET": "Secret for signing JWT tokens",
-    }
-    for var, description in _required_env.items():
-        if not os.getenv(var):
-            log.critical("MISSING ENV VAR: %s (%s) — some features will not work.", var, description)
+    # Environment hints (nothing here is fatal in self-hosted mode)
+    log.info("Data directory: %s", DATA_DIR)
+    _jwt_secret()
+    if not (os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_ROLE_KEY")):
+        log.info("Supabase Storage not configured — product images stay on the supplier CDN. "
+                 "Instagram posting needs publicly reachable images: set SUPABASE_URL + "
+                 "SUPABASE_SERVICE_ROLE_KEY (free tier) or PUBLIC_BASE_URL of a reachable deployment.")
+    if not await db.count_admin_users():
+        log.warning("No admin user yet — open the app in a browser to create one (first-run setup).")
 
     # Autonomous worker loops
     asyncio.create_task(run_worker_loop())
@@ -224,7 +252,10 @@ async def lifespan(app: FastAPI):
     await db.close()
 
 # ── App Initialization ─────────────────────────────────────────────────────
-is_dev = os.getenv("RAILWAY_ENVIRONMENT_NAME") is None
+# APP_ENV=production hides the API docs and tightens CORS. Railway's env var is
+# still honoured for anyone who deploys there.
+_is_production = (os.getenv("APP_ENV", "").lower() == "production") or bool(os.getenv("RAILWAY_ENVIRONMENT_NAME"))
+is_dev = not _is_production
 
 app = FastAPI(
     title="DropOS",
@@ -237,20 +268,15 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
-# Trust proxy headers only from Railway's internal proxy, not arbitrary clients
-_railway_proxy = os.getenv("RAILWAY_PROXY_TRUSTED_HOST", "127.0.0.1")
-app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=_railway_proxy)
+# Trust proxy headers only from a known reverse proxy, not arbitrary clients
+_trusted_proxy = os.getenv("TRUSTED_PROXY_HOST") or os.getenv("RAILWAY_PROXY_TRUSTED_HOST", "127.0.0.1")
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=_trusted_proxy)
 
-# _on_railway is True whenever deployed to Railway (any env name), False when running locally.
-# Railway ALWAYS serves HTTPS, so cookies must have Secure=True there.
-# Locally we serve HTTP, so Secure=True would break cookie delivery.
-_on_railway = os.getenv("RAILWAY_ENVIRONMENT_NAME") is not None
-_env_name = os.getenv("RAILWAY_ENVIRONMENT_NAME", "local").lower()
-
-# Restrict CORS to specific domain; localhost only allowed locally
+# CORS: the SPA is same-origin, so this only matters for a separately hosted
+# frontend (FRONTEND_DOMAIN) and local development on other ports.
 _allowed_origins = [o for o in [os.getenv("FRONTEND_DOMAIN", "")] if o]
-if not _on_railway:
-    _allowed_origins += ["http://localhost:3000", "http://127.0.0.1:8000"]
+if not _is_production:
+    _allowed_origins += ["http://localhost:3000", "http://localhost:8000", "http://127.0.0.1:8000"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
@@ -282,7 +308,7 @@ async def jwt_auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     path = request.url.path
-    is_public = path in ["/robots.txt", "/health", "/shop", "/api/catalog", "/api/auth/login", "/api/version", "/api/ingest/products"] or \
+    is_public = path in ["/robots.txt", "/health", "/shop", "/api/catalog", "/api/auth/login", "/api/auth/status", "/api/auth/setup", "/api/version", "/api/ingest/products"] or \
                 path.startswith("/api/image") or \
                 path.startswith("/api/collage-image/") or \
                 path.startswith("/api/instagram/webhook") or \
@@ -297,9 +323,7 @@ async def jwt_auth_middleware(request: Request, call_next):
     if not path.startswith("/api/"):
         return await call_next(request)
 
-    secret = os.getenv("JWT_SECRET")
-    if not secret:
-        return await call_next(request)
+    secret = _jwt_secret()
 
     # Accept Bearer token from Authorization header
     auth_header = request.headers.get("Authorization", "")
@@ -341,17 +365,43 @@ async def login(request: Request, body: LoginRequest):
         return JSONResponse({"detail": "Invalid credentials"}, status_code=401)
 
     _clear_failures(email)
-    secret = os.getenv("JWT_SECRET")
-    if not secret:
-        return JSONResponse({"detail": "Auth not configured"}, status_code=500)
+    return JSONResponse({"ok": True, "token": _issue_token(user["id"])})
 
-    token = jwt.encode(
-        {"sub": str(user["id"]), "role": "admin", "exp": int(time.time() + 86400 * 7)},
-        secret,
-        algorithm="HS256"
+
+def _issue_token(user_id) -> str:
+    return jwt.encode(
+        {"sub": str(user_id), "role": "admin", "exp": int(time.time() + 86400 * 7)},
+        _jwt_secret(),
+        algorithm="HS256",
     )
 
-    return JSONResponse({"ok": True, "token": token})
+
+class SetupRequest(BaseModel):
+    email: str
+    password: str
+
+
+@app.get("/api/auth/status")
+async def auth_status():
+    """Public: tells the SPA whether the first-run setup screen is needed."""
+    return {"needs_setup": (await db.count_admin_users()) == 0}
+
+
+@app.post("/api/auth/setup")
+@limiter.limit("5/minute")
+async def auth_setup(request: Request, body: SetupRequest):
+    """Create the first admin account. Only works while no admin exists."""
+    if await db.count_admin_users():
+        raise HTTPException(409, "Setup already completed — sign in instead.")
+    email = body.email.strip().lower()
+    if "@" not in email or len(email) < 5:
+        raise HTTPException(400, "Enter a valid e-mail address.")
+    if len(body.password) < 8:
+        raise HTTPException(400, "Password must be at least 8 characters.")
+    pw_hash = _bcrypt.hashpw(body.password.encode(), _bcrypt.gensalt(rounds=12)).decode()
+    user_id = await db.create_admin_user(email, pw_hash)
+    log.info("First admin account created: %s", email)
+    return JSONResponse({"ok": True, "token": _issue_token(user_id)})
 
 @app.post("/api/auth/logout")
 async def logout():
@@ -490,6 +540,7 @@ class SettingsUpdate(BaseModel):
     instagram_dm_reply_enabled: Optional[bool] = None
     instagram_dm_rules: Optional[list] = None
     instagram_webhook_token: Optional[str] = None
+    instagram_app_secret: Optional[str] = None
     apify_token: Optional[str] = None
     anthropic_key: Optional[str] = None
     gemini_key: Optional[str] = None
@@ -575,6 +626,8 @@ async def _sync_sheets_after_startup() -> None:
         log.warning("Startup sheets sync failed: %s", e)
 
 async def _backup_settings_to_sheets() -> dict:
+    if not sheets.is_configured():
+        return {"ok": True, "skipped": True}
     try:
         snapshot = await db.get_settings()
         return await asyncio.to_thread(sheets.save_settings, snapshot)
@@ -583,6 +636,10 @@ async def _backup_settings_to_sheets() -> dict:
         return {"ok": False, "error": str(exc)}
 
 async def _backup_products_to_sheets() -> dict:
+    # Skip the full-table snapshot entirely when Sheets isn't configured —
+    # this is called after every approve/reject/edit.
+    if not sheets.is_configured():
+        return {"ok": True, "skipped": True}
     try:
         snapshot = await db.get_all_products()
         return await asyncio.to_thread(sheets.save_products, snapshot)
@@ -699,7 +756,15 @@ async def get_catalog(limit: int = 100, offset: int = 0, category: Optional[str]
 @app.get("/api/settings")
 
 async def get_settings():
-    return sanitize_settings(await _settings())
+    data = sanitize_settings(await _settings())
+    # Runtime facts the UI needs to give honest guidance
+    data["image_storage_set"] = bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
+    data["runtime"] = {
+        "data_dir": str(DATA_DIR),
+        "embedded_db": bool(getattr(db, "embedded", False)),
+        "production": _is_production,
+    }
+    return data
 
 @app.patch("/api/settings")
 async def update_settings(body: SettingsUpdate):
@@ -748,9 +813,10 @@ async def get_stats():
     return await db.get_stats()
 
 @app.get("/api/products")
-async def get_products(stage: str = ProductStage.SCRAPED.value, limit: int = 50, offset: int = 0, sort: str = "score"):
-    products = await db.get_products(stage=stage, limit=limit, offset=offset, sort=sort)
-    total = await db.count_products(stage=stage)
+async def get_products(stage: str = ProductStage.SCRAPED.value, limit: int = 50, offset: int = 0, sort: str = "score", q: str = ""):
+    limit = max(1, min(limit, 500))
+    products = await db.get_products(stage=stage, limit=limit, offset=max(0, offset), sort=sort, q=q)
+    total = await db.count_products(stage=stage, q=q)
     return {"products": products, "total": total}
 
 @app.get("/api/products/{product_id}")
@@ -944,7 +1010,7 @@ async def remove_product_text(product_id: int):
     if not cleaned: raise HTTPException(502, "Clipdrop failed")
 
     _cleaned_images[product_id] = cleaned
-    with open(f"{_COLLAGE_DIR}/cleaned_{product_id}.jpg", "wb") as f: f.write(cleaned)
+    with open(f"{_CLEANED_DIR}/cleaned_{product_id}.jpg", "wb") as f: f.write(cleaned)
 
     # Upload to Supabase for persistence across Railway restarts
     supabase_url = await upload_product_image(cleaned, f"cleaned_{product_id}")
@@ -963,13 +1029,16 @@ async def remove_product_text(product_id: int):
         imgs = [new_url, url] + [img for img in original_imgs if img != url]
     await db.update_product_fields(product_id, {"images_json": json.dumps(imgs), "has_chinese_text": False})
     await db.set_stage(product_id, ProductStage.REVIEWED.value)
-    return {"ok": True, "image_url": new_url}
+    # Without Supabase or a public base URL the cleaned file only exists on this
+    # machine — Instagram will fall back to the original photo when posting.
+    public = bool(supabase_url) or new_url.startswith("http")
+    return {"ok": True, "image_url": new_url, "public": public}
 
 @app.get("/api/products/{product_id}/cleaned-image")
 async def serve_cleaned_image(product_id: int):
     data = _cleaned_images.get(product_id)
     if not data:
-        path = f"{_COLLAGE_DIR}/cleaned_{product_id}.jpg"
+        path = f"{_CLEANED_DIR}/cleaned_{product_id}.jpg"
         if os.path.exists(path):
             with open(path, "rb") as f: data = f.read()
     if data:
@@ -1236,7 +1305,16 @@ async def test_ai_connection(body: AITestRequest):
 
 @app.post("/api/instagram/webhook")
 async def ig_webhook_receive(request: Request, bg: BackgroundTasks):
-    body = await request.json()
+    raw = await request.body()
+    settings = await _settings()
+    app_secret = str(settings.get("instagram_app_secret") or "").strip()
+    if app_secret and not instagram_replies.verify_signature(app_secret, raw, request.headers.get("X-Hub-Signature-256", "")):
+        log.warning("IG webhook: bad X-Hub-Signature-256 — ignoring delivery")
+        raise HTTPException(403, "Invalid signature")
+    try:
+        body = json.loads(raw or b"{}")
+    except Exception:
+        raise HTTPException(400, "Invalid JSON")
     bg.add_task(_process_ig_webhook, body)
     return {"ok": True}
 
@@ -1384,7 +1462,11 @@ async def _post_and_export(products: list) -> None:
         log.error("Post error: %s", e)
 
 async def _process_ig_webhook(body: dict) -> None:
-    pass
+    try:
+        settings = await _settings()
+        await instagram_replies.process_webhook(body, settings, db)
+    except Exception as exc:
+        log.error("IG webhook processing failed: %s", exc)
 
 async def _verify_ingest_token(auth: Optional[str], token: Optional[str]) -> None:
     settings = await _settings()
