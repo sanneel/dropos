@@ -37,6 +37,8 @@ def create_posting_scheduler(get_settings_fn: Callable[[], Coroutine]) -> AsyncI
     """
     # Import here to avoid circular imports at module level
     from database import db
+    import activity
+    import autopilot
     import instagram
     from models import ProductStage
 
@@ -47,13 +49,19 @@ def create_posting_scheduler(get_settings_fn: Callable[[], Coroutine]) -> AsyncI
         try:
             settings = await get_settings_fn()
 
-            if not settings.get("post_schedule_enabled", False):
-                log.debug("Peak-post: disabled in settings — skipping")
+            if not autopilot.posting_allowed(settings):
+                log.debug("Peak-post: autopilot posting off / Instagram not connected — skipping")
                 return
 
             posts_per_slot = max(1, int(settings.get("posts_per_slot", 1)))
+            max_per_day = max(1, int(float(settings.get("max_posts_per_day") or 2)))
+            already = await db.count_posts_since(autopilot._today_start_iso(str(settings.get("post_timezone") or "Asia/Tbilisi")))
+            remaining = max_per_day - already
+            if remaining <= 0:
+                log.info("Peak-post: daily cap reached (%d/%d)", already, max_per_day)
+                return
             products = await db.get_products(
-                stage=ProductStage.REVIEWED.value, limit=posts_per_slot, sort="score"
+                stage=ProductStage.REVIEWED.value, limit=min(posts_per_slot, remaining), sort="score"
             )
 
             if not products:
@@ -65,6 +73,7 @@ def create_posting_scheduler(get_settings_fn: Callable[[], Coroutine]) -> AsyncI
 
             for product, result in zip(products, results):
                 pid = product["id"]
+                name = (product.get("product_name") or product.get("title_translated") or "")[:60]
                 if result.status in {"posted", "mock"}:
                     await db.set_stage(pid, ProductStage.LIVE.value)
                     await db.log_post(pid)
@@ -73,6 +82,8 @@ def create_posting_scheduler(get_settings_fn: Callable[[], Coroutine]) -> AsyncI
                     log.info(
                         "Peak-post ✓ product_id=%d status=%s", pid, result.status
                     )
+                    await activity.record("posted", f"Posted “{name}” at peak hour" + (" (simulated — no token)" if result.status == "mock" else ""),
+                                          product_id=pid, meta={"url": result.post_url})
                 else:
                     err = result.error or "unknown error"
                     await db.update_product_note(
@@ -81,6 +92,7 @@ def create_posting_scheduler(get_settings_fn: Callable[[], Coroutine]) -> AsyncI
                     log.warning(
                         "Peak-post ✗ product_id=%d error=%s", pid, err
                     )
+                    await activity.record("post_failed", f"Peak-hour post failed for “{name}”: {err}", product_id=pid, level="error")
 
         except Exception as exc:
             log.error("Peak-post job crashed: %s", exc, exc_info=True)

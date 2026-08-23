@@ -862,6 +862,94 @@ class Database:
 
         return stats
 
+    # ── Activity log ──────────────────────────────────────────────────────────
+
+    async def log_activity(self, kind: str, message: str, product_id=None, level: str = "info", meta: dict | None = None) -> None:
+        await self.execute(
+            "INSERT INTO activity_log (ts, kind, level, message, product_id, meta) VALUES ($1,$2,$3,$4,$5,$6::jsonb)",
+            _now(), kind, level, message[:500], product_id, json.dumps(meta or {}, default=str),
+        )
+
+    async def get_activity(self, limit: int = 50, since: str | None = None, kinds: list | None = None) -> list:
+        where, args = [], []
+        if since:
+            args.append(since); where.append(f"ts >= ${len(args)}")
+        if kinds:
+            args.append(kinds); where.append(f"kind = ANY(${len(args)}::text[])")
+        args.append(limit)
+        sql = "SELECT * FROM activity_log" + (" WHERE " + " AND ".join(where) if where else "") + f" ORDER BY id DESC LIMIT ${len(args)}"
+        rows = await self.fetch(sql, *args)
+        out = []
+        for r in rows:
+            d = dict(r)
+            if isinstance(d.get("meta"), str):
+                try: d["meta"] = json.loads(d["meta"])
+                except Exception: d["meta"] = {}
+            out.append(d)
+        return out
+
+    async def activity_counts(self, since: str) -> dict:
+        rows = await self.fetch("SELECT kind, COUNT(*) AS n FROM activity_log WHERE ts >= $1 GROUP BY kind", since)
+        return {r["kind"]: int(r["n"]) for r in rows}
+
+    async def last_activity(self, kind: str) -> Optional[dict]:
+        row = await self.fetchrow("SELECT * FROM activity_log WHERE kind=$1 ORDER BY id DESC LIMIT 1", kind)
+        return dict(row) if row else None
+
+    async def prune_activity(self, keep: int = 5000) -> None:
+        await self.execute("DELETE FROM activity_log WHERE id < (SELECT COALESCE(MAX(id),0) - $1 FROM activity_log)", keep)
+
+    # ── Inbox (comments / DMs captured by the webhook) ────────────────────────
+
+    async def inbox_add(self, external_id: str, kind: str, sender_id: str, sender_name: str, text: str,
+                        media_id: str = "", is_lead: bool = False, auto_reply: str = "") -> Optional[int]:
+        row = await self.fetchrow("""
+            INSERT INTO inbox_messages (external_id, kind, sender_id, sender_name, text, media_id, is_lead, auto_reply, received_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+            ON CONFLICT (external_id) DO NOTHING
+            RETURNING id
+        """, external_id, kind, sender_id, sender_name, (text or "")[:2000], media_id, 1 if is_lead else 0, auto_reply or "", _now())
+        return int(row["id"]) if row else None
+
+    async def inbox_list(self, only_open: bool = True, limit: int = 100) -> list:
+        sql = "SELECT * FROM inbox_messages" + (" WHERE handled=0" if only_open else "") + " ORDER BY is_lead DESC, id DESC LIMIT $1"
+        rows = await self.fetch(sql, limit)
+        return [dict(r) for r in rows]
+
+    async def inbox_get(self, mid: int) -> Optional[dict]:
+        row = await self.fetchrow("SELECT * FROM inbox_messages WHERE id=$1", mid)
+        return dict(row) if row else None
+
+    async def inbox_set_handled(self, mid: int, handled: bool = True) -> None:
+        await self.execute("UPDATE inbox_messages SET handled=$1 WHERE id=$2", 1 if handled else 0, mid)
+
+    async def inbox_counts(self) -> dict:
+        row = await self.fetchrow("""
+            SELECT COUNT(*) FILTER (WHERE handled=0) AS open,
+                   COUNT(*) FILTER (WHERE handled=0 AND is_lead=1) AS leads,
+                   COUNT(*) AS total
+            FROM inbox_messages
+        """)
+        return {k: int(row[k] or 0) for k in ("open", "leads", "total")} if row else {"open": 0, "leads": 0, "total": 0}
+
+    # ── Autopilot helpers ─────────────────────────────────────────────────────
+
+    async def count_posts_since(self, since: str) -> int:
+        return int(await self.fetchval("SELECT COUNT(*) FROM post_log WHERE posted_at >= $1", since) or 0)
+
+    async def last_job_time(self) -> Optional[str]:
+        return await self.fetchval("SELECT created_at FROM jobs ORDER BY id DESC LIMIT 1")
+
+    async def count_stage_older_than(self, stage: str, before_iso: str) -> int:
+        return int(await self.fetchval("SELECT COUNT(*) FROM products WHERE stage=$1 AND created_at < $2", stage, before_iso) or 0)
+
+    async def reject_stage_older_than(self, stage: str, before_iso: str, reason: str) -> int:
+        rows = await self.fetch(
+            "UPDATE products SET stage='REJECTED', rejection_reason=$3, rejected_at=$4 WHERE stage=$1 AND created_at < $2 RETURNING id",
+            stage, before_iso, reason, _now(),
+        )
+        return len(rows)
+
     async def count_admin_users(self) -> int:
         return int(await self.fetchval("SELECT COUNT(*) FROM admin_users") or 0)
 
@@ -1314,6 +1402,37 @@ async def init_db():
                 pass  # Already JSONB or table just created — either way correct
 
             await conn.execute("""
+                CREATE TABLE IF NOT EXISTS activity_log (
+                    id         SERIAL PRIMARY KEY,
+                    ts         TEXT NOT NULL,
+                    kind       TEXT NOT NULL,
+                    level      TEXT NOT NULL DEFAULT 'info',
+                    message    TEXT NOT NULL,
+                    product_id INTEGER,
+                    meta       JSONB
+                )
+            """)
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_activity_ts ON activity_log(ts)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_activity_kind ON activity_log(kind)")
+
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS inbox_messages (
+                    id          SERIAL PRIMARY KEY,
+                    external_id TEXT UNIQUE,
+                    kind        TEXT NOT NULL,              -- comment | dm
+                    sender_id   TEXT,
+                    sender_name TEXT,
+                    text        TEXT,
+                    media_id    TEXT,
+                    is_lead     INTEGER DEFAULT 0,
+                    auto_reply  TEXT,
+                    handled     INTEGER DEFAULT 0,
+                    received_at TEXT NOT NULL
+                )
+            """)
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_inbox_handled ON inbox_messages(handled)")
+
+            await conn.execute("""
                 CREATE TABLE IF NOT EXISTS enrichment_log (
                     id               SERIAL PRIMARY KEY,
                     ts               TEXT NOT NULL,
@@ -1379,6 +1498,18 @@ async def init_db():
                 "post_timezone": "Asia/Tbilisi",
                 "posts_per_slot": 1,
                 "store_name": "Tskvili",
+                # ── Autopilot (hands-off mode) ───────────────────────────
+                "autopilot_enabled": False,          # master switch
+                "auto_scan_enabled": True,           # scheduled scans with scan_keywords
+                "scan_interval_hours": 12,
+                "auto_approve_enabled": True,        # approve winners without a human
+                "auto_approve_min_score": 7.0,       # composite threshold
+                "auto_approve_verdicts": ["top_priority", "strong_candidate"],
+                "auto_clean_images": True,           # Clipdrop for has_chinese_text (needs key)
+                "auto_reject_pending_days": 0,       # 0 = keep pending items forever
+                "max_posts_per_day": 2,
+                "lead_keywords": ["order", "buy", "price", "how much", "want", "ship", "delivery",
+                                  "ფასი", "შეკვეთა", "მინდა", "რა ღირს", "ვიყიდი", "მიწოდება"],
             }
             for k, v in defaults.items():
                 val = json.dumps(v) if not isinstance(v, str) else v

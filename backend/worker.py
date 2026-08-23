@@ -19,6 +19,8 @@ from config.runtime import merge_env_with_settings
 from database import db
 from models import ProductStage          # NOT from main — that causes a circular import
 from services.images import process_image
+import activity
+import autopilot
 import decision_memory
 import instagram
 
@@ -164,6 +166,8 @@ async def run_worker_loop():
                     ai_reject.append({**p, **dim_updates, "rejection_reason": f"Curator: {reason}"})
                     log.info("Worker: [REJECT] pid=%d score=%.2f verdict=%s → %s",
                              pid, composite_s, verdict, str(reason)[:60])
+                    await activity.record("auto_rejected", f"AI rejected “{(p.get('title_translated') or p.get('title') or '')[:60]}” — {str(reason)[:80]}",
+                                          product_id=pid, meta={"score": composite_s, "verdict": verdict})
                     continue
 
                 # ── Winner: Deep Enrichment + Supabase Image Upload ───────────
@@ -203,6 +207,33 @@ async def run_worker_loop():
                 await db.update_product_fields(pid, updates)
                 ai_pass.append({**p, **dim_updates})
                 log.info("Worker: pid=%d → ENRICHED.", pid)
+
+                # ── Autopilot: approve winners without a human ───────────────
+                name = (res.get("product_name") or p.get("title_translated") or p.get("title") or "")[:60]
+                decision = autopilot.approval_decision(res, settings)
+                if decision == "approve":
+                    if res.get("has_chinese_text"):
+                        if autopilot.should_auto_clean(settings):
+                            from services.cleaning import clean_product_image
+                            fresh = await db.get_product(pid)
+                            outcome = await clean_product_image(fresh or p, settings)
+                            if outcome.get("ok"):
+                                await activity.record("image_cleaned", f"Cleaned Chinese text from “{name}” and approved it", product_id=pid)
+                                await activity.record("auto_approved", f"Auto-approved “{name}” (score {composite_s:.1f}, {verdict.replace('_', ' ')})", product_id=pid,
+                                                      meta={"score": composite_s, "verdict": verdict})
+                            else:
+                                await db.set_stage(pid, ProductStage.TEXT_REMOVAL.value)
+                                await activity.record("image_clean_failed", f"Could not clean “{name}”: {outcome.get('error')} — waiting in Text edit", product_id=pid, level="warn")
+                        else:
+                            await db.set_stage(pid, ProductStage.TEXT_REMOVAL.value)
+                            await activity.record("needs_review", f"“{name}” approved but its photo has Chinese text — needs cleaning", product_id=pid, level="warn")
+                    else:
+                        await db.set_stage(pid, ProductStage.REVIEWED.value)
+                        await activity.record("auto_approved", f"Auto-approved “{name}” (score {composite_s:.1f}, {verdict.replace('_', ' ')})", product_id=pid,
+                                              meta={"score": composite_s, "verdict": verdict})
+                else:
+                    await activity.record("needs_review", f"“{name}” scored {composite_s:.1f} ({verdict.replace('_', ' ')}) — waiting for your decision", product_id=pid,
+                                          meta={"score": composite_s, "verdict": verdict, "provider": provider})
 
             # ── Scans page breakdown (grouped by originating job) ─────────────
             for stage_name, items in (("ai_pass", ai_pass), ("ai_reject", ai_reject)):
@@ -268,6 +299,7 @@ async def process_queued_items():
                 results = await instagram.post_batch(products, settings)
                 for p in products:
                     pid = p["id"]
+                    name = (p.get("product_name") or p.get("title_translated") or "")[:60]
                     res = next((r for r in results if r.product_id == pid), None)
                     if res and res.status in ("posted", "mock"):
                         await db.update_product_fields(pid, {
@@ -277,12 +309,15 @@ async def process_queued_items():
                         })
                         await db.log_post(pid)
                         log.info("Publisher: pid=%d → LIVE (%s).", pid, res.post_url)
+                        await activity.record("posted", f"Posted “{name}” to Instagram" + (" (simulated — no token)" if res.status == "mock" else ""),
+                                              product_id=pid, meta={"url": res.post_url})
                     else:
                         err = (res.error if res else None) or "unknown error"
                         # Put it back in Approved so it is not retried in a tight loop
                         await db.set_stage(pid, ProductStage.REVIEWED.value)
                         await db.update_product_note(pid, f"Auto-post failed: {err}")
                         log.error("Publisher: Failed to publish pid=%d: %s", pid, err)
+                        await activity.record("post_failed", f"Instagram post failed for “{name}”: {err}", product_id=pid, level="error")
 
             await asyncio.sleep(60 if not products else 5)
 

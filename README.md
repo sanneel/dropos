@@ -25,13 +25,16 @@ The first start installs the Python packages and Chromium (a few minutes), start
 **embedded PostgreSQL** in `./data/pg`, and opens <http://localhost:8000>, where you
 create your admin account. After that:
 
-1. **Settings → AI & API keys** — paste a free Gemini key (aistudio.google.com). Without
+1. **Settings → Connections** — paste a free Gemini key (aistudio.google.com). Without
    it products still flow, but every item lands in Review unscored.
-2. **Settings → CSSBuy scraper** — your CSSBuy login. On a desktop the browser window
+2. **Settings → Connections → CSSBuy** — your CSSBuy login. On a desktop the browser window
    opens on first login so you can pass the captcha; the session is saved afterwards.
-3. **Pipeline → + Scan** — enter keywords, start. Scored products appear in **Review**.
-4. **Settings → Instagram** — Page access token + business account ID to post for real
-   (until then posting is simulated).
+3. **Scans → New scan** — keywords, start. Scored products appear in **Review** (or skip it
+   when Autopilot approves them).
+4. **Settings → Connections → Instagram** — Page access token + business account ID to post
+   for real (until then posting is simulated).
+5. **Home → Autopilot ON.** From here on it scans, scores, approves, cleans and posts by
+   itself; check *Needs you* once a day and fulfil orders from **Inbox**.
 
 Everything you configure is stored in the database; `./data` is the whole installation
 (back it up by copying the folder). Stop with `./stop.sh` / `stop.bat`.
@@ -64,19 +67,36 @@ Set `APP_ENV=production` (done in compose), put it behind HTTPS, and set
 If the host blocks scraping (datacenter IP / no browser), run the scraper on your PC with
 [LOCAL_SCRAPING.md](LOCAL_SCRAPING.md) and upload into the hosted app.
 
-## Review workflow
+## Autopilot — hands-off mode
+
+Turn **Autopilot** on (Home page) and the whole flow runs by itself; you only step in
+for what it cannot decide and for fulfilling orders:
+
+| Stage | What runs automatically | Setting |
+|-------|-------------------------|---------|
+| Find products | scans your saved keywords every *N* hours | `auto_scan_enabled`, `scan_interval_hours` |
+| AI scoring | Gemini vision scores every scraped product (always on) | Gemini key |
+| Auto-approve | winners above the threshold skip the review queue | `auto_approve_min_score`, `auto_approve_verdicts` |
+| Clean photos | Chinese text / watermarks removed with Clipdrop | `auto_clean_images` + Clipdrop key |
+| Post to Instagram | best approved product posted at peak hours, daily cap | `post_schedule_enabled`, `post_times`, `max_posts_per_day` |
+| Answer comments & DMs | keyword rules reply instantly; order intent lands in **Inbox** | `instagram_*_reply_enabled`, `lead_keywords` |
+
+Everything Autopilot does is written to the activity feed on Home, and the
+“Needs you” list shows the only things left for a human: borderline products,
+photos that could not be cleaned, possible orders, and errors.
+
+## Pages
 
 | Page | What it does |
 |------|--------------|
-| **Today** | counts, approval rate, last scan funnel |
-| **Pipeline → Review** | AI-scored products; approve / reject (hotkeys `j` `k` `a` `r` `Enter` `Esc`) |
-| **Text edit** | approved products whose photo has Chinese text — Clipdrop clean-up |
-| **Approved** | post to Instagram (single / carousel / collage), or mark live without posting |
-| **Posted / Rejected / Catalog** | history, reconsider, inline edits, search |
-| **+ Scan / Scan log** | start a scan, see where each scraped product dropped out |
+| **Home** | Autopilot master switch, per-stage status and toggles, needs-you list, today’s numbers, activity feed |
+| **Review** | *Needs decision* (borderline products), *Text edit* (photos with Chinese text), *Rejected* — hotkeys `j` `k` `a` `r` `Enter` `Esc` |
+| **Posts** | *Queue* (approved, best first — next up marked), *Posted* (with Instagram links), *All products* (search + inline edit) |
+| **Inbox** | comments & DMs from the webhook, possible orders first, reply / mark done |
+| **Scans** | start a scan, see where every scraped product dropped out |
 | **Analytics** | overview, real margins, deterministic insights on your decisions |
-| **AI** | chat over the pipeline: review pending, find rejected gems, bulk approve |
-| **Settings** | store persona for the AI prompt, thresholds, markups, keys, posting schedule, auto-reply rules |
+| **Assistant** | chat over the pipeline: review in bulk, find rejected gems |
+| **Settings** | setup checklist → connections → curation → automation → advanced |
 
 ## Repo layout
 
@@ -95,6 +115,8 @@ backend/
   local_scrape_upload.py  run the scraper on a PC and upload to a hosted instance
   database.py           schema, migrations, queries, embedded Postgres bootstrap
   config/paths.py       data directory layout
-  frontend/             the SPA (index.html, assets/app.js, assets/styles.css)
+  autopilot.py          hands-off policy (what to approve/clean/scan/post) + Home status
+  activity.py           activity log writer
+  frontend/             the SPA — core.js (router/shell), one file per page, styles.css
 data/                   runtime data (created on first start, git-ignored)
 ```

@@ -26,8 +26,18 @@ from typing import Optional
 import httpx
 
 from instagram import _graph, _token
+import activity
 
 log = logging.getLogger(__name__)
+
+
+def is_lead(text: str, settings: dict) -> bool:
+    """Does this message look like purchase intent? (keyword list in settings)"""
+    t = (text or "").lower()
+    kws = settings.get("lead_keywords") or []
+    if isinstance(kws, str):
+        kws = [k.strip() for k in kws.split(",") if k.strip()]
+    return any(str(k).lower() in t for k in kws if str(k).strip())
 
 
 # ── Rule matching ──────────────────────────────────────────────────────────────
@@ -84,6 +94,18 @@ async def _send_dm(client: httpx.AsyncClient, ig_user_id: str, recipient_id: str
     return True
 
 
+async def send_reply(message: dict, text: str, settings: dict) -> bool:
+    """Reply to an inbox message (comment → comment reply, dm → DM). Used by the Inbox page."""
+    token = _token(settings)
+    if not token:
+        return False
+    async with httpx.AsyncClient(timeout=20) as client:
+        if message.get("kind") == "comment":
+            return await _reply_to_comment(client, str(message.get("external_id", "")).removeprefix("c:"), text, settings)
+        own_id = str(settings.get("instagram_user_id") or "")
+        return await _send_dm(client, own_id, str(message.get("sender_id") or ""), text, settings)
+
+
 # ── Webhook processing ─────────────────────────────────────────────────────────
 
 async def process_webhook(body: dict, settings: dict, db) -> dict:
@@ -102,8 +124,19 @@ async def process_webhook(body: dict, settings: dict, db) -> dict:
     comment_rules = settings.get("instagram_reply_rules") or []
     dm_rules = settings.get("instagram_dm_rules") or []
 
-    if not token or not (comments_on or dms_on):
-        return stats
+    async def _capture(external_id: str, kind: str, sender_id: str, sender_name: str, text: str, media_id: str = "", reply: str = "") -> None:
+        """Store every incoming message in the inbox; flag order intent."""
+        try:
+            lead = is_lead(text, settings)
+            new_id = await db.inbox_add(external_id, kind, sender_id, sender_name, text, media_id, is_lead=lead, auto_reply=reply)
+            if new_id and lead:
+                await activity.record("lead_received", f"Possible order from {sender_name or sender_id}: “{(text or '')[:80]}”", meta={"inbox_id": new_id, "kind": kind}, level="warn")
+        except Exception as exc:
+            log.debug("inbox capture failed: %s", exc)
+
+    # Capture everything even when replies are off — the inbox is useful on its own
+    if not token:
+        token = ""
 
     async with httpx.AsyncClient(timeout=20) as client:
         for entry in body.get("entry") or []:
@@ -111,7 +144,7 @@ async def process_webhook(body: dict, settings: dict, db) -> dict:
 
             # ── Comments (field "comments") ─────────────────────────────────
             for change in entry.get("changes") or []:
-                if change.get("field") != "comments" or not comments_on:
+                if change.get("field") != "comments":
                     continue
                 value = change.get("value") or {}
                 comment_id = str(value.get("id") or "")
@@ -122,10 +155,12 @@ async def process_webhook(body: dict, settings: dict, db) -> dict:
                 stats["comments_seen"] += 1
                 if own_id and sender == own_id:
                     continue  # our own reply echoed back
-                if await db.has_replied_to_comment(comment_id):
-                    continue
-                rule = match_rule(text, comment_rules)
+                sender_name = str((value.get("from") or {}).get("username") or "")
+                rule = match_rule(text, comment_rules) if (comments_on and token) else None
+                await _capture(f"c:{comment_id}", "comment", sender, sender_name, text, str((value.get("media") or {}).get("id") or ""), rule["reply"] if rule else "")
                 if not rule:
+                    continue
+                if await db.has_replied_to_comment(comment_id):
                     continue
                 try:
                     ok = await _reply_to_comment(client, comment_id, rule["reply"], settings)
@@ -135,11 +170,10 @@ async def process_webhook(body: dict, settings: dict, db) -> dict:
                 if ok:
                     stats["comments_replied"] += 1
                     await db.log_comment_reply(comment_id, ",".join(rule["keywords"]) or "*", "comment")
+                    await activity.record("reply_sent", f"Replied to a comment from {sender_name or sender}: “{rule['reply'][:60]}”")
 
             # ── Direct messages (field "messages" → messaging events) ───────
             for event in entry.get("messaging") or []:
-                if not dms_on:
-                    continue
                 msg = event.get("message") or {}
                 if not msg or msg.get("is_echo"):
                     continue
@@ -151,10 +185,11 @@ async def process_webhook(body: dict, settings: dict, db) -> dict:
                 stats["dms_seen"] += 1
                 if own_id and sender == own_id:
                     continue
-                if await db.has_replied_to_comment(mid):
-                    continue
-                rule = match_rule(text, dm_rules)
+                rule = match_rule(text, dm_rules) if (dms_on and token) else None
+                await _capture(f"m:{mid}", "dm", sender, "", text, "", rule["reply"] if rule else "")
                 if not rule:
+                    continue
+                if await db.has_replied_to_comment(mid):
                     continue
                 try:
                     ok = await _send_dm(client, own_id or entry_owner, sender, rule["reply"], settings)
@@ -164,6 +199,7 @@ async def process_webhook(body: dict, settings: dict, db) -> dict:
                 if ok:
                     stats["dms_replied"] += 1
                     await db.log_comment_reply(mid, ",".join(rule["keywords"]) or "*", "dm")
+                    await activity.record("reply_sent", f"Replied to a DM from {sender}: “{rule['reply'][:60]}”")
 
     if stats["comments_seen"] or stats["dms_seen"]:
         log.info("IG webhook: %s", stats)

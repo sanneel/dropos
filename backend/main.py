@@ -67,13 +67,16 @@ sys.path.insert(0, BASE_DIR)
 from models import ProductStage
 from config.runtime import get_config, merge_env_with_settings, sanitize_settings
 from config.paths import DATA_DIR, COLLAGE_DIR, CLEANED_DIR, SECRET_FILE, data_path
-from image_editor import remove_text as clipdrop_remove_text, _convert_to_jpeg
+from image_editor import _convert_to_jpeg
+from services.cleaning import clean_product_image
 from collage import create_collage
 from services.images import upload_product_image
 from database import db, init_db
 from runner import process_scraped_products, run_pipeline
 from scheduler import create_scheduler, get_scheduler_status
 from posting_scheduler import create_posting_scheduler, get_posting_scheduler_status
+import activity
+import autopilot
 import instagram
 import instagram_replies
 import sheets
@@ -182,7 +185,6 @@ _SENSITIVE_SETTING_FIELDS = {
     "ingest_api_token",
     "clipdrop_key",
 }
-_cleaned_images: dict[int, bytes] = {}
 _COLLAGE_DIR = str(COLLAGE_DIR)
 _CLEANED_DIR = str(CLEANED_DIR)
 _CSSBUY_DEBUG_DIR = os.getenv("CSSBUY_DEBUG_DIR") or str(data_path("cssbuy_debug"))
@@ -193,6 +195,7 @@ os.environ.setdefault("CSSBUY_DEBUG_DIR", _CSSBUY_DEBUG_DIR)
 async def lifespan(app: FastAPI):
     global _scheduler, _posting_scheduler
     await init_db()
+    activity.bind(db)
     interrupted = await db.mark_active_jobs_interrupted()
     if interrupted:
         log.warning("Marked %d stale active job(s) as interrupted on startup", interrupted)
@@ -291,9 +294,14 @@ async def security_headers_middleware(request: Request, call_next):
     response = await call_next(request)
     supabase_url = os.getenv("SUPABASE_URL", "")
     supabase_domain = urlparse(supabase_url).netloc if supabase_url else ""
-    csp_img = f"img-src 'self' data: blob: https://{supabase_domain};" if supabase_domain else "img-src 'self' data: blob:;"
-
-    response.headers["Content-Security-Policy"] = f"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; {csp_img} connect-src 'self' https://{supabase_domain};"
+    img_src = "img-src 'self' data: blob:" + (f" https://{supabase_domain}" if supabase_domain else "")
+    connect_src = "connect-src 'self'" + (f" https://{supabase_domain}" if supabase_domain else "")
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' data: https://fonts.gstatic.com; "
+        f"{img_src}; {connect_src};"
+    )
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     response.headers["Server"] = "webserver"
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -423,7 +431,7 @@ async def spa_fallback(request: Request, exc: HTTPException):
 
 @app.get("/api/version")
 async def version():
-    return {"auth": "bearer", "version": "v11"}
+    return {"auth": "bearer", "version": "v12"}
 
 @app.get("/robots.txt", response_class=PlainTextResponse)
 async def robots_txt():
@@ -568,6 +576,17 @@ class SettingsUpdate(BaseModel):
     post_timezone: Optional[str] = None
     posts_per_slot: Optional[int] = None
     ai_context_injection: Optional[bool] = None
+    # Autopilot
+    autopilot_enabled: Optional[bool] = None
+    auto_scan_enabled: Optional[bool] = None
+    scan_interval_hours: Optional[float] = None
+    auto_approve_enabled: Optional[bool] = None
+    auto_approve_min_score: Optional[float] = None
+    auto_approve_verdicts: Optional[List[str]] = None
+    auto_clean_images: Optional[bool] = None
+    auto_reject_pending_days: Optional[int] = None
+    max_posts_per_day: Optional[int] = None
+    lead_keywords: Optional[List[str]] = None
 
 # ── Helper Functions ────────────────────────────────────────────────────────
 
@@ -889,8 +908,13 @@ async def approve_product(product_id: int):
     _require_stage(p, ProductStage.ENRICHED.value, "Cannot approve product in stage '{stage}'")
     stage = _approval_stage(p)
     await db.set_stage(product_id, stage)
+    await activity.record("approved", f"You approved “{_pname(p)}”", product_id=product_id)
     await _backup_products_to_sheets()
     return {"ok": True, "stage": stage}
+
+
+def _pname(p: dict) -> str:
+    return (p.get("product_name") or p.get("title_translated") or p.get("title") or f"#{p.get('id')}")[:60]
 
 @app.post("/api/products/{product_id}/publish-website")
 async def publish_to_website(product_id: int):
@@ -913,15 +937,19 @@ async def approve_products(body: ApproveRequest):
             await db.set_stage(pid, stage)
             if stage == ProductStage.TEXT_REMOVAL.value: text_edit += 1
             else: approved += 1
+    if approved or text_edit:
+        await activity.record("approved", f"You approved {approved + text_edit} products" + (f" ({text_edit} need photo cleaning)" if text_edit else ""))
     await _backup_products_to_sheets()
     return {"ok": True, "TEXT_REMOVAL": text_edit, "REVIEWED": approved}
 
 @app.post("/api/reject")
 async def reject_products_batch(body: BatchRejectRequest):
     reason = (body.reason or "").strip() or None
-    await _stage_products(body.product_ids, ProductStage.REJECTED.value, reason=reason)
+    changed = await _stage_products(body.product_ids, ProductStage.REJECTED.value, reason=reason)
+    if changed:
+        await activity.record("rejected", f"You rejected {len(changed)} products" + (f" — {reason}" if reason else ""))
     await _backup_products_to_sheets()
-    return {"ok": True, "rejected": len(body.product_ids)}
+    return {"ok": True, "rejected": len(changed)}
 
 @app.post("/api/reject-all-pending")
 async def reject_all_pending():
@@ -961,6 +989,12 @@ async def bulk_status(body: BulkStatusRequest):
             stage = _approval_stage(p)
         await db.set_stage(pid, stage, reason=reason if target == ProductStage.REJECTED.value else None)
         moved.append(pid)
+        if target == ProductStage.REJECTED.value:
+            await activity.record("rejected", f"You rejected “{_pname(p)}”" + (f" — {reason}" if reason else ""), product_id=pid)
+        elif target == ProductStage.REVIEWED.value:
+            await activity.record("approved", f"You approved “{_pname(p)}”", product_id=pid)
+        elif target == ProductStage.ENRICHED.value:
+            await activity.record("reconsidered", f"Moved “{_pname(p)}” back to review", product_id=pid)
     if moved:
         await _backup_products_to_sheets()
     return {"ok": True, "moved": moved, "skipped": skipped}
@@ -981,7 +1015,10 @@ async def post_products_batch(body: PostRequest, bg: BackgroundTasks):
 @app.post("/api/products/{product_id}/reject")
 async def reject_product_single(product_id: int, body: RejectRequest = None):
     reason = (body.reason or "").strip() if body else None
+    p = await db.get_product(product_id)
     await db.set_stage(product_id, ProductStage.REJECTED.value, reason=reason)
+    if p:
+        await activity.record("rejected", f"You rejected “{_pname(p)}”" + (f" — {reason}" if reason else ""), product_id=product_id)
     await _backup_products_to_sheets()
     return {"ok": True}
 
@@ -1002,45 +1039,21 @@ async def mark_text_edited(product_id: int):
 async def remove_product_text(product_id: int):
     p = await _get_product_or_404(product_id)
     settings = await _settings()
-    key = settings.get("clipdrop_key")
-    if not key: raise HTTPException(400, "Clipdrop API key missing")
-
-    url = (p.get("images") or [""])[0]
-    cleaned = await clipdrop_remove_text(url, key)
-    if not cleaned: raise HTTPException(502, "Clipdrop failed")
-
-    _cleaned_images[product_id] = cleaned
-    with open(f"{_CLEANED_DIR}/cleaned_{product_id}.jpg", "wb") as f: f.write(cleaned)
-
-    # Upload to Supabase for persistence across Railway restarts
-    supabase_url = await upload_product_image(cleaned, f"cleaned_{product_id}")
-
-    # Original CDN images (excluding any prior cleaned proxy URLs)
-    original_imgs = [img for img in (p.get("images") or []) if img and "/api/products/" not in img]
-
-    if supabase_url:
-        # Permanent Supabase URL — no need to keep original (avoids carousel posting both)
-        new_url = supabase_url
-        imgs = [new_url] + [img for img in original_imgs if img != url]
-    else:
-        # Ephemeral Railway URL — keep original as emergency fallback for serve_cleaned_image
-        base = str(settings.get("public_base_url") or "").rstrip("/")
-        new_url = f"{base}/api/products/{product_id}/cleaned-image" if base else f"/api/products/{product_id}/cleaned-image"
-        imgs = [new_url, url] + [img for img in original_imgs if img != url]
-    await db.update_product_fields(product_id, {"images_json": json.dumps(imgs), "has_chinese_text": False})
-    await db.set_stage(product_id, ProductStage.REVIEWED.value)
-    # Without Supabase or a public base URL the cleaned file only exists on this
-    # machine — Instagram will fall back to the original photo when posting.
-    public = bool(supabase_url) or new_url.startswith("http")
-    return {"ok": True, "image_url": new_url, "public": public}
+    if not settings.get("clipdrop_key"):
+        raise HTTPException(400, "Clipdrop API key missing")
+    outcome = await clean_product_image(p, settings)
+    if not outcome.get("ok"):
+        await activity.record("image_clean_failed", f"Manual clean failed for product {product_id}: {outcome.get('error')}", product_id=product_id, level="warn")
+        raise HTTPException(502, outcome.get("error") or "Clipdrop failed")
+    await activity.record("image_cleaned", f"Cleaned photo of “{(p.get('product_name') or p.get('title_translated') or '')[:60]}”", product_id=product_id)
+    return {"ok": True, "image_url": outcome["image_url"], "public": outcome["public"]}
 
 @app.get("/api/products/{product_id}/cleaned-image")
 async def serve_cleaned_image(product_id: int):
-    data = _cleaned_images.get(product_id)
-    if not data:
-        path = f"{_CLEANED_DIR}/cleaned_{product_id}.jpg"
-        if os.path.exists(path):
-            with open(path, "rb") as f: data = f.read()
+    data = None
+    path = f"{_CLEANED_DIR}/cleaned_{product_id}.jpg"
+    if os.path.exists(path):
+        with open(path, "rb") as f: data = f.read()
     if data:
         return Response(content=data, media_type="image/jpeg")
     # File lost after container restart — proxy the original image so URLs stay valid
@@ -1239,6 +1252,88 @@ async def ai_chat(body: ChatRequest):
     settings = await _settings()
     context = await _build_chat_context()
     return await ai_assistant.chat(body.message, context, settings)
+
+# ── Autopilot ─────────────────────────────────────────────────────────────────
+
+@app.get("/api/autopilot")
+async def autopilot_status():
+    settings = await _settings()
+    posting = get_posting_scheduler_status(_posting_scheduler).get("jobs", [])
+    scanning = bool(getattr(_scheduler, "scanning", False))
+    return await autopilot.status(db, settings, posting_jobs=posting, scan_loop_running=scanning)
+
+
+class AutopilotToggle(BaseModel):
+    enabled: bool
+
+@app.post("/api/autopilot/toggle")
+async def autopilot_toggle(body: AutopilotToggle):
+    await db.update_settings({"autopilot_enabled": bool(body.enabled)})
+    await activity.record("config", "Autopilot turned " + ("ON" if body.enabled else "OFF"))
+    return {"ok": True, "enabled": bool(body.enabled)}
+
+
+@app.get("/api/activity")
+async def activity_feed(limit: int = 60, kinds: Optional[str] = None, since: Optional[str] = None):
+    limit = max(1, min(limit, 300))
+    kind_list = [k.strip() for k in kinds.split(",") if k.strip()] if kinds else None
+    rows = await db.get_activity(limit=limit, since=since, kinds=kind_list)
+    return {"items": rows, "count": len(rows)}
+
+
+# ── Inbox ─────────────────────────────────────────────────────────────────────
+
+@app.get("/api/inbox")
+async def inbox_list(all: bool = False, limit: int = 100):
+    items = await db.inbox_list(only_open=not all, limit=max(1, min(limit, 500)))
+    return {"items": items, "counts": await db.inbox_counts()}
+
+
+@app.post("/api/inbox/{message_id}/handled")
+async def inbox_handled(message_id: int, handled: bool = True):
+    await db.inbox_set_handled(message_id, handled)
+    return {"ok": True}
+
+
+class InboxReply(BaseModel):
+    text: str
+
+@app.post("/api/inbox/{message_id}/reply")
+async def inbox_reply(message_id: int, body: InboxReply):
+    msg = await db.inbox_get(message_id)
+    if not msg:
+        raise HTTPException(404, "Message not found")
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(400, "Reply text is empty")
+    settings = await _settings()
+    if not autopilot.has_instagram(settings):
+        raise HTTPException(400, "Connect Instagram (token + account ID) to send replies")
+    ok = await instagram_replies.send_reply(msg, text, settings)
+    if not ok:
+        raise HTTPException(502, "Instagram did not accept the reply — check token permissions")
+    await db.inbox_set_handled(message_id, True)
+    await activity.record("reply_sent", f"You replied to {msg.get('sender_name') or msg.get('sender_id')}: “{text[:60]}”")
+    return {"ok": True}
+
+
+class InboxTestMessage(BaseModel):
+    text: str
+    kind: str = "dm"
+    sender: str = "test_user"
+
+@app.post("/api/inbox/simulate")
+async def inbox_simulate(body: InboxTestMessage):
+    """Dev helper: feed a fake comment/DM through the same path as the webhook."""
+    settings = await _settings()
+    payload = {"object": "instagram", "entry": [{"id": settings.get("instagram_user_id") or "me"}]}
+    if body.kind == "comment":
+        payload["entry"][0]["changes"] = [{"field": "comments", "value": {"id": f"sim{int(time.time()*1000)}", "text": body.text, "from": {"id": body.sender, "username": body.sender}}}]
+    else:
+        payload["entry"][0]["messaging"] = [{"sender": {"id": body.sender}, "recipient": {"id": "me"}, "message": {"mid": f"sim{int(time.time()*1000)}", "text": body.text}}]
+    stats = await instagram_replies.process_webhook(payload, settings, db)
+    return {"ok": True, "stats": stats}
+
 
 # ── Instagram ─────────────────────────────────────────────────────────────────
 
@@ -1451,10 +1546,12 @@ async def _post_and_export(products: list) -> None:
             if res:
                 if res.status == "error":
                     log.warning("Instagram post failed for product %s: %s", p["id"], res.error)
-                elif res.status in ("posted", "mock") and res.post_url:
-                    p["instagram_url"] = res.post_url  # Update local object for sheets export
-                    await db.update_product_fields(p["id"], {"instagram_url": res.post_url})
-                    log.info("Saved Instagram URL for product %s: %s", p["id"], res.post_url)
+                    await activity.record("post_failed", f"Instagram post failed for “{_pname(p)}”: {res.error}", product_id=p["id"], level="error")
+                elif res.status in ("posted", "mock"):
+                    if res.post_url:
+                        p["instagram_url"] = res.post_url  # Update local object for sheets export
+                        await db.update_product_fields(p["id"], {"instagram_url": res.post_url})
+                    await activity.record("posted", f"Posted “{_pname(p)}” to Instagram" + (" (simulated — no token)" if res.status == "mock" else ""), product_id=p["id"], meta={"url": res.post_url})
 
         await asyncio.to_thread(sheets.append_rows, products)
         await _backup_products_to_sheets()
