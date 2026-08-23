@@ -30,7 +30,21 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
-limiter = Limiter(key_func=get_remote_address)
+def _client_ip(request: Request) -> str:
+    """
+    Rate-limit key. Behind Railway's proxy every client shares one socket IP, so
+    prefer the first X-Forwarded-For hop (set by the proxy) over the raw address —
+    otherwise one bucket would throttle every user at once.
+    """
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        first = xff.split(",")[0].strip()
+        if first:
+            return first
+    return get_remote_address(request)
+
+
+limiter = Limiter(key_func=_client_ip)
 
 # ── Path Resolution (Railway/Nixpacks Robustness) ──────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -310,7 +324,7 @@ class LoginRequest(BaseModel):
     password: str
 
 @app.post("/api/auth/login")
-@limiter.limit("10/minute")
+@limiter.limit("20/minute")
 async def login(request: Request, body: LoginRequest):
     email = body.email.strip().lower()
     if _is_locked_out(email):
