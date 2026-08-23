@@ -57,18 +57,34 @@ class Database:
             )
             sys.exit(1)
 
+        # SSL: hosted Postgres (Supabase/Railway) needs it; a local dev DB usually
+        # has no TLS at all.  DATABASE_SSL=require|disable overrides auto-detect.
+        ssl_mode = (os.getenv("DATABASE_SSL") or "").strip().lower()
+        if ssl_mode in ("disable", "off", "false", "0"):
+            ssl = False
+        elif ssl_mode in ("require", "on", "true", "1"):
+            ssl = "require"
+        else:
+            host = ""
+            try:
+                from urllib.parse import urlparse
+                host = (urlparse(db_url).hostname or "").lower()
+            except Exception:
+                pass
+            ssl = False if host in ("localhost", "127.0.0.1", "::1", "postgres", "db") else "require"
+
         last_exc = None
         for attempt in range(3):
             try:
                 self._pool = await asyncpg.create_pool(
                     db_url,
-                    ssl="require",
+                    ssl=ssl,
                     statement_cache_size=0,  # Required for PgBouncer/Supabase pooler
                     min_size=1,              # 1 warm connection — faster cold start
                     max_size=10,             # Allow up to 10 concurrent queries
                     command_timeout=30,      # Fail fast instead of hanging 60s+
                 )
-                log.info("Database pool created successfully (min=2, max=10).")
+                log.info("Database pool created successfully (min=1, max=10, ssl=%s).", ssl)
                 return
             except Exception as e:
                 last_exc = e
@@ -92,6 +108,7 @@ class Database:
     # ── Products ──────────────────────────────────────────────────────────────
 
     async def insert_product(self, p: dict, job_id: int):
+        now = _now()
         await self.execute("""
             INSERT INTO products
             (job_id, source, source_id, title, title_translated, product_name,
@@ -99,8 +116,8 @@ class Database:
              images_json, url, category, keyword,
              score, niche_fit, visual_appeal, trend_score, competition_score,
              caption, description, hashtags_json, ai_provider, has_chinese_text,
-             chinese_text_note, rejection_reason, stage, created_at)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
+             chinese_text_note, rejection_reason, stage, created_at, rejected_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
             ON CONFLICT (source_id) DO NOTHING
         """,
             job_id,
@@ -132,7 +149,8 @@ class Database:
             p.get("chinese_text_note", ""),
             p.get("rejection_reason", ""),
             p.get("stage", "SCRAPED"),
-            _now()
+            now,
+            now if p.get("stage") == "REJECTED" else None,
         )
 
     async def get_products(self, stage: str = "SCRAPED", limit: int = 50, offset: int = 0, sort: str = "score") -> list:
@@ -275,7 +293,7 @@ class Database:
     async def set_stage(self, pid: int, stage: str, reason: str = None, note: str = None):
         ts_field = {
             "REVIEWED": "approved_at",
-            "ENRICHED": "approved_at",
+            "TEXT_REMOVAL": "approved_at",   # approved, just needs image cleanup first
             "REJECTED": "rejected_at",
             "LIVE": "posted_at",
         }.get(stage)
@@ -323,6 +341,11 @@ class Database:
             "confidence",
             "viral_angle",
             "emotional_hook",
+            "cute_appeal",
+            "giftability",
+            "scores_json",
+            "posted_at",
+            "ai_provider",
         }
         updates = {k: v for k, v in (data or {}).items() if k in allowed}
         if "sell_price_eur" in updates:
@@ -363,6 +386,45 @@ class Database:
                 str(r.get("ai_provider", "")),
                 _now()
             )
+
+    async def record_pipeline_stage(self, job_id: int, products: list, stage: str, reason_key: str = "rejection_reason") -> None:
+        """
+        Persist a snapshot of *products* at a given filter stage so the Scans page
+        can show where each item dropped out.  Never raises — the breakdown is
+        observability, not a dependency of the pipeline.
+        """
+        if not job_id or not products:
+            return
+        records = []
+        for p in products:
+            images = p.get("images") or []
+            records.append({
+                "job_id": job_id,
+                "source_id": p.get("source_id", ""),
+                "title": (p.get("title_translated") or p.get("title") or "")[:200],
+                "product_name": (p.get("product_name") or "")[:200],
+                "image_url": images[0] if images else (p.get("image_url") or ""),
+                "url": p.get("url", ""),
+                "price_cny": p.get("price_cny") or 0,
+                "cost_eur": p.get("cost_eur") or 0,
+                "sell_price_eur": p.get("sell_price_eur") or 0,
+                "orders": p.get("orders") or 0,
+                "rating": p.get("rating") or 0,
+                "margin_pct": p.get("margin_pct") or 0,
+                "raw_score": p.get("raw_score") or 0,
+                "filter_stage": stage,
+                "filter_reason": (p.get(reason_key) or p.get("_bouncer_reason") or "")[:300],
+                "ai_score": p.get("composite_score") or p.get("score") or 0,
+                "ai_niche_fit": p.get("niche_fit") or 0,
+                "ai_visual": p.get("visual_appeal") or 0,
+                "trend_score": p.get("trend_score") or 0,
+                "competition_score": 0,
+                "ai_provider": p.get("ai_provider") or "",
+            })
+        try:
+            await self.bulk_insert_pipeline(records)
+        except Exception as exc:
+            log.warning("record_pipeline_stage(%s) failed: %s", stage, exc)
 
     async def get_pipeline(self, job_id: int) -> dict:
         rows = await self.fetch("SELECT * FROM pipeline_products WHERE job_id=$1 ORDER BY filter_stage, id", job_id)
@@ -760,16 +822,28 @@ class Database:
         val = await self.fetchval("SELECT COUNT(*) FROM post_log WHERE posted_at::timestamp > (NOW() - INTERVAL '7 days')")
         stats["posted_7d"] = val if val else 0
 
-        val = await self.fetchval("SELECT AVG(margin_pct) FROM products WHERE stage='SCRAPED'")
-        stats["avg_margin_pending"] = round(val or 0, 1)
+        # "pending" = the human review queue (ENRICHED), not the pre-AI SCRAPED stage
+        val = await self.fetchval("SELECT AVG(margin_pct) FROM products WHERE stage='ENRICHED'")
+        stats["avg_margin_pending"] = round(float(val or 0), 1)
 
-        val = await self.fetchval("SELECT AVG(score) FROM products WHERE stage='SCRAPED'")
-        stats["avg_score_pending"] = round(val or 0, 1)
+        val = await self.fetchval("SELECT AVG(score) FROM products WHERE stage='ENRICHED'")
+        stats["avg_score_pending"] = round(float(val or 0), 1)
 
-        total_reviewed = stats["REVIEWED"] + stats["ENRICHED"] + stats["REJECTED"]
-        stats["approval_rate"] = (
-            round((stats["REVIEWED"] + stats["ENRICHED"]) / total_reviewed * 100, 1) if total_reviewed else 0
-        )
+        # Human approval rate: approved vs. rejected-by-a-person (automatic
+        # Bouncer/Detective/Curator rejections are excluded so the number
+        # reflects review decisions, not filter strictness).
+        approved = stats["REVIEWED"] + stats["TEXT_REMOVAL"] + stats["LIVE"]
+        human_rejected = await self.fetchval("""
+            SELECT COUNT(*) FROM products
+            WHERE stage='REJECTED'
+              AND COALESCE(rejection_reason,'') NOT LIKE 'Bouncer:%'
+              AND COALESCE(rejection_reason,'') NOT LIKE 'Detective:%'
+              AND COALESCE(rejection_reason,'') NOT LIKE 'Curator:%'
+              AND COALESCE(rejection_reason,'') NOT LIKE 'hard_reject%'
+        """) or 0
+        stats["human_rejected"] = human_rejected
+        decided = approved + human_rejected
+        stats["approval_rate"] = round(approved / decided * 100, 1) if decided else 0
 
         return stats
 
@@ -958,6 +1032,15 @@ def _row_to_product(row) -> dict:
             del d[k]
     if "has_chinese_text" in d:
         d["has_chinese_text"] = bool(d["has_chinese_text"])
+    # Canonical per-dimension AI scores (stored by worker.py as JSON text)
+    scores = {}
+    raw_scores = d.pop("scores_json", None)
+    if raw_scores:
+        try:
+            scores = json.loads(raw_scores) or {}
+        except Exception:
+            scores = {}
+    d["scores"] = scores
     return d
 
 # ── Singleton ─────────────────────────────────────────────────────────────────
@@ -1027,6 +1110,19 @@ async def init_db():
             for col, definition in [
                 ("audience", "TEXT DEFAULT ''"),
                 ("instagram_url", "TEXT DEFAULT ''"),
+                # AI scoring v2 — written by worker.py, read by the review UI.
+                # These were missing from the schema, so every worker batch failed
+                # with "column composite_score does not exist" on a fresh DB.
+                ("composite_score", "DOUBLE PRECISION DEFAULT 0"),
+                ("verdict", "TEXT DEFAULT ''"),
+                ("product_tier", "TEXT DEFAULT ''"),
+                ("confidence", "DOUBLE PRECISION DEFAULT 0"),
+                ("viral_angle", "TEXT DEFAULT ''"),
+                ("emotional_hook", "TEXT DEFAULT ''"),
+                # The two scoring dimensions that were computed but never persisted.
+                ("cute_appeal", "DOUBLE PRECISION DEFAULT 0"),
+                ("giftability", "DOUBLE PRECISION DEFAULT 0"),
+                ("scores_json", "TEXT DEFAULT ''"),
             ]:
                 try:
                     await conn.execute(f"ALTER TABLE products ADD COLUMN IF NOT EXISTS {col} {definition}")
@@ -1224,6 +1320,12 @@ async def init_db():
                 # is appended to the Gemini system prompt at enrichment time.
                 # No behavior change when false — identical to production baseline.
                 "ai_context_injection": False,
+                # Peak-hour Instagram auto-posting (Settings → Posting schedule)
+                "post_schedule_enabled": False,
+                "post_times": ["19:00", "21:00"],
+                "post_timezone": "Asia/Tbilisi",
+                "posts_per_slot": 1,
+                "store_name": "Tskvili",
             }
             for k, v in defaults.items():
                 val = json.dumps(v) if not isinstance(v, str) else v

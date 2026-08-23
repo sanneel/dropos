@@ -85,33 +85,42 @@ async def process_scraped_products(job_id: int, raw_all: list, settings: Optiona
     await db.update_job(job_id, status="filtering", progress=35, after_basic=len(filtered))
 
     filtered_ids = {p.get("source_id") for p in filtered if p.get("source_id")}
+    basic_rejects = []
     for p in raw_all:
         if p.get("source_id") not in filtered_ids:
             p["stage"] = "REJECTED"
             p["rejection_reason"] = p.pop("_bouncer_reason", "Bouncer: spam/no-image/low-orders")
             await db.insert_product(p, job_id)
+            basic_rejects.append(p)
+    await db.record_pipeline_stage(job_id, basic_rejects, "basic_reject")
 
     # ── 4. Profit filter (adds cost/sell/margin fields) ────────────────────────
     profitable = [p for p in filtered if profit_filter(p, settings)]
     await db.update_job(job_id, status="calculating", progress=50, after_profit=len(profitable))
 
     profitable_ids = {p.get("source_id") for p in profitable if p.get("source_id")}
+    profit_rejects = []
     for p in filtered:
         if p.get("source_id") not in profitable_ids:
             p["stage"] = "REJECTED"
             p["rejection_reason"] = f"Bouncer: Low Margin ({p.get('margin_pct', 0)}%)"
             await db.insert_product(p, job_id)
+            profit_rejects.append(p)
+    await db.record_pipeline_stage(job_id, profit_rejects, "profit_reject")
 
     # ── 5. Dedup by first image ────────────────────────────────────────────────
     deduped = dedup(profitable)
     await db.update_job(job_id, status="deduping", progress=55, after_dedup=len(deduped))
 
     deduped_ids = {p.get("source_id") for p in deduped if p.get("source_id")}
+    dedup_rejects = []
     for p in profitable:
         if p.get("source_id") not in deduped_ids:
             p["stage"] = "REJECTED"
             p["rejection_reason"] = "Bouncer: Duplicate product"
             await db.insert_product(p, job_id)
+            dedup_rejects.append(p)
+    await db.record_pipeline_stage(job_id, dedup_rejects, "dedup_reject")
 
     # ── 6. Rule-based scoring + pre-filter ────────────────────────────────────
     scored = [score_product(p) for p in deduped]
@@ -123,11 +132,14 @@ async def process_scraped_products(job_id: int, raw_all: list, settings: Optiona
     )
 
     candidates_ids = {p.get("source_id") for p in candidates if p.get("source_id")}
+    score_rejects = []
     for p in scored:
         if p.get("source_id") not in candidates_ids:
             p["stage"] = "REJECTED"
             p["rejection_reason"] = f"Detective: Low raw score ({p.get('raw_score',0):.0f})"
             await db.insert_product(p, job_id)
+            score_rejects.append(p)
+    await db.record_pipeline_stage(job_id, score_rejects, "score_reject")
 
     # ── 7. Save surviving candidates as SCRAPED for the Worker to pick up ─────
     await db.update_job(job_id, status="saving", progress=95, after_ai=len(candidates))

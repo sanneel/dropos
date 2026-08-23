@@ -1,4 +1,7 @@
-const API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+// The backend serves this SPA, so the API is always same-origin. The only
+// exception is opening index.html straight from disk (file://), which has no
+// origin — fall back to the default local backend port in that case.
+const API = window.location.protocol === 'file:'
   ? 'http://localhost:8000/api'
   : window.location.origin + '/api';
 
@@ -45,15 +48,15 @@ let catalogProducts = [], catalogTotal = 0, catalogStage = 'REVIEWED', catalogSe
 
 // ── Nav ────────────────────────────────────────────────────────────────────
 const NAV_PAGES = [
+  { id:'dashboard', label:'Today',        icon:'dashboard'},
   { id:'pipeline',  label:'Pipeline',     icon:'queue'    },
   { id:'analytics', label:'Analytics',    icon:'analytics'},
   { id:'settings',  label:'Settings',     icon:'settings' },
   { id:'chat',      label:'AI',           icon:'chat'     },
 ];
 
-const TOOLS_PAGES = new Set(['tools','pipeline','dashboard','queue','textEdit','REVIEWED','LIVE','REJECTED','catalog']);
-
-const PIPELINE_STAGE_PAGES = new Set(['queue','textEdit','REVIEWED','LIVE','REJECTED','catalog']);
+// Pages that live under the "Pipeline" nav entry and share the stage sub-nav
+const PIPELINE_STAGE_PAGES = new Set(['queue','textEdit','REVIEWED','LIVE','REJECTED','catalog','scan','scans']);
 
 function resetSelectionState() {
   selectedProducts.clear();
@@ -77,7 +80,7 @@ function buildNav() {
   if (!navEl) return;
   let html = '';
   for (const p of NAV_PAGES) {
-    const isActive = p.id === currentPage || (p.id === 'tools' && TOOLS_PAGES.has(currentPage));
+    const isActive = p.id === currentPage || (p.id === 'pipeline' && PIPELINE_STAGE_PAGES.has(currentPage));
     html += `
       <button class="nav-item${isActive ? ' active' : ''}" onclick="navigate('${p.id}')" title="${p.label}">
         ${IC[p.icon] || ''}
@@ -287,7 +290,7 @@ async function renderDashboard() {
       </div>
       <div class="stat-card green">
         <div class="stat-label">Posted 7 days</div>
-        <div class="stat-val">${s.LIVE_7d ?? 0}</div>
+        <div class="stat-val">${s.posted_7d ?? 0}</div>
       </div>
       <div class="stat-card amber">
         <div class="stat-label">Approval rate</div>
@@ -308,7 +311,7 @@ async function renderDashboard() {
             <div class="job-row">
               <div class="job-dot ${j.status}"></div>
               <div style="flex:1;min-width:0">
-                <div style="font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${(j.keywords || []).join(', ') || '—'}</div>
+                <div style="font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml((j.keywords || []).join(', ') || '—')}</div>
                 <div style="font-size:11px;color:var(--t3);font-family:var(--ff-m)">${j.status} · ${j.after_ai ?? 0} passed</div>
               </div>
               ${j.status !== 'done' && j.status !== 'queued'
@@ -1033,15 +1036,25 @@ async function showDetail(id) {
     </div>`;
   };
 
-  const stageBadge = { pending:'badge-amber', approved:'badge-green', text_edit:'badge-amber', posted:'badge-blue', rejected:'badge-red' }[stage] || 'badge-gray';
-  const stageLabel = { pending:'Pending', approved:'Approved', text_edit:'Text edit', posted:'Posted', rejected:'Rejected' }[stage] || stage;
+  const stageBadge = { SCRAPED:'badge-gray', ENRICHED:'badge-amber', REVIEWED:'badge-green', TEXT_REMOVAL:'badge-amber', QUEUED:'badge-blue', LIVE:'badge-blue', REJECTED:'badge-red' }[stage] || 'badge-gray';
+  const stageLabel = { SCRAPED:'Scoring…', ENRICHED:'Pending review', REVIEWED:'Approved', TEXT_REMOVAL:'Text edit', QUEUED:'Queued to post', LIVE:'Posted', REJECTED:'Rejected' }[stage] || stage;
+  const sc = p.scores || {};
+  const dims = [
+    ['Cute appeal',      sc.cute_appeal      ?? p.cute_appeal   ?? 0, '30%'],
+    ['Romantic trigger', sc.romantic_trigger ?? p.niche_fit     ?? 0, '25%'],
+    ['Visual',           sc.visual_score     ?? p.visual_appeal ?? 0, '20%'],
+    ['Trend fit',        sc.trend_fit        ?? p.trend_score   ?? 0, '15%'],
+    ['Giftability',      sc.giftability      ?? p.giftability   ?? 0, '10%'],
+  ];
+  const providerLabel = p.ai_provider ? String(p.ai_provider).replace('gemini-batch','Gemini').replace('gemini','Gemini').replace('groq','Groq (text only)').replace('mock','no AI — rule score') : '';
 
   let actionHtml = '';
   if (stage === 'ENRICHED')
     actionHtml = `<button class="btn btn-green" style="flex:1" onclick="quickApprove(${p.id})">Approve</button>
                   <button class="btn btn-danger" onclick="showRejectModal(${p.id})">Reject</button>`;
   else if (stage === 'REVIEWED')
-    actionHtml = `<button class="btn btn-primary" style="flex:1" onclick="quickPost(${p.id})">Post →</button>
+    actionHtml = `<button class="btn btn-primary" style="flex:1" onclick="quickPost(${p.id})">Post to Instagram →</button>
+                  <button class="btn" onclick="quickPublishWebsite(${p.id})" title="Mark as live without posting to Instagram">Website only</button>
                   <button class="btn btn-danger" onclick="showRejectModal(${p.id})">Reject</button>`;
   else if (stage === 'TEXT_REMOVAL')
     actionHtml = `<button class="btn btn-green" style="flex:1" id="clean-btn-${p.id}" onclick="cleanImage(${p.id},this)">🧹 Clean image</button>
@@ -1120,11 +1133,17 @@ async function showDetail(id) {
         </div>
 
         <div class="detail-sec">
-          <span class="detail-sec-lbl">AI score — ${(p.composite_score ?? p.score ?? 0).toFixed(1)} / 10</span>
-          ${sBar('Niche fit',  p.niche_fit         ?? 0)}
-          ${sBar('Visual',     p.visual_appeal     ?? 0)}
-          ${sBar('Trend',      p.trend_score       ?? 0)}
-          ${sBar('Opp.',       p.competition_score ?? 0)}
+          <span class="detail-sec-lbl" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">AI score — ${(p.composite_score ?? p.score ?? 0).toFixed(1)} / 10
+            ${verdictBadge(p.verdict)}
+            ${p.product_tier && p.product_tier !== 'auto_reject' && p.product_tier !== 'unscored' ? `<span class="badge badge-gray" style="font-size:9px">${escHtml(String(p.product_tier).replace(/_/g,' '))}</span>` : ''}
+          </span>
+          ${dims.map(([l, v]) => sBar(l, Number(v) || 0)).join('')}
+          ${(p.viral_angle || p.emotional_hook) ? `
+          <div class="card-sm" style="margin-top:8px;font-size:12px;line-height:1.6;color:var(--t2)">
+            ${p.emotional_hook ? `<div><span style="color:var(--t3)">Hook:</span> ${escHtml(p.emotional_hook)}</div>` : ''}
+            ${p.viral_angle ? `<div><span style="color:var(--t3)">Viral angle:</span> ${escHtml(p.viral_angle)}</div>` : ''}
+          </div>` : ''}
+          ${providerLabel ? `<div style="font-size:10px;color:var(--t4);font-family:var(--ff-m);margin-top:6px">scored by ${escHtml(providerLabel)}${p.confidence ? ` · confidence ${Math.round(Number(p.confidence) * 100)}%` : ''}</div>` : ''}
         </div>
 
         ${p.caption ? `
@@ -1182,9 +1201,9 @@ async function showDetail(id) {
           <span class="detail-sec-lbl">Timeline</span>
           <div style="font-size:11px;font-family:var(--ff-m);line-height:2.2;color:var(--t3)">
             ${p.created_at  ? `<div>Scraped: ${fmtDate(p.created_at)}</div>` : ''}
-            ${p.REVIEWED_at ? `<div style="color:var(--green)">Approved: ${fmtDate(p.REVIEWED_at)}</div>` : ''}
-            ${p.REJECTED_at ? `<div style="color:var(--red)">Rejected: ${fmtDate(p.REJECTED_at)}</div>` : ''}
-            ${p.LIVE_at   ? `<div style="color:var(--blue)">Posted: ${fmtDate(p.LIVE_at)}</div>` : ''}
+            ${p.approved_at ? `<div style="color:var(--green)">Approved: ${fmtDate(p.approved_at)}</div>` : ''}
+            ${p.rejected_at ? `<div style="color:var(--red)">Rejected: ${fmtDate(p.rejected_at)}</div>` : ''}
+            ${p.posted_at   ? `<div style="color:var(--blue)">Posted: ${fmtDate(p.posted_at)}${p.instagram_url ? ` · <a href="${safeUrl(p.instagram_url)}" target="_blank" rel="noopener noreferrer" style="color:var(--blue)">Instagram ↗</a>` : ''}</div>` : ''}
           </div>
         </div>
 
@@ -1268,7 +1287,7 @@ async function renderPosted() {
     <div class="card" style="padding:0;overflow:hidden">
       <table class="table">
         <thead><tr>
-          <th>Product</th><th>Score</th><th>Margin</th><th>Sell</th><th>Orders</th><th>Posted</th>
+          <th>Product</th><th>Score</th><th>Margin</th><th>Sell</th><th>Orders</th><th>Posted</th><th></th>
         </tr></thead>
         <tbody>
           ${data.products.map(p => `
@@ -1277,8 +1296,8 @@ async function renderPosted() {
                 <div style="display:flex;align-items:center;gap:10px">
                   ${(p.images || [])[0] ? `<img src="${imageUrl((p.images || [])[0])}" style="width:36px;height:36px;object-fit:cover;border-radius:6px;flex-shrink:0" onerror="this.style.display='none'">` : ''}
                   <div>
-                    <div style="font-weight:500;font-size:12.5px">${p.product_name || p.title_translated || '—'}</div>
-                    <div style="font-size:10px;color:var(--t3);font-family:var(--ff-m)">${p.keyword || p.category || ''}</div>
+                    <div style="font-weight:500;font-size:12.5px">${escHtml(p.product_name || p.title_translated || '—')}</div>
+                    <div style="font-size:10px;color:var(--t3);font-family:var(--ff-m)">${escHtml(p.keyword || p.category || '')}</div>
                   </div>
                 </div>
               </td>
@@ -1286,7 +1305,8 @@ async function renderPosted() {
               <td><span class="badge badge-green">${p.margin_pct ?? 0}%</span></td>
               <td style="font-family:var(--ff-m);color:var(--green);font-size:12px">₾${p.sell_price_eur ?? 0}</td>
               <td style="font-family:var(--ff-m);font-size:12px">${(p.orders ?? 0).toLocaleString()}</td>
-              <td style="font-size:11px;color:var(--t3);font-family:var(--ff-m);white-space:nowrap">${fmtDate(p.LIVE_at || p.created_at)}</td>
+              <td style="font-size:11px;color:var(--t3);font-family:var(--ff-m);white-space:nowrap">${fmtDate(p.posted_at || p.created_at)}</td>
+              <td>${p.instagram_url ? `<a href="${safeUrl(p.instagram_url)}" target="_blank" rel="noopener noreferrer" class="btn btn-sm" onclick="event.stopPropagation()">IG ↗</a>` : '<span style="font-size:10px;color:var(--t4)">website</span>'}</td>
             </tr>`).join('')}
         </tbody>
       </table>
@@ -1324,12 +1344,12 @@ function renderRejectedTable() {
           ${rejectedProducts.map(p => `
             <tr>
               <td style="cursor:pointer" onclick="showDetail(${p.id})">
-                <div style="font-weight:500;font-size:12.5px">${p.product_name || p.title_translated || '—'}</div>
-                <div style="font-size:10px;color:var(--t3);font-family:var(--ff-m)">${p.keyword || ''}</div>
+                <div style="font-weight:500;font-size:12.5px">${escHtml(p.product_name || p.title_translated || '—')}</div>
+                <div style="font-size:10px;color:var(--t3);font-family:var(--ff-m)">${escHtml(p.keyword || '')}</div>
               </td>
               <td><span class="badge badge-gray">${(p.composite_score ?? p.score ?? 0).toFixed(1)}</span></td>
-              <td style="font-size:12px;color:var(--t3);max-width:180px">${p.rejection_reason || '<span style="opacity:.35">—</span>'}</td>
-              <td style="font-size:11px;color:var(--t3);font-family:var(--ff-m);white-space:nowrap">${fmtDate(p.REJECTED_at)}</td>
+              <td style="font-size:12px;color:var(--t3);max-width:220px">${p.rejection_reason ? escHtml(p.rejection_reason) : '<span style="opacity:.35">—</span>'}</td>
+              <td style="font-size:11px;color:var(--t3);font-family:var(--ff-m);white-space:nowrap">${fmtDate(p.rejected_at)}</td>
               <td><button class="btn btn-sm btn-amber" onclick="reconsider(${p.id})">Reconsider</button></td>
             </tr>`).join('')}
         </tbody>
@@ -1354,12 +1374,34 @@ async function renderSettings() {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:800px">
 
       <div class="card">
-        <div class="card-title">Store & niche</div>
-        <div class="form-group">
-          <label>Niche description</label>
-          <textarea id="s-niche" rows="3" style="resize:vertical">${s.niche || ''}</textarea>
-          <div style="font-size:11px;color:var(--t3);margin-top:5px">Used in AI prompts — be specific about your store's aesthetic.</div>
+        <div class="card-title">Store &amp; AI curator</div>
+        <div style="font-size:11px;color:var(--t3);margin-bottom:10px;line-height:1.6">These fields are rendered into the Gemini curator prompt that scores every scraped product.</div>
+        <div class="form-row">
+          <div><label>Store name</label><input type="text" id="s-store-name" value="${escHtml(s.store_name || '')}" placeholder="Tskvili"/></div>
+          <div><label>Sell price range (₾)</label>
+            <div style="display:flex;gap:6px;align-items:center">
+              <input type="number" id="s-price-min" value="${s.sell_price_min ?? 40}" min="0" step="1" style="flex:1"/>
+              <span style="color:var(--t3)">–</span>
+              <input type="number" id="s-price-max" value="${s.sell_price_max ?? 119}" min="0" step="1" style="flex:1"/>
+            </div>
+          </div>
         </div>
+        <div class="form-group">
+          <label>Target audience</label>
+          <input type="text" id="s-audience" value="${escHtml(s.target_audience || '')}" placeholder="Gen-Z couples in Georgia (ages 16–26)…"/>
+        </div>
+        <div class="form-group">
+          <label>Niche / store focus</label>
+          <textarea id="s-niche" rows="2" style="resize:vertical">${escHtml(s.niche || '')}</textarea>
+        </div>
+        <div class="form-group">
+          <label>Example products that sell</label>
+          <textarea id="s-examples" rows="2" style="resize:vertical">${escHtml(s.example_products || '')}</textarea>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Instagram</div>
         <div class="form-group">
           <label>Instagram username <span style="color:var(--t3);font-weight:400">(display only)</span></label>
           <input type="text" id="s-instagram" value="${s.instagram_username || ''}" placeholder="@yourstore"/>
@@ -1403,7 +1445,10 @@ async function renderSettings() {
       </div>
 
       <div class="card" style="grid-column:1/-1">
-        <div class="card-title">Comment auto-reply</div>
+        <div class="card-title">Comment &amp; DM auto-reply <span class="badge badge-amber" style="margin-left:8px;font-size:9px;vertical-align:middle">not active yet</span></div>
+        <div class="card-sm" style="margin-bottom:12px;font-size:11px;color:var(--amber);line-height:1.6">
+          The webhook endpoint is live and verifies with Meta, but replies are not sent yet — rules you save here are kept for when the reply engine ships.
+        </div>
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none">
             <input type="checkbox" id="s-autoreply-enabled" ${s.instagram_auto_reply_enabled ? 'checked' : ''}
@@ -1490,12 +1535,13 @@ async function renderSettings() {
       <div class="card">
         <div class="card-title">Filter thresholds</div>
         <div class="form-row">
-          <div><label>Min margin (%)</label><input type="number" id="s-margin" value="${s.min_margin ?? 60}" step="5" min="0" max="95"/></div>
-          <div><label>Min AI score</label><input type="number" id="s-score" value="${s.min_score ?? 7}" step="0.5" min="1" max="10"/></div>
+          <div><label>Min margin (%)</label><input type="number" id="s-margin" value="${s.min_margin ?? 60}" step="5" min="0" max="95"/>
+            <div style="font-size:11px;color:var(--t3);margin-top:4px">Relaxed to 45% automatically when cost &gt; ₾30.</div></div>
+          <div><label>Min rating <span style="color:var(--t3);font-weight:400">(Taobao only)</span></label><input type="number" id="s-rating" value="${s.min_rating ?? 4.5}" step="0.1" min="1" max="5"/>
+            <div style="font-size:11px;color:var(--t3);margin-top:4px">1688 listings are ranked by orders instead.</div></div>
         </div>
-        <div class="form-row">
-          <div><label>Min orders</label><input type="number" id="s-orders" value="${s.min_orders ?? 100}" step="50" min="0"/></div>
-          <div><label>Min rating</label><input type="number" id="s-rating" value="${s.min_rating ?? 4.5}" step="0.1" min="1" max="5"/></div>
+        <div style="font-size:11px;color:var(--t3);line-height:1.6;margin-top:4px">
+          Products scoring below <b>6.0</b> from the AI curator are rejected automatically; 6.0–7.0 land in Review as <i>pending review</i>.
         </div>
       </div>
 
@@ -1506,17 +1552,18 @@ async function renderSettings() {
           <input type="number" id="s-exchange" value="${s.exchange_rate ?? 0.353}" step="0.001" min="0.01"/>
         </div>
         <div class="form-group">
-          <label>Markup · cost &lt; ₾5 (×)</label>
+          <label>Markup · landed cost &lt; ₾10 (×)</label>
           <input type="number" id="s-ml" value="${s.sell_markup_low ?? 3.5}" step="0.1" min="1"/>
         </div>
         <div class="form-group">
-          <label>Markup · cost ₾5–₾15 (×)</label>
+          <label>Markup · everything else (×)</label>
           <input type="number" id="s-mm" value="${s.sell_markup_mid ?? 2.8}" step="0.1" min="1"/>
         </div>
         <div class="form-group">
-          <label>Markup · cost &gt; ₾15 (×)</label>
+          <label>Markup · electronics / cameras (×)</label>
           <input type="number" id="s-mh" value="${s.sell_markup_high ?? 2.2}" step="0.1" min="1"/>
         </div>
+        <div style="font-size:11px;color:var(--t3);line-height:1.6">Landed cost = (item price + ¥10 shipping for 1688 / ¥15 Taobao) × rate. Sell prices snap to ₾29.90 / ₾44.90 / ₾64.90 / x.90.</div>
       </div>
 
       <div class="card">
@@ -1551,7 +1598,7 @@ async function renderSettings() {
         </div>
 
         <!-- Clipdrop -->
-        <div class="api-key-row">
+        <div class="api-key-row" style="border-bottom:none">
           <div class="api-key-header">
             <div>
               <span class="api-key-name">🖼 Clipdrop</span>
@@ -1560,18 +1607,6 @@ async function renderSettings() {
           </div>
           <div style="font-size:11px;color:var(--t3);margin-bottom:8px">Remove Chinese watermarks from product images · 100 free/month · <a href="https://clipdrop.co/apis" target="_blank" style="color:var(--accent)">Get key →</a></div>
           <input type="password" id="s-clipdrop" value="" placeholder="${s.clipdrop_key_set ? '••••  saved — paste new key to replace' : 'sk_…  (get key at clipdrop.co/apis)'}"/>
-        </div>
-
-        <!-- Apify -->
-        <div class="api-key-row" style="border-bottom:none">
-          <div class="api-key-header">
-            <div>
-              <span class="api-key-name">🕷 Apify</span>
-              <span class="api-key-badge ${s.apify_token_set ? 'badge-active' : 'badge-missing'}">${s.apify_token_set ? '✓ Active' : '⚠ Not set'}</span>
-            </div>
-          </div>
-          <div style="font-size:11px;color:var(--t3);margin-bottom:8px">Product scraping from 1688/Taobao (optional — mock data used without it)</div>
-          <input type="password" id="s-apify" value="" placeholder="${s.apify_token_set ? '••••  saved — paste new key to replace' : 'apify_api_…'}"/>
         </div>
 
         <div class="card-sm" style="margin-top:8px;background:rgba(var(--green-rgb,34,197,94),0.08);border-color:rgba(var(--green-rgb,34,197,94),0.2)">
@@ -1598,16 +1633,33 @@ async function renderSettings() {
         </div>
       </div>
 
-      <div class="card" style="grid-column:1/-1">
+      <div class="card">
         <div class="card-title">Scheduled scan keywords</div>
-        <div style="font-size:11px;color:var(--t3);margin-bottom:10px">Keywords used by the automatic 09:00 and 21:00 UTC scans. One per line.</div>
+        <div style="font-size:11px;color:var(--t3);margin-bottom:10px;line-height:1.6">Keywords the server scans on its interval (<code>SCRAPE_INTERVAL</code> env, default every hour) and the default list for the local scraper. One per line.</div>
         <div class="form-group">
-          <textarea id="s-scan-kw" rows="4" style="font-family:var(--ff-m);font-size:12px;resize:vertical">${(s.scan_keywords || []).join('\n')}</textarea>
+          <textarea id="s-scan-kw" rows="5" style="font-family:var(--ff-m);font-size:12px;resize:vertical">${escHtml((s.scan_keywords || []).join('\n'))}</textarea>
         </div>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-          <button class="btn btn-sm" onclick="triggerScheduledScan()">Run scheduled scan now</button>
+          <button class="btn btn-sm" onclick="triggerScheduledScan()" ${s.local_scraping_only ? 'disabled title="Server-side scraping is off (local scraping only)"' : ''}>Run scan with these keywords now</button>
           <span id="sched-status" style="font-size:11px;color:var(--t3)">Loading scheduler…</span>
         </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Instagram posting schedule</div>
+        <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:12px;color:var(--t2);cursor:pointer">
+          <input type="checkbox" id="s-post-enabled" ${s.post_schedule_enabled ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)"/>
+          Auto-post the top approved product at peak hours
+        </label>
+        <div class="form-row">
+          <div><label>Post times (HH:MM, comma-separated)</label><input type="text" id="s-post-times" value="${escHtml((s.post_times || ['19:00','21:00']).join(', '))}" placeholder="19:00, 21:00"/></div>
+          <div><label>Timezone</label><input type="text" id="s-post-tz" value="${escHtml(s.post_timezone || 'Asia/Tbilisi')}" placeholder="Asia/Tbilisi"/></div>
+        </div>
+        <div class="form-group">
+          <label>Products per slot</label>
+          <input type="number" id="s-posts-per-slot" value="${s.posts_per_slot ?? 1}" min="1" max="5" style="max-width:120px"/>
+        </div>
+        <div id="posting-status" style="font-size:11px;color:var(--t3);line-height:1.6">Loading…</div>
       </div>
 
       <div class="card">
@@ -1696,12 +1748,25 @@ async function loadSchedulerStatus() {
   try {
     const st = await api('/scheduler/status');
     const el = document.getElementById('sched-status');
-    if (!el) return;
-    if (st.running && st.jobs?.length) {
-      const next = st.jobs.map(j => `${j.id}: every ${j.interval || 3600}s`).join(' · ');
-      el.textContent = `Running: ${next}`;
-    } else {
-      el.textContent = 'Scheduler not running';
+    if (el) {
+      if (st.running && st.jobs?.length) {
+        const secs = st.jobs[0]?.interval || 3600;
+        const every = secs >= 3600 ? `${Math.round(secs / 3600 * 10) / 10}h` : `${Math.round(secs / 60)}min`;
+        el.textContent = `Server scan loop running — every ${every}`;
+      } else {
+        el.textContent = settingsData.local_scraping_only ? 'Server scraping off — upload from the local scraper' : 'Scan loop not running';
+      }
+    }
+    const pel = document.getElementById('posting-status');
+    if (pel) {
+      const jobs = st.posting?.jobs || [];
+      if (!st.posting?.running) pel.textContent = 'Posting scheduler not running';
+      else if (!jobs.length) pel.textContent = 'No post times planned';
+      else {
+        const enabled = !!settingsData.post_schedule_enabled;
+        pel.innerHTML = (enabled ? '<span style="color:var(--green)">Enabled</span>' : '<span style="color:var(--amber)">Planned but disabled</span>')
+          + ' · next: ' + jobs.map(j => j.next_run ? escHtml(new Date(j.next_run).toLocaleString(undefined, { weekday:'short', hour:'2-digit', minute:'2-digit' })) : '—').join(', ');
+      }
     }
   } catch(e) {
     const el = document.getElementById('sched-status');
@@ -1833,9 +1898,12 @@ async function detectIgAccount() {
 async function triggerScheduledScan() {
   try {
     const res = await api('/scheduler/trigger', 'POST', {});
-    toast(`Scheduled scan started (job #${res.job_id})`, 'success');
+    toast(`Scan started (job #${res.job_id}) — follow it in Pipeline → Scan`, 'success');
+    activeJob = { id: res.job_id, status: 'queued', progress: 0 };
+    if (activeJobPoll) clearInterval(activeJobPoll);
+    activeJobPoll = setInterval(pollActiveJob, 2000);
   } catch(e) {
-    toast('Failed to trigger scan', 'error');
+    /* api() already toasted the server's message */
   }
 }
 
@@ -1926,8 +1994,19 @@ async function saveSettings() {
     }
     if (value !== null && value !== undefined) obj[key] = value;
   };
+  const postTimes = (g('s-post-times')?.value || '')
+    .split(',').map(t => t.trim()).filter(t => /^\d{1,2}:\d{2}$/.test(t));
   const data = {
+    store_name:        g('s-store-name')?.value || '',
     niche:             g('s-niche')?.value,
+    target_audience:   g('s-audience')?.value || '',
+    example_products:  g('s-examples')?.value || '',
+    sell_price_min:    parseFloat(g('s-price-min')?.value || 40),
+    sell_price_max:    parseFloat(g('s-price-max')?.value || 119),
+    post_schedule_enabled: g('s-post-enabled')?.checked ?? false,
+    post_times:        postTimes.length ? postTimes : ['19:00', '21:00'],
+    post_timezone:     g('s-post-tz')?.value?.trim() || 'Asia/Tbilisi',
+    posts_per_slot:    Math.max(1, parseInt(g('s-posts-per-slot')?.value || 1)),
     instagram_username:          g('s-instagram')?.value,
     instagram_user_id:           g('s-ig-user-id')?.value           || '',
     instagram_auto_reply_enabled: g('s-autoreply-enabled')?.checked ?? false,
@@ -1935,8 +2014,6 @@ async function saveSettings() {
     instagram_dm_reply_enabled:   g('s-dm-enabled')?.checked ?? false,
     instagram_dm_rules:           _collectDmRules(),
     min_margin:    parseFloat(g('s-margin')?.value    || 60),
-    min_score:     parseFloat(g('s-score')?.value     || 7),
-    min_orders:    parseInt  (g('s-orders')?.value    || 100),
     min_rating:    parseFloat(g('s-rating')?.value    || 4.5),
     exchange_rate: parseFloat(g('s-exchange')?.value  || 0.353),
     sell_markup_low:  parseFloat(g('s-ml')?.value || 3.5),
@@ -1952,7 +2029,6 @@ async function saveSettings() {
   };
   includeIfNonEmpty(data, 'instagram_access_token', g('s-ig-token')?.value);
   includeIfNonEmpty(data, 'instagram_webhook_token', g('s-webhook-token')?.value);
-  includeIfNonEmpty(data, 'apify_token', g('s-apify')?.value);
   includeIfNonEmpty(data, 'gemini_key', g('s-gemini')?.value);
   includeIfNonEmpty(data, 'groq_key', g('s-groq')?.value);
   includeIfNonEmpty(data, 'clipdrop_key', g('s-clipdrop')?.value);
@@ -2000,7 +2076,7 @@ const STAGE_TYPE = {
 };
 
 async function renderPipeline() {
-  setTitle('Pipeline', 'scan-by-scan breakdown');
+  setTitle('Scan log', 'where each scraped product dropped out');
   const el = document.getElementById('content');
 
   // Load jobs list
@@ -2008,7 +2084,7 @@ async function renderPipeline() {
     pipelineJobs = await api('/jobs?limit=30').catch(() => []);
   }
   if (!pipelineJobs.length) {
-    el.innerHTML = `<div class="pl-empty">No scans yet — run a scan first.</div>`;
+    el.innerHTML = `<div class="empty" style="margin-top:48px"><span class="empty-icon">○</span><h3>No scans yet</h3><p>Run a scan or upload from the local scraper first</p><button class="btn" style="margin-top:16px" onclick="navigate('scan')">New scan</button></div>`;
     return;
   }
 
@@ -2039,12 +2115,12 @@ async function renderPipeline() {
 
   const stageItems = pipelineData[pipelineActiveStage] || [];
 
-  const jobOptions = pipelineJobs.map(j => `<option value="${j.id}" ${j.id===pipelineJobId?'selected':''}>Job #${j.id} — ${(j.keywords||[]).join(', ').substring(0,40)} (${j.status})</option>`).join('');
+  const jobOptions = pipelineJobs.map(j => `<option value="${j.id}" ${j.id===pipelineJobId?'selected':''}>Job #${j.id} — ${escHtml((j.keywords||[]).join(', ').substring(0,40))} (${escHtml(j.status||'')})</option>`).join('');
 
   el.innerHTML = `
     <div style="max-width:1100px">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
-        <select style="background:var(--s2);color:var(--t1);border:1px solid var(--b2);border-radius:var(--r);padding:7px 12px;font-size:12px;flex:1;max-width:420px" onchange="pipelineJobId=+this.value;pipelineActiveStage=null;pipelineData=null;renderPipeline()">
+        <select style="background:var(--s2);color:var(--t1);border:1px solid var(--b2);border-radius:var(--r);padding:7px 12px;font-size:12px;flex:1;max-width:420px" onchange="pipelineJobId=+this.value;pipelineActiveStage=null;pipelineData=null;renderPage()">
           ${jobOptions}
         </select>
         <button class="btn btn-sm" onclick="clearScanHistory()">Clear history</button>
@@ -2071,18 +2147,20 @@ async function renderPipeline() {
           <div>
             <div style="font-size:12px;color:var(--t3);margin-bottom:6px">Rejected mostly because</div>
             ${(summary.top_reasons||[]).length
-              ? (summary.top_reasons||[]).map(r => `<div style="font-size:12px;color:var(--t2);margin-bottom:4px">${r.reason} <span style="color:var(--t4)">(${r.count})</span></div>`).join('')
+              ? (summary.top_reasons||[]).map(r => `<div style="font-size:12px;color:var(--t2);margin-bottom:4px">${escHtml(r.reason)} <span style="color:var(--t4)">(${r.count})</span></div>`).join('')
               : `<div style="font-size:12px;color:var(--t4)">No rejection pattern yet</div>`}
           </div>
           <div>
             <div style="font-size:12px;color:var(--t3);margin-bottom:6px">Accepted examples</div>
             ${(summary.accepted_examples||[]).length
-              ? (summary.accepted_examples||[]).map(p => `<div style="font-size:12px;color:var(--t2);margin-bottom:4px">${(p.title||'').substring(0,42)} <span style="color:var(--green)">${Number(p.composite_score||p.score||0).toFixed(1)}</span></div>`).join('')
+              ? (summary.accepted_examples||[]).map(p => `<div style="font-size:12px;color:var(--t2);margin-bottom:4px">${escHtml((p.title||'').substring(0,42))} <span style="color:var(--green)">${Number(p.composite_score||p.score||0).toFixed(1)}</span></div>`).join('')
               : `<div style="font-size:12px;color:var(--t4)">No accepted products yet</div>`}
           </div>
           <div>
-            <div style="font-size:12px;color:var(--t3);margin-bottom:6px">Filter improvements</div>
-            ${(summary.recommendations||[]).map(t => `<div style="font-size:12px;color:var(--t2);margin-bottom:4px">${t}</div>`).join('')}
+            <div style="font-size:12px;color:var(--t3);margin-bottom:6px">Notes</div>
+            ${(summary.recommendations||[]).length
+              ? (summary.recommendations||[]).map(t => `<div style="font-size:12px;color:var(--t2);margin-bottom:4px">${escHtml(t)}</div>`).join('')
+              : `<div style="font-size:12px;color:var(--t4)">Filters look balanced</div>`}
           </div>
         </div>
       </div>
@@ -2090,7 +2168,7 @@ async function renderPipeline() {
       <div style="font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;font-family:var(--ff-m);margin-bottom:10px">Filter stages</div>
       <div class="pl-flow">
         ${STAGE_ORDER.map((s,i) => `
-          <div class="pl-stage ${STAGE_TYPE[s]} ${pipelineActiveStage===s?'active':''}" onclick="pipelineActiveStage='${s}';renderPipeline()">
+          <div class="pl-stage ${STAGE_TYPE[s]} ${pipelineActiveStage===s?'active':''}" onclick="pipelineActiveStage='${s}';renderPage()">
             <div class="pl-stage-label">${STAGE_LABELS[s]}</div>
             <div class="pl-stage-count">${(pipelineData[s]||[]).length}</div>
           </div>
@@ -2120,10 +2198,10 @@ async function renderPipeline() {
                     ${p.ai_provider ? ' · '+String(p.ai_provider).toUpperCase() : ''}
                   </div>
                   <div class="pl-card-meta">¥${p.price_cny?.toFixed(0)||0}${p.orders ? ' · '+p.orders+' sold' : ''}${p.rating ? ' · '+Number(p.rating).toFixed(1)+'★' : ''}</div>
-                  <div class="pl-card-meta">niche ${Number(p.ai_niche_fit||p.niche_fit||0).toFixed(1)} · visual ${Number(p.ai_visual||p.visual_appeal||0).toFixed(1)} · trend ${Number(p.trend_score||0).toFixed(1)} · comp ${Number(p.competition_score||0).toFixed(1)}</div>
+                  ${p.ai_score ? `<div class="pl-card-meta">romantic ${Number(p.ai_niche_fit||p.niche_fit||0).toFixed(1)} · visual ${Number(p.ai_visual||p.visual_appeal||0).toFixed(1)} · trend ${Number(p.trend_score||0).toFixed(1)}</div>` : ''}
                   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-                    ${(p.url||p.link) ? `<a class="btn btn-sm" href="${p.url||p.link}" target="_blank" rel="noopener">Item</a>` : ''}
-                    ${(p.image_url||p.photo_link) ? `<a class="btn btn-sm" href="${p.image_url||p.photo_link}" target="_blank" rel="noopener">Photo</a>` : ''}
+                    ${(p.url||p.link) ? `<a class="btn btn-sm" href="${safeUrl(p.url||p.link)}" target="_blank" rel="noopener">Item</a>` : ''}
+                    ${(p.image_url||p.photo_link) ? `<a class="btn btn-sm" href="${safeUrl(p.image_url||p.photo_link)}" target="_blank" rel="noopener">Photo</a>` : ''}
                   </div>
                 </div>
               </div>`).join('')}
@@ -2134,7 +2212,7 @@ async function renderPipeline() {
 // ── Router ─────────────────────────────────────────────────────────────────
 async function clearScanHistory() {
   if (!confirm('Clear all scan job history? Product queue items will stay.')) return;
-  await api('/jobs', 'DELETE');
+  try { await api('/jobs', 'DELETE'); toast('Scan history cleared', 'success'); } catch(e) { return; }
   resetPipelineState();
   activeJob = null;
   if (activeJobPoll) { clearInterval(activeJobPoll); activeJobPoll = null; }
@@ -2143,306 +2221,107 @@ async function clearScanHistory() {
   renderPipeline();
 }
 
-// ── Tools Hub ─────────────────────────────────────────────────────────────────
-
-function toolCard({ title, desc, status, action, actionLabel, badge }) {
-  const statusBadge = status === 'ready'
-    ? '<span class="badge badge-green">Ready</span>'
-    : '<span class="badge badge-gray">Coming Soon</span>';
-  const badgeHtml = badge ? `<span class="badge badge-amber" style="margin-left:6px">${badge} pending</span>` : '';
-  const btnClass = status === 'ready' ? 'btn btn-sm btn-primary' : 'btn btn-sm';
-  const btnAttrs = action ? `onclick="${action}"` : 'disabled';
-  return `
-    <div class="tool-card">
-      <div class="tool-card-header">
-        <div class="tool-card-title">${escHtml(title)}</div>
-        <div style="margin-top:5px">${statusBadge}${badgeHtml}</div>
-      </div>
-      <div class="tool-card-desc">${escHtml(desc)}</div>
-      <div class="tool-card-footer">
-        <button class="${btnClass}" ${btnAttrs}>${escHtml(actionLabel)}</button>
-      </div>
-    </div>`;
-}
-
-async function renderTools() {
-  setTitle('Tools', 'Automation Hub');
-  document.getElementById('topbar-actions').innerHTML = '';
-  const el = document.getElementById('content');
-  const s = stats;
-
-  el.innerHTML = `
-    <div class="stat-row" style="margin-bottom:24px">
-      <div class="stat-card blue" style="cursor:pointer" onclick="navigate('queue')">
-        <div class="stat-label">Review Queue</div>
-        <div class="stat-val">${s.ENRICHED ?? 0}</div>
-        <div class="stat-sub">pending review</div>
-      </div>
-      <div class="stat-card green" style="cursor:pointer" onclick="navigate('REVIEWED')">
-        <div class="stat-label">Approved</div>
-        <div class="stat-val">${s.REVIEWED ?? 0}</div>
-        <div class="stat-sub">ready to post</div>
-      </div>
-      <div class="stat-card amber" style="cursor:pointer" onclick="navigate('LIVE')">
-        <div class="stat-label">Posted</div>
-        <div class="stat-val">${s.LIVE ?? 0}</div>
-        <div class="stat-sub">live on Instagram</div>
-      </div>
-      <div class="stat-card gray" style="cursor:pointer" onclick="navigate('catalog')">
-        <div class="stat-label">Catalog</div>
-        <div class="stat-val">${(s.REVIEWED ?? 0) + (s.LIVE ?? 0)}</div>
-        <div class="stat-sub">total approved</div>
-      </div>
-    </div>
-
-    <div class="tool-cards-grid">
-      ${toolCard({
-        title: 'Post Scheduler',
-        desc: 'View and manage the Instagram posts queue. Review approved products and track posted / queued / failed status.',
-        status: 'ready',
-        action: "navigate('LIVE')",
-        actionLabel: 'Open Scheduler'
-      })}
-      ${toolCard({
-        title: 'Product Review',
-        desc: 'Review scraped products from ingestion, approve or reject, and move them through the pipeline.',
-        status: 'ready',
-        action: "navigate('queue')",
-        actionLabel: 'Review Products',
-        badge: s.ENRICHED > 0 ? s.ENRICHED : null
-      })}
-      ${toolCard({
-        title: 'Image Editor',
-        desc: 'Trigger background removal and collage generation for product images. View cleaned image previews.',
-        status: 'ready',
-        action: "navigate('catalog')",
-        actionLabel: 'Open Catalog'
-      })}
-      ${toolCard({
-        title: 'Enrichment Runner',
-        desc: 'Manually trigger AI enrichment on pending products: titles, descriptions, captions, hashtags.',
-        status: 'ready',
-        action: "navigate('textEdit')",
-        actionLabel: 'Text Edit'
-      })}
-      ${toolCard({
-        title: 'Caption Generator',
-        desc: 'Input a product name or URL and generate Instagram captions in 3 tones: romantic, playful, and luxury.',
-        status: 'soon',
-        action: null,
-        actionLabel: 'Not implemented yet'
-      })}
-      ${toolCard({
-        title: 'Pricing Calculator',
-        desc: 'Convert CNY supplier cost + shipping to recommended retail EUR/USD price with full margin breakdown.',
-        status: 'ready',
-        action: 'showPricingCalc()',
-        actionLabel: 'Calculate'
-      })}
-      ${toolCard({
-        title: 'Google Sheets Sync',
-        desc: 'Manually sync the product database with Google Sheets. Shows last sync time and total row count.',
-        status: 'soon',
-        action: null,
-        actionLabel: 'Not implemented yet'
-      })}
-      ${toolCard({
-        title: 'ManyChat Webhook Tester',
-        desc: 'Send a test payload to the configured ManyChat webhook URL and inspect the response for debugging DM flows.',
-        status: 'soon',
-        action: null,
-        actionLabel: 'Not implemented yet'
-      })}
-    </div>
-    <div id="pricing-calc-area"></div>`;
-}
-
-function showPricingCalc() {
-  const area = document.getElementById('pricing-calc-area');
-  if (!area) return;
-  area.innerHTML = `
-    <div class="modal-overlay" onclick="if(event.target===this)this.remove()">
-      <div class="modal" style="width:460px">
-        <div class="modal-title">Pricing Calculator</div>
-        <div class="modal-sub">Convert CNY cost to EUR/USD retail price with margin breakdown.</div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>CNY Cost</label>
-            <input type="number" id="calc-cny" placeholder="e.g. 35" oninput="calcPrice()"/>
-          </div>
-          <div class="form-group">
-            <label>Shipping Est. (EUR)</label>
-            <input type="number" id="calc-ship" placeholder="e.g. 4" oninput="calcPrice()"/>
-          </div>
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>Target Margin %</label>
-            <input type="number" id="calc-margin" value="45" oninput="calcPrice()"/>
-          </div>
-          <div class="form-group">
-            <label>EUR/CNY Rate</label>
-            <input type="number" id="calc-rate" value="0.128" step="0.001" oninput="calcPrice()"/>
-          </div>
-        </div>
-        <div id="calc-result" style="background:var(--s3);border:1px solid var(--b1);border-radius:var(--r);padding:16px;margin-bottom:16px">
-          <div style="color:var(--t3);font-size:12px;text-align:center">Enter cost above to calculate</div>
-        </div>
-        <button class="btn" style="width:100%" onclick="this.closest('.modal-overlay').remove()">Close</button>
-      </div>
-    </div>`;
-}
-
-function calcPrice() {
-  const cny    = parseFloat(document.getElementById('calc-cny')?.value)    || 0;
-  const ship   = parseFloat(document.getElementById('calc-ship')?.value)   || 0;
-  const target = parseFloat(document.getElementById('calc-margin')?.value) || 45;
-  const rate   = parseFloat(document.getElementById('calc-rate')?.value)   || 0.128;
-  if (!cny) return;
-  const costEur   = +(cny * rate).toFixed(2);
-  const totalCost = +(costEur + ship).toFixed(2);
-  const retail    = +(totalCost / (1 - target / 100)).toFixed(2);
-  const marginEur = +(retail - totalCost).toFixed(2);
-  const marginPct = +(marginEur / retail * 100).toFixed(1);
-  const retailUsd = +(retail * 1.09).toFixed(2);
-  const res = document.getElementById('calc-result');
-  if (!res) return;
-  res.innerHTML = `
-    <div class="m3" style="margin-bottom:14px">
-      <div class="mbox">
-        <div class="mbox-lbl">CNY Cost</div>
-        <div class="mbox-val">¥${cny}</div>
-        <div class="mbox-sub">= €${costEur}</div>
-      </div>
-      <div class="mbox">
-        <div class="mbox-lbl">Total Cost</div>
-        <div class="mbox-val">€${totalCost}</div>
-        <div class="mbox-sub">incl. shipping</div>
-      </div>
-      <div class="mbox">
-        <div class="mbox-lbl">Margin</div>
-        <div class="mbox-val" style="color:var(--green)">${marginPct}%</div>
-        <div class="mbox-sub">€${marginEur}</div>
-      </div>
-    </div>
-    <div style="display:flex;gap:16px;align-items:center">
-      <div>
-        <div style="font-size:10px;color:var(--t4);font-family:var(--ff-m);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">Recommended EUR</div>
-        <div style="font-family:var(--ff-d);font-style:italic;font-size:32px;color:var(--accent)">€${retail}</div>
-      </div>
-      <div style="color:var(--t4);font-size:18px">/</div>
-      <div>
-        <div style="font-size:10px;color:var(--t4);font-family:var(--ff-m);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">Recommended USD</div>
-        <div style="font-family:var(--ff-d);font-style:italic;font-size:32px;color:var(--t2)">$${retailUsd}</div>
-      </div>
-    </div>`;
-}
-
 // ── Analytics sub-tabs ────────────────────────────────────────────────────────
 
 let analyticsTab = 'overview';
 
 function switchAnalyticsTab(tab) { analyticsTab = tab; renderAnalytics(); }
 
-function renderCrmTab() {
-  const contacts = [
-    { name: 'Sofia M.',   handle: '@sofia_milano',  lastMsg: '2025-05-07', interest: 'Rose Crystal Lamp',     status: 'Ordered',   notes: 'Asked about delivery time' },
-    { name: 'Emma W.',    handle: '@emma.writes',   lastMsg: '2025-05-06', interest: 'Crystal Necklace',       status: 'Delivered', notes: '' },
-    { name: 'Lena K.',    handle: '@lenaa_k',       lastMsg: '2025-05-06', interest: 'Infinity Bracelet',      status: 'Pending',   notes: 'Waiting for size confirmation' },
-    { name: 'Alice B.',   handle: '@alice.beauty',  lastMsg: '2025-05-05', interest: 'Heart Candle Set',       status: 'Lead',      notes: 'Interested, hesitant on price' },
-    { name: 'Maria T.',   handle: '@mariatravels',  lastMsg: '2025-05-04', interest: 'Personalized Ring',      status: 'Shipped',   notes: '' },
-    { name: 'Hannah J.',  handle: '@hjones_style',  lastMsg: '2025-05-03', interest: 'Moon Lamp',              status: 'Cancelled', notes: 'Changed mind' },
-    { name: 'Clara V.',   handle: '@clarav_paris',  lastMsg: '2025-05-03', interest: 'Velvet Gift Box',        status: 'Ordered',   notes: '' },
-    { name: 'Priya S.',   handle: '@priya.sunshine',lastMsg: '2025-05-02', interest: 'Rose Petal Bracelet',    status: 'Lead',      notes: 'Needs gift wrapping option' },
-  ];
-  const statusColor = { Lead:'badge-gray', Pending:'badge-amber', Ordered:'badge-blue', Shipped:'badge-purple', Delivered:'badge-green', Cancelled:'badge-red' };
+async function renderMarginsTab() {
+  // Real numbers from approved + posted products
+  const [a, l] = await Promise.all([
+    api('/products?stage=REVIEWED&limit=200&sort=margin').catch(() => ({ products: [] })),
+    api('/products?stage=LIVE&limit=200&sort=margin').catch(() => ({ products: [] })),
+  ]);
+  const products = [...(a.products || []), ...(l.products || [])]
+    .filter(p => (p.sell_price_eur || 0) > 0)
+    .sort((x, y) => (y.margin_pct || 0) - (x.margin_pct || 0));
+  if (!products.length) {
+    return `<div class="empty" style="margin-top:40px"><span class="empty-icon">₾</span><h3>No approved products yet</h3><p>Margins appear here once products are approved</p></div>`;
+  }
+  const avg = products.reduce((s, p) => s + (p.margin_pct || 0), 0) / products.length;
+  const avgProfit = products.reduce((s, p) => s + ((p.sell_price_eur || 0) - (p.cost_eur || 0)), 0) / products.length;
+  const rows = products.map(p => {
+    const profit = ((p.sell_price_eur || 0) - (p.cost_eur || 0)).toFixed(2);
+    const m = p.margin_pct || 0;
+    const col = m >= 60 ? 'var(--green)' : m >= 45 ? 'var(--amber)' : 'var(--red)';
+    return `<tr class="cat-row" style="cursor:pointer" onclick="showDetail(${p.id})">
+      <td><span style="font-weight:500;color:var(--t1)">${escHtml(p.product_name || p.title_translated || '—')}</span></td>
+      <td><span class="badge ${p.stage === 'LIVE' ? 'badge-blue' : 'badge-green'}">${p.stage === 'LIVE' ? 'Posted' : 'Approved'}</span></td>
+      <td><span style="font-family:var(--ff-m);font-size:12px">¥${Number(p.price_cny || 0).toFixed(1)}</span></td>
+      <td><span style="font-family:var(--ff-m);font-size:12px">₾${Number(p.cost_eur || 0).toFixed(2)}</span></td>
+      <td><span style="font-family:var(--ff-m);font-size:12px;font-weight:600;color:var(--t1)">₾${Number(p.sell_price_eur || 0).toFixed(2)}</span></td>
+      <td><span style="font-family:var(--ff-m);font-size:12px;color:var(--green)">₾${profit}</span></td>
+      <td><span style="font-family:var(--ff-m);font-size:12px;font-weight:700;color:${col}">${m}%</span></td>
+    </tr>`;
+  }).join('');
   return `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:12px;flex-wrap:wrap">
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <select style="width:auto;padding:6px 10px;font-size:12px">
-          <option>All statuses</option>
-          <option>Lead</option><option>Pending</option><option>Ordered</option>
-          <option>Shipped</option><option>Delivered</option><option>Cancelled</option>
-        </select>
-        <span style="font-size:11px;color:var(--t4);font-family:var(--ff-m)">Mock data — wire to ManyChat API</span>
-      </div>
-      <button class="btn btn-sm">Export CSV</button>
+    <div style="display:flex;align-items:center;gap:18px;margin-bottom:16px;flex-wrap:wrap;font-size:12px;color:var(--t3)">
+      <span><b style="color:var(--t1)">${products.length}</b> products</span>
+      <span>avg margin <b style="color:var(--green)">${avg.toFixed(1)}%</b></span>
+      <span>avg profit <b style="color:var(--green)">₾${avgProfit.toFixed(2)}</b> / unit</span>
     </div>
     <div class="catalog-table-wrap">
       <table class="catalog-table">
-        <thead><tr>
-          <th>Name</th><th>Instagram</th><th>Last Message</th>
-          <th>Product Interest</th><th>Order Status</th><th>Notes</th>
-        </tr></thead>
-        <tbody>
-          ${contacts.map(c => `
-            <tr class="cat-row">
-              <td><span style="font-weight:500;color:var(--t1)">${escHtml(c.name)}</span></td>
-              <td><span style="font-family:var(--ff-m);font-size:11px;color:var(--accent)">${escHtml(c.handle)}</span></td>
-              <td><span style="font-size:11px;color:var(--t3);font-family:var(--ff-m)">${c.lastMsg}</span></td>
-              <td>${escHtml(c.interest)}</td>
-              <td><span class="badge ${statusColor[c.status]||'badge-gray'}">${c.status}</span></td>
-              <td><span style="font-size:11px;color:var(--t3)">${escHtml(c.notes)||'—'}</span></td>
-            </tr>`).join('')}
-        </tbody>
+        <thead><tr><th>Product</th><th>Stage</th><th>Supplier ¥</th><th>Landed ₾</th><th>Sell ₾</th><th>Profit</th><th>Margin</th></tr></thead>
+        <tbody>${rows}</tbody>
       </table>
     </div>`;
 }
 
-function renderMarginsTab() {
-  const products = [
-    { name: 'Rose Crystal Lamp',        supplier: 'AliExpress', cny: 28, ship: 4.5,  price: 34.90 },
-    { name: 'Infinity Love Bracelet',   supplier: '1688',       cny: 12, ship: 3.0,  price: 24.90 },
-    { name: 'Heart-shaped Candle Set',  supplier: 'Taobao',     cny: 18, ship: 5.0,  price: 29.90 },
-    { name: 'Personalized Moon Necklace',supplier: '1688',      cny: 22, ship: 4.0,  price: 39.90 },
-    { name: 'Luxury Velvet Gift Box',   supplier: 'AliExpress', cny: 35, ship: 6.0,  price: 49.90 },
-    { name: 'Rose Petal Charm Bracelet',supplier: 'Taobao',     cny: 15, ship: 3.5,  price: 22.90 },
-  ];
-  let totalMargin = 0;
-  const rows = products.map(p => {
-    const eurCost   = +(p.cny * 0.128).toFixed(2);
-    const totalCost = +(eurCost + p.ship).toFixed(2);
-    const marginEur = +(p.price - totalCost).toFixed(2);
-    const marginPct = +((marginEur / p.price) * 100).toFixed(1);
-    totalMargin += marginPct;
-    const col = marginPct >= 40 ? 'var(--green)' : marginPct >= 20 ? 'var(--amber)' : 'var(--red)';
-    return `<tr class="cat-row">
-      <td><span style="font-weight:500;color:var(--t1)">${escHtml(p.name)}</span></td>
-      <td><span style="font-size:11px;color:var(--t3)">${p.supplier}</span></td>
-      <td><span style="font-family:var(--ff-m);font-size:12px">¥${p.cny}</span></td>
-      <td><span style="font-family:var(--ff-m);font-size:12px">€${eurCost}</span></td>
-      <td><span style="font-family:var(--ff-m);font-size:12px">€${p.ship}</span></td>
-      <td><span style="font-family:var(--ff-m);font-size:12px;font-weight:600;color:var(--t1)">€${p.price}</span></td>
-      <td><span style="font-family:var(--ff-m);font-size:12px;color:var(--green)">€${marginEur}</span></td>
-      <td><span style="font-family:var(--ff-m);font-size:12px;font-weight:700;color:${col}">${marginPct}%</span></td>
-    </tr>`;
-  }).join('');
-  const avgMargin = (totalMargin / products.length).toFixed(1);
-  return `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:12px;flex-wrap:wrap">
-      <span style="font-size:11px;color:var(--t4);font-family:var(--ff-m)">Mock data — will sync from Google Sheets when implemented</span>
-      <button class="btn btn-sm">Import from Sheets</button>
-    </div>
-    <div class="catalog-table-wrap">
-      <table class="catalog-table">
-        <thead><tr>
-          <th>Product</th><th>Supplier</th><th>CNY Cost</th>
-          <th>EUR Cost</th><th>Shipping</th><th>Sell Price</th><th>Margin €</th><th>Margin %</th>
-        </tr></thead>
-        <tbody>
-          ${rows}
-          <tr style="border-top:2px solid var(--b2)">
-            <td colspan="7" style="text-align:right;font-size:11px;color:var(--t3);font-family:var(--ff-m);padding-right:12px">Average margin</td>
-            <td><span style="font-family:var(--ff-m);font-size:13px;font-weight:700;color:var(--amber)">${avgMargin}%</span></td>
-          </tr>
-        </tbody>
-      </table>
+async function renderInsightsTab() {
+  const recs = await api('/ai/recommendations').catch(() => ({ recommendations: [] }));
+  const list = recs.recommendations || [];
+  const riskCls = { low: 'badge-green', medium: 'badge-amber', high: 'badge-red' };
+  const cards = list.map(r => {
+    const f = r.payload || {};
+    const change = f.proposed_change ? Object.entries(f.proposed_change).map(([k, v]) => `${escHtml(k)}: ${escHtml(typeof v === 'object' ? JSON.stringify(v) : String(v))}`).join(' · ') : '';
+    return `<div class="card" style="margin-bottom:10px">
+      <div style="display:flex;align-items:flex-start;gap:10px;justify-content:space-between">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;color:var(--t1);margin-bottom:4px">${escHtml(r.headline || '')}</div>
+          <div style="font-size:12px;color:var(--t2);line-height:1.6">${escHtml(f.detail || '')}</div>
+          ${change ? `<div style="font-size:11px;color:var(--t3);font-family:var(--ff-m);margin-top:6px">Suggested: ${change}</div>` : ''}
+          <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+            <span class="badge badge-gray">${escHtml(String(r.analysis_type || '').replace(/_/g,' '))}</span>
+            <span class="badge ${riskCls[f.risk] || 'badge-gray'}">${escHtml(f.risk || 'low')} risk</span>
+            <span class="badge badge-purple">${Math.round((f.confidence || 0) * 100)}% confidence</span>
+          </div>
+        </div>
+        <button class="btn btn-sm" onclick="dismissRecommendation(${r.id})">Dismiss</button>
+      </div>
     </div>`;
+  }).join('');
+  return `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap">
+      <div style="font-size:12px;color:var(--t3);line-height:1.6;max-width:620px">Deterministic analysis of your approve/reject history — score calibration, margin threshold drift, wasted categories and keywords. No AI calls; needs at least 15 reviewed products.</div>
+      <button class="btn btn-sm btn-primary" id="analyze-btn" onclick="runAnalysis(this)">Analyze decisions</button>
+    </div>
+    <div id="insights-status" style="font-size:11px;color:var(--t3);margin-bottom:12px"></div>
+    ${cards || `<div class="empty" style="margin-top:24px"><span class="empty-icon">◎</span><h3>No findings yet</h3><p>Review some products, then click “Analyze decisions”</p></div>`}`;
+}
+
+async function runAnalysis(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Analyzing…'; }
+  try {
+    const res = await api('/ai/analyze', 'POST', {});
+    const st = res.status || {};
+    if (!st.ready) toast(st.reason || 'Not enough decisions yet', 'error', 5000);
+    else toast(`${res.count} finding${res.count === 1 ? '' : 's'} from ${st.total} decisions`, 'success');
+    renderAnalytics();
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Analyze decisions'; }
+  }
+}
+
+async function dismissRecommendation(id) {
+  try { await api(`/ai/recommendations/${id}/dismiss`, 'POST'); renderAnalytics(); } catch(e) {}
 }
 
 const PAGE_RENDERERS = {
   dashboard: renderDashboard,
-  pipeline:  renderPipeline,
+  scan:      renderScan,
+  scans:     renderPipeline,
   queue:     renderQueue,
   textEdit:  renderTextEdit,
   REVIEWED:  renderApproved,
@@ -2754,13 +2633,17 @@ function _pipelineSubNav(active) {
     { id: 'LIVE',     label: 'Posted',    count: stats.LIVE      },
     { id: 'catalog',  label: 'Catalog',   count: null            },
     { id: 'REJECTED', label: 'Rejected',  count: stats.REJECTED  },
+    { id: 'scan',     label: '+ Scan',    count: null, side: true },
+    { id: 'scans',    label: 'Scan log',  count: null, side: true },
   ];
-  const tabs = stages.map(s => {
+  const tab = s => {
     const badge = s.count != null && s.count > 0
       ? `<span style="margin-left:5px;font-family:var(--ff-m);font-size:10px;opacity:.7">${s.count}</span>` : '';
     return `<button class="cat-tab ${s.id === active ? 'active' : ''}" onclick="navigate('${s.id}')">${s.label}${badge}</button>`;
-  }).join('');
-  return `<div class="catalog-tabs" style="margin-bottom:20px">${tabs}</div>`;
+  };
+  const main = stages.filter(s => !s.side).map(tab).join('');
+  const side = stages.filter(s => s.side).map(tab).join('');
+  return `<div class="catalog-tabs" style="margin-bottom:20px;display:flex;flex-wrap:wrap;gap:4px"><div style="display:flex;flex-wrap:wrap;gap:4px">${main}</div><div style="margin-left:auto;display:flex;gap:4px">${side}</div></div>`;
 }
 
 async function renderPage() {
@@ -2785,19 +2668,19 @@ async function renderPage() {
 // ── Analytics ────────────────────────────────────────────────────────────────
 
 async function renderAnalytics() {
-  const tabLabels = { overview: 'Overview', crm: 'CRM', margins: 'Margins' };
+  const tabLabels = { overview: 'Overview', margins: 'Margins', insights: 'Insights' };
   setTitle('Analytics', tabLabels[analyticsTab] || 'Overview');
   document.getElementById('topbar-actions').innerHTML = '';
   const el = document.getElementById('content');
 
   const tabBar = `<div class="catalog-tabs" style="margin-bottom:20px">
     <button class="cat-tab ${analyticsTab==='overview'?'active':''}" onclick="switchAnalyticsTab('overview')">Overview</button>
-    <button class="cat-tab ${analyticsTab==='crm'?'active':''}" onclick="switchAnalyticsTab('crm')">CRM</button>
     <button class="cat-tab ${analyticsTab==='margins'?'active':''}" onclick="switchAnalyticsTab('margins')">Margins</button>
+    <button class="cat-tab ${analyticsTab==='insights'?'active':''}" onclick="switchAnalyticsTab('insights')">Insights</button>
   </div>`;
 
-  if (analyticsTab === 'crm') { el.innerHTML = tabBar + renderCrmTab(); return; }
-  if (analyticsTab === 'margins') { el.innerHTML = tabBar + renderMarginsTab(); return; }
+  if (analyticsTab === 'margins') { el.innerHTML = tabBar + '<div style="color:var(--t3);font-size:12px;padding:30px 0;text-align:center">Loading…</div>'; el.innerHTML = tabBar + await renderMarginsTab(); return; }
+  if (analyticsTab === 'insights') { el.innerHTML = tabBar + '<div style="color:var(--t3);font-size:12px;padding:30px 0;text-align:center">Loading…</div>'; el.innerHTML = tabBar + await renderInsightsTab(); return; }
 
   el.innerHTML = '<div style="color:var(--t3);font-size:12px;padding:40px 0;text-align:center">Loading analytics…</div>';
 
@@ -2820,8 +2703,9 @@ async function renderAnalytics() {
   const tlMax = Math.max(...timeline.map(d => d.total), 1);
   const tlBars = timeline.slice(-14).map(d => {
     const h = Math.max(4, Math.round((d.total / tlMax) * 48));
-    const hA = Math.max(0, Math.round((d.REVIEWED / tlMax) * 48));
-    return `<div class="an-bar-wrap" title="${d.day}: ${d.total} added, ${d.REVIEWED} approved">
+    const approved = d.approved ?? d.REVIEWED ?? 0;
+    const hA = Math.max(0, Math.round((approved / tlMax) * 48));
+    return `<div class="an-bar-wrap" title="${escHtml(d.day)}: ${d.total} added, ${approved} approved">
       <div class="an-bar-total" style="height:${h}px"></div>
       <div class="an-bar-approved" style="height:${hA}px"></div>
     </div>`;
@@ -2843,7 +2727,7 @@ async function renderAnalytics() {
   const rejRows = rejections.map(r => {
     const w = Math.max(4, Math.round((r.cnt / rejMax) * 100));
     return `<div class="an-hbar-row">
-      <span class="an-hbar-label" title="${r.reason}">${r.reason.length>28?r.reason.slice(0,28)+'…':r.reason}</span>
+      <span class="an-hbar-label" title="${escHtml(r.reason)}">${escHtml(r.reason.length>28?r.reason.slice(0,28)+'…':r.reason)}</span>
       <div class="an-hbar-track"><div class="an-hbar-fill" style="width:${w}%;background:var(--red)"></div></div>
       <span class="an-hbar-val">${r.cnt}</span>
     </div>`;
@@ -2854,26 +2738,29 @@ async function renderAnalytics() {
   const catRows = categories.map(c => {
     const w = Math.max(4, Math.round((c.cnt / catMax) * 100));
     return `<div class="an-hbar-row">
-      <span class="an-hbar-label">${c.category||'Unknown'}</span>
+      <span class="an-hbar-label">${escHtml(c.category||'Unknown')}</span>
       <div class="an-hbar-track"><div class="an-hbar-fill" style="width:${w}%;background:var(--blue)"></div></div>
       <span class="an-hbar-val">${c.cnt}</span>
     </div>`;
   }).join('');
 
   // Keywords table
-  const kwRows = keywords.map(k => `
+  const kwRows = keywords.map(k => {
+    const approved = k.approved ?? k.REVIEWED ?? 0;
+    return `
     <tr>
-      <td>${k.keyword||'—'}</td>
+      <td>${escHtml(k.keyword||'—')}</td>
       <td style="color:var(--t2)">${k.total}</td>
-      <td style="color:var(--green)">${k.REVIEWED}</td>
+      <td style="color:var(--green)">${approved}</td>
       <td style="color:var(--amber)">${k.avg_score??'—'}</td>
-      <td style="color:var(--t3)">${k.total?Math.round((k.REVIEWED/k.total)*100):0}%</td>
-    </tr>`).join('');
+      <td style="color:var(--t3)">${k.total?Math.round((approved/k.total)*100):0}%</td>
+    </tr>`;
+  }).join('');
 
   // AI Provider badges
   const provBadges = providers.map(p => `
     <div class="an-badge">
-      <span style="color:var(--t1)">${p.provider}</span>
+      <span style="color:var(--t1)">${escHtml(p.provider)}</span>
       <span style="color:var(--t3)">${p.cnt}</span>
     </div>`).join('');
 
@@ -3031,7 +2918,7 @@ function renderChatMessages() {
 function renderChatProductCard(p) {
   const img = p.image_url || p.images?.[0] || '';
   const title = p.title_translated || p.product_name || p.title || 'Product';
-  const price = (p.sell_price_eur || p.price) ? `€${Number(p.sell_price_eur || p.price).toFixed(2)}` : '';
+  const price = (p.sell_price_eur || p.price) ? `₾${Number(p.sell_price_eur || p.price).toFixed(2)}` : '';
   const score = (p.composite_score || p.score) ? `${(p.composite_score || p.score).toFixed ? Number(p.composite_score || p.score).toFixed(1) : p.composite_score || p.score}` : '';
   const niche = p.niche_fit ? `nf:${p.niche_fit}` : '';
   const stage = p.stage || '';
@@ -3313,7 +3200,7 @@ const _navClickClose = (page) => {
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 function chooseStartPage() {
-  return 'tools';
+  return 'dashboard';
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────
@@ -3377,28 +3264,34 @@ document.addEventListener('keydown', (e) => {
     activeRowIndex = Math.max(activeRowIndex - 1, 0);
     applyActiveRow();
     e.preventDefault();
-  } else if (e.key === 'a' || e.key === 'A') {
+  } else if (e.key === 'a' || e.key === 'A' || e.key === 'r' || e.key === 'R') {
+    // a = approve, r = reject — only meaningful on the Review / Text edit / Approved grids
+    if (!['queue', 'textEdit', 'REVIEWED'].includes(currentPage)) return;
     const target = cards[activeRowIndex];
-    const pidMatch = target.id.match(/card-(\d+)/);
-    if (pidMatch) {
-        const pid = parseInt(pidMatch[1]);
-        api('/products/bulk-status', 'POST', { product_ids: [pid], stage: 'QUEUED' }).then(() => {
-            toast('Moved to QUEUED', 'success');
-            target.remove();
-            applyActiveRow();
-        }).catch(err => console.error(err));
-    }
-  } else if (e.key === 'r' || e.key === 'R') {
+    const pidMatch = target && target.id.match(/card-(\d+)/);
+    if (!pidMatch) return;
+    const pid = parseInt(pidMatch[1]);
+    const approve = e.key === 'a' || e.key === 'A';
+    if (approve && currentPage === 'REVIEWED') { quickPost(pid); return; }
+    const stage = approve ? 'REVIEWED' : 'REJECTED';
+    api('/products/bulk-status', 'POST', { product_ids: [pid], stage }).then(res => {
+      if (res.skipped?.length) { toast('Nothing changed', 'error'); return; }
+      toast(approve ? 'Approved' : 'Rejected', 'success');
+      [queueProducts, textEditProducts, approvedProducts].forEach(list => {
+        const i = list.findIndex(p => p.id === pid); if (i >= 0) list.splice(i, 1);
+      });
+      selectedProducts.delete(pid);
+      target.remove();
+      activeRowIndex = Math.min(activeRowIndex, Math.max(0, document.querySelectorAll('.product-card').length - 1));
+      applyActiveRow();
+      refreshStats();
+    }).catch(err => console.error(err));
+  } else if (e.key === 'Enter') {
     const target = cards[activeRowIndex];
-    const pidMatch = target.id.match(/card-(\d+)/);
-    if (pidMatch) {
-        const pid = parseInt(pidMatch[1]);
-        api('/products/bulk-status', 'POST', { product_ids: [pid], stage: 'REJECTED' }).then(() => {
-            toast('Moved to REJECTED', 'success');
-            target.remove();
-            applyActiveRow();
-        }).catch(err => console.error(err));
-    }
+    const pidMatch = target && target.id.match(/card-(\d+)/);
+    if (pidMatch) showDetail(parseInt(pidMatch[1]));
+  } else if (e.key === 'Escape') {
+    closeDetail(); closeRejectModal();
   }
 });
 
@@ -3417,7 +3310,7 @@ function startEdit(id, field, el) {
       const body = {};
       body[field] = field === 'sell_price_eur' ? parseFloat(val) : val;
       try {
-        await api('/products/' + id, 'PUT', body);
+        await api('/products/' + id, 'PATCH', body);
         toast('Saved', 'success');
         el.innerHTML = field === 'sell_price_eur' ? '₾' + val : val;
         hotkeysEnabled = true;

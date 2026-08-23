@@ -15,11 +15,12 @@ import json
 from datetime import datetime, timezone
 
 # ── Absolute imports (backend/ is on sys.path, NOT a package) ─────────────────
+from config.runtime import merge_env_with_settings
 from database import db
 from models import ProductStage          # NOT from main — that causes a circular import
 from services.images import process_image
-from services.publisher import publish_to_instagram
 import decision_memory
+import instagram
 
 
 log = logging.getLogger(__name__)
@@ -55,7 +56,7 @@ async def run_worker_loop():
                 await asyncio.sleep(10)
                 continue
 
-            settings = await db.get_settings()
+            settings = merge_env_with_settings(await db.get_settings())
             log.info("Worker: Running Batch Vision AI for %d products...", len(products))
 
             # ── Decision-memory context injection (feature flag: ai_context_injection) ──
@@ -85,8 +86,24 @@ async def run_worker_loop():
                 skip_reason = "flag_off"
 
             # Deferred import avoids circular dependency at module load time
-            from enrichment import ai_enrich_batch
+            from enrichment import ai_enrich_batch, ai_configured
             batch_results = await ai_enrich_batch(products, settings, context_snippet)
+
+            # ── AI outage guard ──────────────────────────────────────────────
+            # If a real provider is configured but every result came from the
+            # mock scorer, the AI is down (quota, network, bad key).  Do NOT
+            # decide anything — leave the batch in SCRAPED and retry later.
+            providers = {str(r.get("ai_provider") or "") for r in batch_results}
+            if ai_configured(settings) and providers == {"mock"}:
+                log.warning(
+                    "Worker: AI provider configured but unavailable — batch of %d left in SCRAPED, retrying in %ds",
+                    len(products), _ERROR_SLEEP,
+                )
+                await asyncio.sleep(_ERROR_SLEEP)
+                continue
+
+            ai_pass: list = []
+            ai_reject: list = []
 
             for i, p in enumerate(products):
                 pid = p["id"]
@@ -102,34 +119,55 @@ async def run_worker_loop():
                     continue
 
                 res = batch_results[i]
-
+                scores      = res.get("scores") or {}
                 verdict     = res.get("verdict", "auto_reject")
                 composite_s = float(res.get("composite_score") or res.get("score") or 0)
+                provider    = str(res.get("ai_provider") or "")
 
                 # pending_review products (≥6.0) go to review queue, not hard reject
-                store_match = res.get("store_match") or verdict in (
+                store_match = bool(res.get("store_match")) or verdict in (
                     "top_priority", "strong_candidate", "pending_review"
                 )
 
+                # Canonical per-dimension scores, using the store's vocabulary
+                dim_updates = {
+                    "score":           composite_s,
+                    "composite_score": composite_s,
+                    "cute_appeal":     float(scores.get("couple_angle") or res.get("couple_angle") or 0),
+                    "niche_fit":       float(scores.get("emotional_trigger") or res.get("emotional_trigger") or res.get("niche_fit") or 0),
+                    "visual_appeal":   float(scores.get("visual_score") or res.get("visual_score") or res.get("visual_appeal") or 0),
+                    "trend_score":     float(scores.get("trend_alignment") or res.get("trend_alignment") or res.get("trend_score") or 0),
+                    "giftability":     float(scores.get("demographic_fit") or res.get("demographic_fit") or 0),
+                    "scores_json":     json.dumps({
+                        "cute_appeal":      float(scores.get("couple_angle") or 0),
+                        "romantic_trigger": float(scores.get("emotional_trigger") or 0),
+                        "visual_score":     float(scores.get("visual_score") or 0),
+                        "trend_fit":        float(scores.get("trend_alignment") or 0),
+                        "giftability":      float(scores.get("demographic_fit") or 0),
+                    }),
+                    "verdict":         verdict,
+                    "product_tier":    res.get("product_tier") or "",
+                    "confidence":      float(res.get("confidence") or 0),
+                    "viral_angle":     res.get("viral_angle") or "",
+                    "emotional_hook":  res.get("emotional_hook") or "",
+                    "ai_provider":     provider,
+                }
+
                 if not store_match:
                     # ── Hard rejection (auto_reject verdict or composite < 6.0) ─
-                    reason = res.get("rejection_reason", "Score below threshold")
+                    reason = res.get("rejection_reason") or "Score below threshold"
                     await db.update_product_fields(pid, {
+                        **dim_updates,
                         "stage":            "REJECTED",
                         "rejection_reason": f"Curator: {reason}",
-                        # save real scores so UI shows why it was rejected
-                        "composite_score":  composite_s,
-                        "verdict":          verdict,
-                        "score":            composite_s,
                     })
+                    ai_reject.append({**p, **dim_updates, "rejection_reason": f"Curator: {reason}"})
                     log.info("Worker: [REJECT] pid=%d score=%.2f verdict=%s → %s",
-                             pid, composite_s, verdict, reason[:60])
+                             pid, composite_s, verdict, str(reason)[:60])
                     continue
 
                 # ── Winner: Deep Enrichment + Supabase Image Upload ───────────
-                log.info("Worker: [WINNER] Deep Enrichment for pid=%d...", pid)
-                title = p.get("title_translated") or p.get("product_name") or p.get("title") or ""
-                description = p.get("description_translated") or p.get("description") or ""
+                log.info("Worker: [WINNER] pid=%d score=%.2f verdict=%s provider=%s", pid, composite_s, verdict, provider)
 
                 # b. Download + compress + upload to Supabase Storage
                 images = p.get("images") or []
@@ -139,30 +177,20 @@ async def run_worker_loop():
                     new_image_url = await process_image(raw_image_url, source_id=source_id)
                     if new_image_url and new_image_url != raw_image_url:
                         log.info("Worker: Image uploaded to Supabase for pid=%d", pid)
-                    else:
-                        log.warning("Worker: Falling back to original URL for pid=%d", pid)
                 except Exception as e:
                     log.error("Worker: Image pipeline failed for pid=%d: %s — using original URL", pid, e)
                     new_image_url = raw_image_url
 
                 # c. Persist everything in one DB update
                 updates = {
-                    "caption":         res.get("caption") or p.get("caption") or "",
-                    "hashtags_json":   json.dumps(res.get("hashtags") or p.get("hashtags") or []),
-                    "product_name":    res.get("product_name") or p.get("product_name", ""),
-                    "audience":        res.get("audience") or "",
-                    "stage":           ProductStage.ENRICHED.value,
-                    # scoring fields — allowlist gate opened in database.py
-                    "score":           float(res.get("composite_score") or res.get("score") or 0),
-                    "niche_fit":       float(res.get("niche_fit") or 0),
-                    "visual_appeal":   float(res.get("visual_appeal") or 0),
-                    "trend_score":     float(res.get("trend_score") or 0),
-                    "composite_score": float(res.get("composite_score") or 0),
-                    "verdict":         res.get("verdict") or "",
-                    "product_tier":    res.get("product_tier") or "",
-                    "confidence":      float(res.get("confidence") or 0),
-                    "viral_angle":     res.get("viral_angle") or "",
-                    "emotional_hook":  res.get("emotional_hook") or "",
+                    **dim_updates,
+                    "caption":           res.get("caption") or p.get("caption") or "",
+                    "hashtags_json":     json.dumps(res.get("hashtags") or p.get("hashtags") or []),
+                    "product_name":      res.get("product_name") or p.get("product_name") or "",
+                    "audience":          res.get("audience") or "",
+                    "has_chinese_text":  1 if res.get("has_chinese_text") else 0,
+                    "chinese_text_note": str(res.get("chinese_text_note") or ""),
+                    "stage":             ProductStage.ENRICHED.value,
                 }
 
                 if new_image_url and images:
@@ -173,7 +201,16 @@ async def run_worker_loop():
                         log.warning("Worker: Failed to update images array for pid=%d: %s", pid, e)
 
                 await db.update_product_fields(pid, updates)
+                ai_pass.append({**p, **dim_updates})
                 log.info("Worker: pid=%d → ENRICHED.", pid)
+
+            # ── Scans page breakdown (grouped by originating job) ─────────────
+            for stage_name, items in (("ai_pass", ai_pass), ("ai_reject", ai_reject)):
+                by_job: dict = {}
+                for it in items:
+                    by_job.setdefault(it.get("job_id") or 0, []).append(it)
+                for job_id, its in by_job.items():
+                    await db.record_pipeline_stage(job_id, its, stage_name)
 
             # ── Observability: log batch metadata for injection comparison ─────
             # Fire-and-forget — a write failure must never block the worker loop.
@@ -188,8 +225,8 @@ async def run_worker_loop():
                     "snippet_length":   len(context_snippet) if context_snippet else 0,
                     "skip_reason":      skip_reason,
                     "batch_size":       len(products),
-                    "accepted_count":   sum(1 for r in batch_results if r.get("store_match")),
-                    "rejected_count":   sum(1 for r in batch_results if not r.get("store_match")),
+                    "accepted_count":   len(ai_pass),
+                    "rejected_count":   len(ai_reject),
                     "avg_score":        round(sum(scores) / len(scores), 2) if scores else None,
                 })
             except Exception as exc:
@@ -212,7 +249,8 @@ async def run_worker_loop():
 
 async def process_queued_items():
     """
-    Continuously publishes QUEUED products to Instagram.
+    Continuously publishes QUEUED products to Instagram using the same
+    settings-driven Graph API client the manual "Post" button uses.
     Polls every 60 s when idle, 5 s when actively draining the queue.
     """
     log.info("Started queued items publisher loop.")
@@ -225,28 +263,26 @@ async def process_queued_items():
                 sort="created",
             )
 
-            for p in products:
-                pid = p["id"]
-
-                images = p.get("images") or []
-                image_url = images[0] if images else p.get("image_url", "")
-
-                caption = p.get("caption", "")
-                hashtags = p.get("hashtags") or []
-                if hashtags:
-                    caption += "\n\n" + " ".join(hashtags)
-
-                log.info("Publisher: Publishing pid=%d...", pid)
-                try:
-                    ig_url = await publish_to_instagram(image_url, caption)
-                    await db.update_product_fields(pid, {
-                        "stage": ProductStage.LIVE.value,
-                        "instagram_url": ig_url,
-                        "posted_at": datetime.now(timezone.utc).isoformat()
-                    })
-                    log.info("Publisher: pid=%d → LIVE (URL: %s).", pid, ig_url)
-                except Exception as e:
-                    log.error("Publisher: Failed to publish pid=%d: %s", pid, e)
+            if products:
+                settings = merge_env_with_settings(await db.get_settings())
+                results = await instagram.post_batch(products, settings)
+                for p in products:
+                    pid = p["id"]
+                    res = next((r for r in results if r.product_id == pid), None)
+                    if res and res.status in ("posted", "mock"):
+                        await db.update_product_fields(pid, {
+                            "stage": ProductStage.LIVE.value,
+                            "instagram_url": res.post_url or "",
+                            "posted_at": datetime.now(timezone.utc).isoformat(),
+                        })
+                        await db.log_post(pid)
+                        log.info("Publisher: pid=%d → LIVE (%s).", pid, res.post_url)
+                    else:
+                        err = (res.error if res else None) or "unknown error"
+                        # Put it back in Approved so it is not retried in a tight loop
+                        await db.set_stage(pid, ProductStage.REVIEWED.value)
+                        await db.update_product_note(pid, f"Auto-post failed: {err}")
+                        log.error("Publisher: Failed to publish pid=%d: %s", pid, err)
 
             await asyncio.sleep(60 if not products else 5)
 

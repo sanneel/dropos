@@ -2,13 +2,14 @@
 
 # DropOS — Start Script
 # Usage: ./start.sh
+# Loads .env (if present), starts the backend on :8000 and opens the backoffice.
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$SCRIPT_DIR/backend"
-FRONTEND="$SCRIPT_DIR/frontend/index.html"
 PID_FILE="$SCRIPT_DIR/.backend.pid"
+URL="http://localhost:8000"
 
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
@@ -18,7 +19,7 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 # Resolve python command — try py launcher (Windows), then python3, then python
-_py_ok() { "$1" -c "import sys; sys.exit(0 if sys.version_info >= (3,8) else 1)" 2>/dev/null; }
+_py_ok() { "$1" -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" 2>/dev/null; }
 if command -v py &>/dev/null && _py_ok py; then
   PY=py
 elif command -v python3 &>/dev/null && _py_ok python3; then
@@ -26,12 +27,11 @@ elif command -v python3 &>/dev/null && _py_ok python3; then
 elif command -v python &>/dev/null && _py_ok python; then
   PY=python
 else
-  # Last resort: check common Windows install path directly
   _WIN_PY="$(ls /c/Users/*/AppData/Local/Programs/Python/Python3*/python.exe 2>/dev/null | head -1)"
   if [ -n "$_WIN_PY" ] && _py_ok "$_WIN_PY"; then
     PY="$_WIN_PY"
   else
-    echo -e "${RED}Python 3.8+ not found. Install from python.org${NC}"; exit 1
+    echo -e "${RED}Python 3.10+ not found. Install from python.org${NC}"; exit 1
   fi
 fi
 
@@ -39,6 +39,22 @@ echo ""
 echo -e "${BOLD}  DropOS Backoffice${NC}"
 echo -e "  ${CYAN}-------------------------------${NC}"
 echo -e "  ${CYAN}Python: $($PY --version)${NC}"
+
+# Load .env without shell expansion (bcrypt hashes contain '$')
+if [ -f "$SCRIPT_DIR/.env" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|\#*) continue;; esac
+    key="${line%%=*}"; val="${line#*=}"
+    export "$key=$val"
+  done < "$SCRIPT_DIR/.env"
+  echo -e "  ${CYAN}Loaded .env${NC}"
+else
+  echo -e "  ${YELLOW}No .env found — copy .env.example to .env first${NC}"
+fi
+
+if [ -z "$DATABASE_URL" ]; then
+  echo -e "  ${RED}DATABASE_URL is not set. Add it to .env${NC}"; exit 1
+fi
 
 # Kill any existing backend
 if [ -f "$PID_FILE" ]; then
@@ -52,7 +68,7 @@ fi
 
 echo -e "  ${CYAN}Checking dependencies...${NC}"
 cd "$BACKEND_DIR"
-if ! $PY -c "import fastapi,uvicorn,aiosqlite,httpx,apscheduler" 2>/dev/null; then
+if ! $PY -c "import fastapi,uvicorn,asyncpg,httpx,apscheduler,bcrypt,jwt,slowapi" 2>/dev/null; then
   echo -e "  ${YELLOW}Installing dependencies...${NC}"
   $PY -m pip install -r requirements.txt -q
 fi
@@ -61,29 +77,28 @@ echo -e "  ${CYAN}Starting backend on port 8000...${NC}"
 nohup $PY -m uvicorn main:app --host 0.0.0.0 --port 8000 > "$SCRIPT_DIR/backend.log" 2>&1 &
 BACKEND_PID=$!; echo $BACKEND_PID > "$PID_FILE"
 
-# Wait for backend to be ready (up to 10s)
-for i in {1..20}; do
-  curl -s http://localhost:8000/api/stats >/dev/null 2>&1 && break
+# Wait for backend to be ready (up to 20s)
+for i in {1..40}; do
+  curl -s "$URL/health" >/dev/null 2>&1 && break
   sleep 0.5
 done
 
-if ! curl -s http://localhost:8000/api/stats >/dev/null 2>&1; then
+if ! curl -s "$URL/health" >/dev/null 2>&1; then
   echo -e "  ${RED}Backend failed to start. Check backend.log for errors.${NC}"
-  cat "$SCRIPT_DIR/backend.log"
+  tail -n 40 "$SCRIPT_DIR/backend.log"
   exit 1
 fi
 
 echo -e "  ${GREEN}DropOS is running!${NC}"
-echo -e "  Dashboard: file://$FRONTEND"
-echo -e "  API:       http://localhost:8000"
+echo -e "  Dashboard: $URL"
 echo -e "  Logs:      tail -f $SCRIPT_DIR/backend.log"
 echo -e "  Stop:      ./stop.sh"
 echo ""
 
-if [[ "$OSTYPE" == "darwin"* ]]; then open "$FRONTEND"
-elif [[ "$OSTYPE" == "linux"* ]]; then xdg-open "$FRONTEND" 2>/dev/null
+if [[ "$OSTYPE" == "darwin"* ]]; then open "$URL"
+elif [[ "$OSTYPE" == "linux"* ]]; then xdg-open "$URL" 2>/dev/null
 elif [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "cygwin"* ]] || [[ "$OSTYPE" == "win"* ]]; then
-  start "$FRONTEND"
+  start "$URL"
 fi
 
 tail -f "$SCRIPT_DIR/backend.log"

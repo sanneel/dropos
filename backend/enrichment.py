@@ -16,6 +16,7 @@ import json
 import logging
 import random
 import re
+import time
 from typing import Optional
 
 import httpx
@@ -26,7 +27,30 @@ from collage import create_collage
 log = logging.getLogger(__name__)
 
 _AI_SEMAPHORE: Optional[asyncio.Semaphore] = None
-_GEMINI_QUOTA_EXHAUSTED = False
+# When Gemini returns 429 we back off for a while instead of giving up for the
+# whole process lifetime (the old behaviour silently downgraded every later
+# batch to text-only Groq or the mock scorer until a redeploy).
+_GEMINI_COOLDOWN_SECONDS = 600
+_GEMINI_RETRY_AFTER: float = 0.0
+
+
+def gemini_available(settings: dict) -> bool:
+    """True when a Gemini key is configured and we are not in a 429 cooldown."""
+    if not get_config("GEMINI_KEY", settings.get("gemini_key", "")):
+        return False
+    return time.time() >= _GEMINI_RETRY_AFTER
+
+
+def _gemini_backoff(reason: str) -> None:
+    global _GEMINI_RETRY_AFTER
+    _GEMINI_RETRY_AFTER = time.time() + _GEMINI_COOLDOWN_SECONDS
+    log.warning("Gemini %s — pausing Gemini calls for %ds", reason, _GEMINI_COOLDOWN_SECONDS)
+
+
+def ai_configured(settings: dict) -> bool:
+    """True when at least one real AI provider key exists (Gemini or Groq)."""
+    return bool(get_config("GEMINI_KEY", settings.get("gemini_key", ""))
+                or get_config("GROQ_KEY", settings.get("groq_key", "")))
 
 
 def _get_semaphore() -> asyncio.Semaphore:
@@ -38,9 +62,16 @@ def _get_semaphore() -> asyncio.Semaphore:
 
 # ── Prompts ────────────────────────────────────────────────────────────────────
 
-_GEMINI_SYSTEM = """
-You are a product curator for Tskvili, a romantic gift store for Gen-Z couples in Georgia (ages 16–26). Products are bought by one person for their partner. Price range is ₾40–₾119.
-The single most important question: would a 20-year-old girl see this on TikTok and immediately send it to her boyfriend saying "omg we need this"? If yes → approve. If it needs explaining why it's romantic → reject.
+_DEFAULT_STORE_NAME   = "Tskvili"
+_DEFAULT_AUDIENCE     = "Gen-Z couples in Georgia (ages 16–26); products are bought by one person for their partner"
+_DEFAULT_PRICE_MIN    = 40
+_DEFAULT_PRICE_MAX    = 119
+_DEFAULT_EXAMPLES     = ("matching jewelry sets, projection necklaces, long-distance touch lamps, "
+                         "open-when letter kits, star projectors, romantic neon signs, coquette accessories")
+
+_GEMINI_SYSTEM_TEMPLATE = """
+You are a product curator for {store_name}, a romantic gift store. Audience: {audience}. Price range is ₾{price_min}–₾{price_max}.
+{niche_line}The single most important question: would a 20-year-old girl see this on TikTok and immediately send it to her boyfriend saying "omg we need this"? If yes → approve. If it needs explaining why it's romantic → reject.
 APPROVE products that are:
 - Cute, aesthetic, or emotionally triggering with a clear romantic angle
 - Matching jewelry sets (necklaces, bracelets, rings) — any material, not just silver
@@ -53,20 +84,21 @@ APPROVE products that are:
 - Coquette aesthetic accessories (bows, pearls, heart charms)
 - Anything that looks good in a TikTok or Instagram Reels post
 - Clean or moody product photography — both dark romance and soft pastel work
+Examples of products that sell well here: {examples}.
 REJECT products that are:
-- Over ₾119 sell price
+- Over ₾{price_max} sell price
 - Generic gift boxes with no clear hero product
 - Wedding/engagement rings (too serious, wrong demographic)
 - Gold rings that look like wedding bands
 - His/hers mugs, matching hoodies, basic text items — oversaturated
 - Children's toys with no romantic angle
 - Industrial, home appliance, kitchen, office products
-- Images with Chinese supplier watermarks, factory logos, or certificate badges
 - Anything where you have to stretch to explain the romantic connection
+CHINESE TEXT / WATERMARKS: if the product itself is good but the photo has Chinese text, a supplier watermark, factory logo or certificate badge, do NOT reject it — score it normally and set has_chinese_text=true with a short chinese_text_note describing where the text is. The image will be cleaned before posting.
 SCORING:
 cute_appeal (0–10) × 0.30 — Is this instantly cute or beautiful? Would someone screenshot it?
 romantic_trigger (0–10) × 0.25 — Does it create a "thinking of you" or "we need this" feeling?
-visual_score (0–10) × 0.20 — Can this image be posted to Instagram right now as-is?
+visual_score (0–10) × 0.20 — Can this image be posted to Instagram right now as-is (ignoring removable text)?
 trend_fit (0–10) × 0.15 — Does this feel current — TikTok, coquette, soft girl, dark romance, or viral?
 giftability (0–10) × 0.10 — Is this clearly something you'd buy for a romantic partner?
 composite = (cute_appeal×0.30) + (romantic_trigger×0.25) + (visual_score×0.20) + (trend_fit×0.15) + (giftability×0.10)
@@ -76,7 +108,7 @@ strong_candidate: composite ≥ 7.0
 pending_review:   composite ≥ 6.0
 auto_reject:      composite < 6.0 OR any hard reject triggered
 Return ONLY valid JSON:
-{
+{{
   "cute_appeal": int,
   "romantic_trigger": int,
   "visual_score": int,
@@ -88,9 +120,41 @@ Return ONLY valid JSON:
   "rejection_reason": "string or null",
   "viral_angle": "one sentence or null",
   "emotional_hook": "one sentence or null",
+  "has_chinese_text": true|false,
+  "chinese_text_note": "string or null",
+  "product_name": "Georgian 3-5 words if verdict is not auto_reject else empty string",
+  "caption": "Georgian 2-3 sentences for Instagram if verdict is not auto_reject else empty string",
+  "hashtags": ["up to 12 hashtags without # sign"],
   "confidence": float
-}
+}}
 """
+
+
+def _num(value, fallback):
+    try:
+        f = float(value)
+        return int(f) if f.is_integer() else f
+    except (TypeError, ValueError):
+        return fallback
+
+
+def build_gemini_system(settings: dict | None = None) -> str:
+    """Render the curator prompt from store settings (falls back to Tskvili defaults)."""
+    settings = settings or {}
+    niche = str(settings.get("niche") or "").strip()
+    niche_line = f"Store focus: {niche}.\n" if niche else ""
+    return _GEMINI_SYSTEM_TEMPLATE.format(
+        store_name=str(settings.get("store_name") or _DEFAULT_STORE_NAME).strip() or _DEFAULT_STORE_NAME,
+        audience=str(settings.get("target_audience") or _DEFAULT_AUDIENCE).strip() or _DEFAULT_AUDIENCE,
+        price_min=_num(settings.get("sell_price_min"), _DEFAULT_PRICE_MIN),
+        price_max=_num(settings.get("sell_price_max"), _DEFAULT_PRICE_MAX),
+        examples=str(settings.get("example_products") or _DEFAULT_EXAMPLES).strip() or _DEFAULT_EXAMPLES,
+        niche_line=niche_line,
+    ).strip()
+
+
+# Kept for backwards compatibility with callers/tests that import the constant.
+_GEMINI_SYSTEM = build_gemini_system({})
 
 _GROQ_SYSTEM = """
 You are an elite product curator for CUTE COUPLE GIFTS — a premium Gen-Z and Millennial couple gift brand on Instagram. You should reject the majority of what you see.
@@ -181,20 +245,18 @@ def _clean_name(product: dict) -> str:
     return " ".join(title.split()[:5])
 
 
-def _build_system_text(context_snippet: str | None) -> str:
+def _build_system_text(context_snippet: str | None, settings: dict | None = None) -> str:
     """
-    Return the system prompt text for a Gemini call.
+    Return the system prompt text for a Gemini call, rendered from settings.
 
-    When context_snippet is None (flag OFF or no data): returns the base prompt
-    unchanged — behavior is identical to the pre-Phase-2 baseline.
-
-    When context_snippet is a non-empty string (flag ON, enough history):
-    appends it as a clearly delimited addendum.  The base curation rules and
-    scoring weights are never modified.
+    When context_snippet is a non-empty string (decision-memory flag ON with
+    enough history) it is appended as a clearly delimited addendum.  The base
+    curation rules and scoring weights are never modified.
     """
+    base = build_gemini_system(settings)
     if not context_snippet:
-        return _GEMINI_SYSTEM
-    return f"{_GEMINI_SYSTEM}\n{context_snippet}"
+        return base
+    return f"{base}\n{context_snippet}"
 
 
 # ── Shared normalization ───────────────────────────────────────────────────────
@@ -355,29 +417,22 @@ def _normalize_enrichment(result: dict, product: dict, provider: str) -> dict:
 # ── Mock enrichment ────────────────────────────────────────────────────────────
 
 def mock_enrich(product: dict) -> dict:
-    raw_score    = product.get("raw_score", 50)
-    margin       = float(product.get("margin_pct", 0))
+    """
+    Rule-based stand-in used when no AI provider is available.
+
+    It is deliberately *not* a judge: it derives a flat score from the raw rule
+    score + margin and always returns verdict=pending_review / store_match=True
+    so the product lands in the human review queue instead of being rejected by
+    a coin flip.  ai_provider="mock" lets the worker tell the two cases apart.
+    """
+    raw_score    = float(product.get("raw_score", 50) or 50)
+    margin       = float(product.get("margin_pct", 0) or 0)
     margin_bonus = min(15, max(0, (margin - 60) / 4))
     adjusted     = min(100, raw_score + margin_bonus)
-    base         = adjusted / 10
+    base         = round(max(1.0, min(10.0, adjusted / 10)), 1)
 
-    couple    = round(min(10.0, max(1.0, base * random.uniform(0.80, 1.05))), 1)
-    emotional = round(min(10.0, base * random.uniform(0.85, 1.05)), 1)
-    visual    = round(min(10.0, base * random.uniform(0.75, 1.10)), 1)
-    trend     = round(min(10.0, base * random.uniform(0.75, 1.10)), 1)
-    demo      = round(min(10.0, base * random.uniform(0.80, 1.05)), 1)
+    couple = emotional = visual = trend = demo = base
     composite = round(couple*0.30 + emotional*0.25 + visual*0.20 + trend*0.15 + demo*0.10, 1)
-
-    if composite >= 8.0 and emotional >= 8:
-        verdict = "top_priority"
-    elif composite >= 7.0 and emotional >= 6:
-        verdict = "strong_candidate"
-    elif composite >= 6.0:
-        verdict = "pending_review"
-    else:
-        verdict = "auto_reject"
-
-    store_match = verdict in ("top_priority", "strong_candidate")
 
     return {
         "couple_angle":      couple,
@@ -385,7 +440,7 @@ def mock_enrich(product: dict) -> dict:
         "visual_score":      visual,
         "trend_alignment":   trend,
         "demographic_fit":   demo,
-        "product_tier":      "core_couple" if store_match else "auto_reject",
+        "product_tier":      "unscored",
         "composite_score":   composite,
         "score":             composite,
         "scores": {
@@ -395,19 +450,19 @@ def mock_enrich(product: dict) -> dict:
             "trend_alignment":   trend,
             "demographic_fit":   demo,
         },
-        "confidence":        0.60,
-        "verdict":           verdict,
-        "store_match":       store_match,
+        "confidence":        0.0,
+        "verdict":           "pending_review",
+        "store_match":       True,
         "viral_angle":       "",
         "emotional_hook":    "",
         "content_hooks":     [],
-        "product_name":      _clean_name(product) if store_match else "",
-        "caption":           random.choice(_CAPTION_TEMPLATES) if store_match else "",
+        "product_name":      _clean_name(product),
+        "caption":           random.choice(_CAPTION_TEMPLATES),
         "hashtags":          _get_tags(product),
         "audience":          infer_audience(product),
         "has_chinese_text":  False,
         "chinese_text_note": "",
-        "rejection_reason":  "" if store_match else "Score below threshold",
+        "rejection_reason":  "",
         "ai_provider":       "mock",
         "niche_fit":         emotional,
         "visual_appeal":     visual,
@@ -462,11 +517,8 @@ async def _fetch_image_b64(url: str) -> Optional[tuple]:
 
 
 async def gemini_enrich(product: dict, settings: dict, context_snippet: str | None = None) -> Optional[dict]:
-    global _GEMINI_QUOTA_EXHAUSTED
     api_key = get_config("GEMINI_KEY", settings.get("gemini_key", ""))
-    if not api_key:
-        return None
-    if _GEMINI_QUOTA_EXHAUSTED:
+    if not api_key or not gemini_available(settings):
         return None
 
     model = _gemini_model(settings)
@@ -494,11 +546,11 @@ async def gemini_enrich(product: dict, settings: dict, context_snippet: str | No
         log.debug("Gemini: text-only (no image available) for '%s'", title[:40])
 
     payload = {
-        "system_instruction": {"parts": [{"text": _build_system_text(context_snippet)}]},
+        "system_instruction": {"parts": [{"text": _build_system_text(context_snippet, settings)}]},
         "contents": [{"parts": parts}],
         "generationConfig": {
             "response_mime_type": "application/json",
-            "max_output_tokens": 600,
+            "max_output_tokens": 900,
             "temperature": 0.4,
         },
     }
@@ -514,10 +566,9 @@ async def gemini_enrich(product: dict, settings: dict, context_snippet: str | No
                     json=payload,
                 )
 
-            # Hard quota exhaustion — stop trying Gemini for this session
+            # Quota / rate limit — back off for a while, fall back to Groq meanwhile
             if resp.status_code == 429:
-                _GEMINI_QUOTA_EXHAUSTED = True
-                log.warning("Gemini 429 quota exhausted — falling back to Groq (text-only)")
+                _gemini_backoff("429 rate limit / quota")
                 return None
 
             # Transient server error: wait then retry
@@ -681,70 +732,78 @@ async def ai_enrich(product: dict, settings: dict, context_snippet: str | None =
         # 3. Mock — last resort, always available
         return mock_enrich(product)
 
+async def _enrich_individually(products: list[dict], settings: dict, context_snippet: str | None) -> list[dict]:
+    """Per-product fallback: Gemini (if available) → Groq → mock."""
+    return [await ai_enrich(p, settings, context_snippet) for p in products]
+
+
 async def ai_enrich_batch(products: list[dict], settings: dict, context_snippet: str | None = None) -> list[dict]:
     """
     Groups products into a collage and sends to Gemini for batch scoring.
     Saves 80%+ on Vision tokens.
 
-    context_snippet is injected into the Gemini system prompt when the
-    ai_context_injection feature flag is ON and enough decision history exists.
-    Pass None (the default) to preserve the pre-Phase-2 baseline behavior.
+    Fallback chain when the batch call cannot be made or fails:
+      Gemini (per product) → Groq text-only (per product) → mock (review queue).
+    Every result carries ai_provider so the worker knows how much to trust it.
     """
     if not products:
         return []
 
+    if not gemini_available(settings):
+        # No Gemini key or cooling down after a 429 — go straight to per-product chain
+        return await _enrich_individually(products, settings, context_snippet)
     api_key = get_config("GEMINI_KEY", settings.get("gemini_key", ""))
-    if not api_key:
-        # Fallback to individual mock scoring if no key
-        return [mock_enrich(p) for p in products]
 
     # 1. Create collage
     image_urls = [(p.get("images") or [""])[0] for p in products]
     collage_bytes = await create_collage(image_urls)
-    
+
     if not collage_bytes:
-        log.warning("Failed to create collage for batch, falling back to mock")
-        return [mock_enrich(p) for p in products]
+        log.warning("Failed to create collage for batch — scoring products individually")
+        return await _enrich_individually(products, settings, context_snippet)
 
     # 2. Prepare Gemini Payload
     model = _gemini_model(settings)
     b64_collage = base64.b64encode(collage_bytes).decode()
-    
+
     products_text = "\n".join([
         f"Product {i + 1}: {(p.get('title_translated') or p.get('title') or '')[:80]} "
-        f"(sell price: {p.get('sell_price_eur', '?')}, orders: {p.get('orders', 0)})"
+        f"(sell price: ₾{p.get('sell_price_eur', '?')}, orders: {p.get('orders', 0)}, keyword: {p.get('keyword', '')})"
         for i, p in enumerate(products)
     ])
 
     batch_system = (
-        _build_system_text(context_snippet)
+        _build_system_text(context_snippet, settings)
         + """
 
 BATCH MODE:
-You are evaluating multiple products from one collage. Return exactly one JSON
-object with a "results" array. The array must contain one object for each listed
-product, in the same order, using product_index values 1 through N.
+You are evaluating multiple products from one collage (numbered left-to-right,
+top-to-bottom). Return exactly one JSON object with a "results" array. The array
+must contain one object for each listed product, in the same order, using
+product_index values 1 through N. Each object uses exactly the same fields as the
+single-product schema above, plus "product_index".
 
 Required shape:
 {
   "results": [
     {
       "product_index": 1,
-      "couple_angle": 0-10,
-      "emotional_trigger": 0-10,
+      "cute_appeal": 0-10,
+      "romantic_trigger": 0-10,
       "visual_score": 0-10,
-      "trend_alignment": 0-10,
-      "demographic_fit": 0-10,
+      "trend_fit": 0-10,
+      "giftability": 0-10,
       "composite": 0-10,
       "verdict": "top_priority|strong_candidate|pending_review|auto_reject",
-      "product_tier": "core_couple|viral_adjacent|sentimental|lifestyle|auto_reject",
+      "product_tier": "cute_romantic|matching_jewelry|emotional_gift|aesthetic_decor|auto_reject",
       "confidence": 0.0-1.0,
-      "store_match": true|false,
       "viral_angle": "one sentence or null",
       "emotional_hook": "one sentence or null",
       "rejection_reason": "string or null",
-      "product_name": "Georgian 3-5 words if store_match=true else empty string",
-      "caption": "Georgian 2-3 sentences if store_match=true else empty string",
+      "has_chinese_text": true|false,
+      "chinese_text_note": "string or null",
+      "product_name": "Georgian 3-5 words if verdict is not auto_reject else empty string",
+      "caption": "Georgian 2-3 sentences if verdict is not auto_reject else empty string",
       "hashtags": []
     }
   ]
@@ -764,58 +823,74 @@ Do not return a single product object. Do not omit product_index.
         }],
         "generationConfig": {
             "response_mime_type": "application/json",
-            "max_output_tokens": 2500,
+            "max_output_tokens": 4000,
             "temperature": 0.3,
         },
     }
 
-    try:
-        async with httpx.AsyncClient(timeout=45) as client:
-            resp = await client.post(
-                _GEMINI_URL.format(model=model),
-                headers={"x-goog-api-key": api_key, "content-type": "application/json"},
-                json=payload,
-            )
-        
-        if resp.status_code != 200:
-            log.warning(f"Batch Gemini error {resp.status_code}: {resp.text[:200]}")
-            return [mock_enrich(p) for p in products]
-
-        data = resp.json()
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
-        text = re.sub(r"```json|```", "", text).strip()
-        parsed = json.loads(text)
-        results_list = parsed.get("results")
-        if not isinstance(results_list, list):
-            if len(products) == 1 and isinstance(parsed, dict):
-                results_list = [{**parsed, "product_index": 1}]
-            else:
-                log.warning(
-                    "Batch Gemini returned unexpected JSON shape; falling back to individual enrichment. Keys: %s",
-                    list(parsed.keys()) if isinstance(parsed, dict) else type(parsed).__name__,
+    _RETRYABLE = {500, 502, 503, 504}
+    parsed = None
+    for attempt in range(2):
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                resp = await client.post(
+                    _GEMINI_URL.format(model=model),
+                    headers={"x-goog-api-key": api_key, "content-type": "application/json"},
+                    json=payload,
                 )
-                return [await ai_enrich(p, settings, context_snippet) for p in products]
-
-        enriched_results = []
-        for i, p in enumerate(products):
-            res = next(
-                (
-                    r for r in results_list
-                    if isinstance(r, dict) and str(r.get("product_index")) == str(i + 1)
-                ),
-                None,
-            )
-            if res is None:
-                log.warning(
-                    "Batch Gemini omitted product_index=%d; falling back to individual enrichment for that product",
-                    i + 1,
-                )
-                enriched_results.append(await ai_enrich(p, settings, context_snippet))
+            if resp.status_code == 429:
+                _gemini_backoff("429 rate limit / quota (batch)")
+                return await _enrich_individually(products, settings, context_snippet)
+            if resp.status_code in _RETRYABLE and attempt == 0:
+                log.warning("Batch Gemini %d — retrying once", resp.status_code)
+                await asyncio.sleep(4)
                 continue
-            enriched_results.append(_normalize_enrichment(res, p, "gemini-batch"))
+            if resp.status_code != 200:
+                log.warning("Batch Gemini error %d: %s", resp.status_code, resp.text[:200])
+                return await _enrich_individually(products, settings, context_snippet)
 
-        return enriched_results
+            data = resp.json()
+            text = data["candidates"][0]["content"]["parts"][0]["text"]
+            text = re.sub(r"```json|```", "", text).strip()
+            parsed = json.loads(text)
+            break
+        except Exception as e:
+            log.error("Batch Vision AI failed (attempt %d): %s", attempt + 1, e)
+            if attempt == 0:
+                await asyncio.sleep(3)
+                continue
+            return await _enrich_individually(products, settings, context_snippet)
 
-    except Exception as e:
-        log.error(f"Batch Vision AI failed: {e}")
-        return [mock_enrich(p) for p in products]
+    if parsed is None:
+        return await _enrich_individually(products, settings, context_snippet)
+
+    results_list = parsed.get("results") if isinstance(parsed, dict) else None
+    if not isinstance(results_list, list):
+        if len(products) == 1 and isinstance(parsed, dict):
+            results_list = [{**parsed, "product_index": 1}]
+        else:
+            log.warning(
+                "Batch Gemini returned unexpected JSON shape; falling back to individual enrichment. Keys: %s",
+                list(parsed.keys()) if isinstance(parsed, dict) else type(parsed).__name__,
+            )
+            return await _enrich_individually(products, settings, context_snippet)
+
+    enriched_results = []
+    for i, p in enumerate(products):
+        res = next(
+            (
+                r for r in results_list
+                if isinstance(r, dict) and str(r.get("product_index")) == str(i + 1)
+            ),
+            None,
+        )
+        if res is None:
+            log.warning(
+                "Batch Gemini omitted product_index=%d; falling back to individual enrichment for that product",
+                i + 1,
+            )
+            enriched_results.append(await ai_enrich(p, settings, context_snippet))
+            continue
+        enriched_results.append(_normalize_enrichment(res, p, "gemini-batch"))
+
+    return enriched_results

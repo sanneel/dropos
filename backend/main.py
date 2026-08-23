@@ -53,10 +53,12 @@ sys.path.insert(0, BASE_DIR)
 from models import ProductStage
 from config.runtime import get_config, merge_env_with_settings, sanitize_settings
 from image_editor import remove_text as clipdrop_remove_text, _convert_to_jpeg
+from collage import create_collage
 from services.images import upload_product_image
 from database import db, init_db
 from runner import process_scraped_products, run_pipeline
 from scheduler import create_scheduler, get_scheduler_status
+from posting_scheduler import create_posting_scheduler, get_posting_scheduler_status
 import instagram
 import sheets
 import ai_assistant
@@ -104,11 +106,11 @@ def _setup_app_logging():
     """Configure structured JSON logging."""
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
-    
+
     # Remove existing handlers
     for handler in logger.handlers[:]:
         logger.removeHandler(handler)
-        
+
     logHandler = logging.StreamHandler(sys.stdout)
     formatter = jsonlogger.JsonFormatter('%(asctime)s %(levelname)s %(name)s %(message)s')
     logHandler.setFormatter(formatter)
@@ -124,6 +126,7 @@ _setup_app_logging()
 
 # ── Globals & Constants ───────────────────────────────────────────────────
 _scheduler = None
+_posting_scheduler = None
 _SENSITIVE_SETTING_FIELDS = {
     "apify_token",
     "anthropic_key",
@@ -145,22 +148,22 @@ _CSSBUY_DEBUG_DIR = os.getenv("CSSBUY_DEBUG_DIR") or "/tmp/cssbuy_debug"
 # ── Lifespan ───────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _scheduler
+    global _scheduler, _posting_scheduler
     await init_db()
     interrupted = await db.mark_active_jobs_interrupted()
     if interrupted:
         log.warning("Marked %d stale active job(s) as interrupted on startup", interrupted)
-    
+
     configure_google_credentials_from_env()
-    
+
     settings = await db.get_settings()
     merged_settings = merge_env_with_settings(settings)
-    
+
     sheets.configure(
         merged_settings.get("google_sheets_credentials") or os.getenv("GOOGLE_APPLICATION_CREDENTIALS", ""),
         merged_settings.get("google_sheets_id", ""),
     )
-    
+
     if merged_settings.get("google_sheets_id"):
         asyncio.create_task(_sync_sheets_after_startup())
 
@@ -185,17 +188,32 @@ async def lifespan(app: FastAPI):
         _scheduler = create_scheduler()
         _scheduler.start()
         log.info("Scheduler started - jobs: %s", [j.get("id") for j in _scheduler.get_jobs()])
-        
+
+    # Peak-hour Instagram auto-posting (off by default; Settings → Posting schedule)
+    try:
+        _posting_scheduler = create_posting_scheduler(_settings)
+        await _posting_scheduler._dropos_init_jobs()
+        _posting_scheduler.start()
+        log.info("Posting scheduler started - jobs: %s", [j.id for j in _posting_scheduler.get_jobs()])
+    except Exception as exc:
+        log.error("Posting scheduler failed to start: %s", exc)
+        _posting_scheduler = None
+
     yield
     if _scheduler:
         _scheduler.shutdown(wait=False)
+    if _posting_scheduler:
+        try:
+            _posting_scheduler.shutdown(wait=False)
+        except Exception:
+            pass
     await db.close()
 
 # ── App Initialization ─────────────────────────────────────────────────────
 is_dev = os.getenv("RAILWAY_ENVIRONMENT_NAME") is None
 
 app = FastAPI(
-    title="DropOS", 
+    title="DropOS",
     lifespan=lifespan,
     docs_url="/docs" if is_dev else None,
     redoc_url="/redoc" if is_dev else None,
@@ -234,7 +252,7 @@ async def security_headers_middleware(request: Request, call_next):
     supabase_url = os.getenv("SUPABASE_URL", "")
     supabase_domain = urlparse(supabase_url).netloc if supabase_url else ""
     csp_img = f"img-src 'self' data: blob: https://{supabase_domain};" if supabase_domain else "img-src 'self' data: blob:;"
-    
+
     response.headers["Content-Security-Policy"] = f"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; {csp_img} connect-src 'self' https://{supabase_domain};"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     response.headers["Server"] = "webserver"
@@ -252,6 +270,7 @@ async def jwt_auth_middleware(request: Request, call_next):
     path = request.url.path
     is_public = path in ["/robots.txt", "/health", "/shop", "/api/catalog", "/api/auth/login", "/api/version", "/api/ingest/products"] or \
                 path.startswith("/api/image") or \
+                path.startswith("/api/collage-image/") or \
                 path.startswith("/api/instagram/webhook") or \
                 (path.startswith("/api/products/") and path.endswith("/cleaned-image")) or \
                 path.startswith("/static") or \
@@ -291,6 +310,7 @@ class LoginRequest(BaseModel):
     password: str
 
 @app.post("/api/auth/login")
+@limiter.limit("10/minute")
 async def login(request: Request, body: LoginRequest):
     email = body.email.strip().lower()
     if _is_locked_out(email):
@@ -339,7 +359,7 @@ async def spa_fallback(request: Request, exc: HTTPException):
 
 @app.get("/api/version")
 async def version():
-    return {"auth": "bearer", "version": "v10"}
+    return {"auth": "bearer", "version": "v11"}
 
 @app.get("/robots.txt", response_class=PlainTextResponse)
 async def robots_txt():
@@ -412,6 +432,15 @@ class PostRequest(BaseModel):
 class RejectRequest(BaseModel):
     reason: Optional[str] = None
 
+class BulkStatusRequest(BaseModel):
+    product_ids: List[int]
+    stage: str
+    reason: Optional[str] = None
+
+class CollagePostRequest(BaseModel):
+    product_ids: List[int]
+    caption: Optional[str] = None
+
 class NoteUpdate(BaseModel):
     note: str
 
@@ -429,6 +458,7 @@ class ProductUpdate(BaseModel):
     instagram_url: Optional[str] = None
 
 class SettingsUpdate(BaseModel):
+    store_name: Optional[str] = None
     niche: Optional[str] = None
     min_margin: Optional[float] = None
     min_score: Optional[float] = None
@@ -555,21 +585,33 @@ def _pipeline_summary(job: dict, stages: dict) -> dict:
     raw = stages.get("raw_fetch", [])
     ai_pass = stages.get("ai_pass", [])
     rejected = [item for stage, items in stages.items() if stage not in ("ai_pass", "raw_fetch") for item in items]
-    
+
     reason_counts: dict = {}
     for item in rejected:
         r = (item.get("filter_reason") or item.get("filter_stage") or "Filtered out").strip()
         reason_counts[r] = reason_counts.get(r, 0) + 1
-    
+
     scraped = int(job.get("scraped") or len(raw) or 0)
     pass_rate = (len(ai_pass) / scraped * 100) if scraped else 0
-    
+
+    top_reasons = sorted(reason_counts.items(), key=lambda x: x[1], reverse=True)
+    recommendations = []
+    if scraped and len(rejected) / scraped > 0.9 and top_reasons:
+        recommendations.append(f"Over 90% filtered out — most common: {top_reasons[0][0]}.")
+    if scraped and pass_rate == 0 and not ai_pass:
+        recommendations.append("Nothing reached the review queue — check the rejection reasons below.")
+    accepted_examples = sorted(ai_pass, key=lambda i: float(i.get("ai_score") or 0), reverse=True)[:5]
+
     return {
         "headline": f"{len(ai_pass)} products accepted for review from {scraped} fetched items.",
         "pass_rate": round(pass_rate, 1),
         "rejected": len(rejected),
-        "top_reasons": [{"reason": k, "count": v} for k, v in sorted(reason_counts.items(), key=lambda x: x[1], reverse=True)[:6]],
-        "recommendations": ["Filters look balanced."]
+        "top_reasons": [{"reason": k, "count": v} for k, v in top_reasons[:6]],
+        "accepted_examples": [
+            {"title": i.get("title") or i.get("product_name") or "", "composite_score": i.get("ai_score") or 0}
+            for i in accepted_examples
+        ],
+        "recommendations": recommendations,
     }
 
 async def _create_scan_job(bg: BackgroundTasks, keywords: list, max_per_keyword: int, source: str) -> int:
@@ -611,11 +653,11 @@ async def robots_txt_api():
 async def get_catalog(limit: int = 100, offset: int = 0, category: Optional[str] = None):
     """Public storefront — only returns LIVE (published) products."""
     products = await db.get_products(stage=ProductStage.LIVE.value, limit=limit, offset=offset)
-    
+
     # 1. Existing category filtering logic
     if category:
         products = [p for p in products if p.get("category") == category]
-        
+
     # 2. Prune the payload to prevent leaking backend data (cost, margin, notes)
     safe_products = []
     for p in products:
@@ -634,7 +676,7 @@ async def get_catalog(limit: int = 100, offset: int = 0, category: Optional[str]
             "instagram_url":     p.get("instagram_url") or "",
         })
 
-        
+
     return {
         "products": safe_products,
         "total": len(safe_products)
@@ -651,14 +693,21 @@ async def update_settings(body: SettingsUpdate):
         data = body.model_dump(exclude_none=True)
         _remove_blank_sensitive_values(data)
         await db.update_settings(data)
-        
+
+        # Re-plan peak-hour posting jobs if the schedule changed
+        if _posting_scheduler and any(k in data for k in ("post_times", "post_timezone")):
+            try:
+                await _posting_scheduler._dropos_init_jobs()
+            except Exception as e:
+                log.warning("Posting scheduler re-plan failed: %s", e)
+
         # Background tasks that shouldn't block the main response if they fail partially
         try:
             await _configure_sheets_from_settings()
             await _backup_settings_to_sheets()
         except Exception as e:
             log.warning("Post-save settings sync failed: %s", e)
-            
+
         return {"ok": True}
     except Exception as e:
         log.error("Failed to update settings: %s", e)
@@ -674,7 +723,7 @@ async def reset_database():
             await _backup_products_to_sheets()
         except Exception as e:
             log.warning("Could not clear Google Sheet during reset: %s", e)
-            
+
         return {"ok": True, "message": "Database and cloud backup reset successfully."}
     except Exception as e:
         log.error("Database reset failed: %s", e)
@@ -717,15 +766,30 @@ async def _is_private_ip(url_str: str) -> bool:
     except Exception:
         return True
 
+async def _fetch_public_image(src: str, timeout: int = 15) -> httpx.Response:
+    """GET an image URL, following at most 3 redirects and refusing any hop
+    that is not http(s) or resolves to a private/loopback address (SSRF guard)."""
+    url = src
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+        for _ in range(4):
+            parsed = urlparse(url)
+            if parsed.scheme not in ("http", "https"):
+                raise HTTPException(400, "Only http(s) URLs are allowed")
+            if await _is_private_ip(url):
+                raise HTTPException(403, "Access to private IP addresses is forbidden")
+            r = await client.get(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.1688.com/"})
+            if r.status_code in (301, 302, 303, 307, 308) and r.headers.get("location"):
+                url = str(r.next_request.url) if r.next_request else r.headers["location"]
+                continue
+            return r
+    raise HTTPException(502, "Too many redirects")
+
+
 @app.get("/api/image")
 async def proxy_image(url: str):
     src = unquote(url or "").strip()
-    if await _is_private_ip(src):
-        raise HTTPException(403, "Access to private IP addresses is forbidden")
-    
     try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-            r = await client.get(src, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.1688.com/"})
+        r = await _fetch_public_image(src)
         if r.status_code != 200: raise HTTPException(r.status_code, "Fetch failed")
         content_type = r.headers.get("content-type", "").split(";")[0].strip()
         if not content_type.startswith("image/"):
@@ -734,6 +798,8 @@ async def proxy_image(url: str):
         if content_type not in ("image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"):
             img_bytes, content_type = _convert_to_jpeg(img_bytes, content_type)
         return Response(content=img_bytes, media_type=content_type, headers={"Cache-Control": "public, max-age=86400"})
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(502, f"Proxy failed: {e}")
 
@@ -786,6 +852,39 @@ async def reject_all_pending():
         await _backup_products_to_sheets()
     return {"ok": True, "rejected": len(ids)}
 
+_BULK_TRANSITIONS = {
+    # target stage → stages it may come from
+    ProductStage.REVIEWED.value:     {ProductStage.ENRICHED.value, ProductStage.TEXT_REMOVAL.value, ProductStage.QUEUED.value, ProductStage.REJECTED.value},
+    ProductStage.TEXT_REMOVAL.value: {ProductStage.ENRICHED.value, ProductStage.REVIEWED.value},
+    ProductStage.QUEUED.value:       {ProductStage.REVIEWED.value},
+    ProductStage.REJECTED.value:     {ProductStage.ENRICHED.value, ProductStage.TEXT_REMOVAL.value, ProductStage.REVIEWED.value, ProductStage.QUEUED.value},
+    ProductStage.ENRICHED.value:     {ProductStage.REJECTED.value, ProductStage.REVIEWED.value, ProductStage.TEXT_REMOVAL.value},
+}
+
+@app.post("/api/products/bulk-status")
+async def bulk_status(body: BulkStatusRequest):
+    """Move up to 50 products to a stage (review hotkeys, chat actions)."""
+    target = (body.stage or "").strip().upper()
+    if target not in _BULK_TRANSITIONS:
+        raise HTTPException(400, f"Unsupported target stage '{target}'")
+    allowed_from = _BULK_TRANSITIONS[target]
+    reason = (body.reason or "").strip() or None
+    moved, skipped = [], []
+    for pid in body.product_ids[:50]:
+        p = await db.get_product(pid)
+        if not p or p.get("stage") not in allowed_from:
+            skipped.append(pid)
+            continue
+        stage = target
+        # Approving a product whose photo still has Chinese text routes it to cleanup first
+        if target == ProductStage.REVIEWED.value and p.get("stage") == ProductStage.ENRICHED.value:
+            stage = _approval_stage(p)
+        await db.set_stage(pid, stage, reason=reason if target == ProductStage.REJECTED.value else None)
+        moved.append(pid)
+    if moved:
+        await _backup_products_to_sheets()
+    return {"ok": True, "moved": moved, "skipped": skipped}
+
 @app.post("/api/products/{product_id}/post")
 async def post_product_single(product_id: int, bg: BackgroundTasks):
     p = await _get_product_or_404(product_id)
@@ -825,11 +924,11 @@ async def remove_product_text(product_id: int):
     settings = await _settings()
     key = settings.get("clipdrop_key")
     if not key: raise HTTPException(400, "Clipdrop API key missing")
-    
+
     url = (p.get("images") or [""])[0]
     cleaned = await clipdrop_remove_text(url, key)
     if not cleaned: raise HTTPException(502, "Clipdrop failed")
-    
+
     _cleaned_images[product_id] = cleaned
     with open(f"{_COLLAGE_DIR}/cleaned_{product_id}.jpg", "wb") as f: f.write(cleaned)
 
@@ -902,6 +1001,11 @@ async def ingest_products(body: IngestProductsRequest, bg: BackgroundTasks, auth
 @app.get("/api/jobs")
 async def get_jobs(limit: int = 20):
     return await db.get_jobs(limit)
+
+@app.delete("/api/jobs")
+async def delete_jobs():
+    """Clear scan history (jobs, raw snapshots, pipeline breakdown). Products are kept."""
+    return {"ok": True, "deleted": await db.clear_scan_history()}
 
 @app.get("/api/jobs/{job_id}")
 async def get_job(job_id: int):
@@ -1099,7 +1203,9 @@ async def ig_webhook_verify(hub_mode: str = Query(None, alias="hub.mode"), hub_v
 
 @app.get("/api/scheduler/status")
 async def scheduler_status():
-    return get_scheduler_status(_scheduler)
+    status = get_scheduler_status(_scheduler)
+    status["posting"] = get_posting_scheduler_status(_posting_scheduler)
+    return status
 
 @app.get("/api/instagram/reply-log")
 async def get_ig_reply_log(limit: int = 50):
@@ -1119,6 +1225,88 @@ async def ig_webhook_receive(request: Request, bg: BackgroundTasks):
     body = await request.json()
     bg.add_task(_process_ig_webhook, body)
     return {"ok": True}
+
+@app.post("/api/scheduler/trigger")
+async def trigger_scheduled_scan(bg: BackgroundTasks):
+    """Run a server-side scan now using the saved scan keywords."""
+    settings = await _settings()
+    if settings.get("local_scraping_only"):
+        raise HTTPException(409, "Server-side scraping is disabled (local scraping only). Upload from the local scraper instead.")
+    if not (settings.get("cssbuy_username") and settings.get("cssbuy_password")):
+        raise HTTPException(400, "CSSBuy username/password are not configured.")
+    keywords = settings.get("scan_keywords") or []
+    if isinstance(keywords, str):
+        keywords = [k.strip() for k in keywords.split(",") if k.strip()]
+    if not keywords:
+        raise HTTPException(400, "No scan keywords saved.")
+    source = str(settings.get("cssbuy_source") or "1688")
+    job_id = await _create_scan_job(bg, keywords, 50, source)
+    return {"job_id": job_id, "status": "started", "keywords": keywords}
+
+
+# ── Collage posting ───────────────────────────────────────────────────────────
+
+@app.post("/api/collage/post")
+async def post_collage(body: CollagePostRequest):
+    """Stitch 2–6 approved products into one grid image and post it to Instagram."""
+    ids = list(dict.fromkeys(body.product_ids))[:6]
+    if len(ids) < 2:
+        raise HTTPException(400, "Select 2–6 approved products for a collage.")
+    products = []
+    for pid in ids:
+        p = await db.get_product(pid)
+        if not p:
+            raise HTTPException(404, f"Product {pid} not found")
+        if p.get("stage") != ProductStage.REVIEWED.value:
+            raise HTTPException(400, f"Product {pid} is not approved (stage: {p.get('stage')})")
+        products.append(p)
+
+    image_urls = [(p.get("images") or [""])[0] for p in products]
+    collage_bytes = await create_collage(image_urls)
+    if not collage_bytes:
+        raise HTTPException(502, "Could not build the collage image.")
+
+    settings = await _settings()
+    name = f"collage_{int(time.time())}_{_uuid.uuid4().hex[:8]}"
+    public_url = await upload_product_image(collage_bytes, name)
+    if not public_url:
+        # Serve from this server instead (needs public_base_url for Instagram to fetch it)
+        with open(os.path.join(_COLLAGE_DIR, f"{name}.jpg"), "wb") as f:
+            f.write(collage_bytes)
+        base = str(settings.get("public_base_url") or "").rstrip("/")
+        public_url = f"{base}/api/collage-image/{name}.jpg" if base else f"/api/collage-image/{name}.jpg"
+
+    names = [p.get("product_name") or p.get("title_translated") or "" for p in products]
+    caption = (body.caption or "").strip() or "\n".join(f"• {n}" for n in names if n)
+    hashtags: list = []
+    for p in products:
+        for h in (p.get("hashtags") or []):
+            if h and h not in hashtags:
+                hashtags.append(h)
+    virtual = {"id": 0, "product_name": "collage", "caption": caption, "hashtags": hashtags[:20], "images": [public_url]}
+    result = await instagram.post_product(virtual, settings)
+    if result.status == "error":
+        raise HTTPException(502, f"Instagram: {result.error}")
+
+    for p in products:
+        await db.set_stage(p["id"], ProductStage.LIVE.value)
+        await db.log_post(p["id"])
+        if result.post_url:
+            await db.update_product_fields(p["id"], {"instagram_url": result.post_url})
+    await _backup_products_to_sheets()
+    return {"ok": True, "status": result.status, "post_url": result.post_url, "image_url": public_url, "posted": [p["id"] for p in products]}
+
+
+@app.get("/api/collage-image/{name}")
+async def serve_collage_image(name: str):
+    safe = os.path.basename(name)
+    if not safe.startswith("collage_") or not safe.endswith(".jpg"):
+        raise HTTPException(404, "Not found")
+    path = os.path.join(_COLLAGE_DIR, safe)
+    if not os.path.exists(path):
+        raise HTTPException(404, "Not found")
+    return FileResponse(path, media_type="image/jpeg")
+
 
 # ── Sheets ───────────────────────────────────────────────────────────────────
 
@@ -1175,7 +1363,7 @@ async def _post_and_export(products: list) -> None:
                     p["instagram_url"] = res.post_url  # Update local object for sheets export
                     await db.update_product_fields(p["id"], {"instagram_url": res.post_url})
                     log.info("Saved Instagram URL for product %s: %s", p["id"], res.post_url)
-        
+
         await asyncio.to_thread(sheets.append_rows, products)
         await _backup_products_to_sheets()
     except Exception as e:

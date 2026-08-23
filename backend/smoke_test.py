@@ -79,8 +79,8 @@ async def run_smoke_test():
     log.info(f"Runner Summary: {summary}")
     
     # 4. Verify DB State (Dead Letter Log)
-    rejected = await db._db.fetch("SELECT rejection_reason FROM products WHERE job_id = $1 AND stage = 'REJECTED'", job_id)
-    scraped = await db._db.fetch("SELECT source_id, cost_eur, sell_price_eur FROM products WHERE job_id = $1 AND stage = 'SCRAPED'", job_id)
+    rejected = await db.fetch("SELECT rejection_reason FROM products WHERE job_id = $1 AND stage = 'REJECTED'", job_id)
+    scraped = await db.fetch("SELECT source_id, cost_eur, sell_price_eur FROM products WHERE job_id = $1 AND stage = 'SCRAPED'", job_id)
     
     log.info(f"Found {len(rejected)} REJECTED items in DB.")
     for r in rejected:
