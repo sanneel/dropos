@@ -17,6 +17,7 @@ async function renderReview(tab) {
     : `<button class="btn btn-sm" onclick="renderReview('${tab}')" title="Refresh">↻</button>`);
   const el = document.getElementById('content');
   el.innerHTML = tabBar('review') + `<div id="review-body">${loadingState()}</div>`;
+  await loadBrandsCache();
   if (tab === 'textEdit') return loadTextEdit();
   if (tab === 'rejected') return renderRejected();
   return loadQueue();
@@ -26,7 +27,8 @@ async function renderReview(tab) {
 async function loadQueue(append = false) {
   const offset = append ? queueProducts.length : 0;
   if (!append) queueProducts = [];
-  const data = await api(`/products?stage=ENRICHED&limit=60&offset=${offset}&sort=${queueSort}`).catch(() => ({ products: [], total: 0 }));
+  const bq = brandFilter ? `&brand_id=${brandFilter}` : '';
+  const data = await api(`/products?stage=ENRICHED&limit=60&offset=${offset}&sort=${queueSort}${bq}`).catch(() => ({ products: [], total: 0 }));
   queueProducts = append ? queueProducts.concat(data.products) : data.products;
   queueTotal = data.total;
   renderQueueGrid();
@@ -59,6 +61,7 @@ function renderQueueGrid() {
       <div class="toolbar-l">
         <span class="toolbar-count"><b>${queueTotal}</b> waiting</span>
         ${chip('all', 'All', 0)}${chip('top_priority', 'Top picks', counts.top_priority)}${chip('strong_candidate', 'Strong', counts.strong_candidate)}${chip('pending_review', 'Needs a look', counts.pending_review)}${chip('unscored', 'Unscored', counts.unscored)}
+        ${brandFilterChips('loadQueue()')}
       </div>
       <div class="toolbar-r">
         <button class="btn btn-sm" onclick="selectAll()">Select visible</button>

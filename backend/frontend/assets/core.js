@@ -69,6 +69,7 @@ const IC = {
   review:    _svg('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m8 12 3 3 5-6"/>'),
   posts:     _svg('<path d="M22 2 11 13"/><path d="m22 2-7 20-4-9-9-4 20-7z"/>'),
   inbox:     _svg('<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.7 4H7.3a2 2 0 0 0-1.8 1.1z"/>'),
+  brands:    _svg('<path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/>'),
   scans:     _svg('<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>'),
   analytics: _svg('<path d="M18 20V10M12 20V4M6 20v-6"/>'),
   assistant: _svg('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'),
@@ -110,6 +111,21 @@ let rejectTargetId = null;
 let catalogProducts = [], catalogTotal = 0, catalogStage = 'all', catalogSearch = '', catalogPage = 0;
 let pipelineJobs = [], pipelineJobId = null, pipelineActiveStage = null, pipelineData = null;
 let analyticsTab = 'overview';
+let brandsCache = [];          // light list for filters/selectors
+let brandFilter = null;        // product-list filter (null = all brands)
+let scanBrandId = null;        // brand the New scan form targets
+
+async function loadBrandsCache(force = false) {
+  if (brandsCache.length && !force) return brandsCache;
+  try { brandsCache = (await api('/brands')).brands || []; } catch(e) { brandsCache = []; }
+  return brandsCache;
+}
+function brandName(id) { return brandsCache.find(b => b.id === id)?.name || `#${id}`; }
+function brandFilterChips(onchange) {
+  if (brandsCache.length < 2) return '';
+  const chip = (id, label) => `<button class="fchip ${brandFilter === id ? 'active' : ''}" onclick="brandFilter=${id === null ? 'null' : id};${onchange}">${escHtml(label)}</button>`;
+  return `<span class="muted" style="margin:0 2px">·</span>` + chip(null, 'All brands') + brandsCache.map(b => chip(b.id, b.name)).join('');
+}
 
 // ── Toast / modal ────────────────────────────────────────────────────────────
 function toast(msg, type = 'success', ms = 3200) {
@@ -185,6 +201,7 @@ const PAGES = [
   { id: 'review',    label: 'Review',    icon: 'review',    tabs: [['queue','Needs decision'],['textEdit','Text edit'],['rejected','Rejected']] },
   { id: 'posts',     label: 'Posts',     icon: 'posts',     tabs: [['queue','Queue'],['posted','Posted'],['all','All products']] },
   { id: 'inbox',     label: 'Inbox',     icon: 'inbox' },
+  { id: 'brands',    label: 'Brands',    icon: 'brands' },
   { id: 'scans',     label: 'Scans',     icon: 'scans',     tabs: [['new','New scan'],['history','History']] },
   { id: 'analytics', label: 'Analytics', icon: 'analytics', tabs: [['overview','Overview'],['margins','Margins'],['insights','Insights']] },
   { id: 'assistant', label: 'Assistant', icon: 'assistant' },

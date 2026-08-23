@@ -49,6 +49,20 @@ Copy `.env.example` to `.env` if you want to:
   usually work, Supabase always works)*
 - pin the admin login / JWT secret / API keys via env instead of the UI
 
+### Brands & the keyword lab
+
+Create a **brand** per market (couple gifts, home decor, pets…). Each brand carries its own
+AI persona — products scraped for it are scored against *that* niche — and its own keyword
+pool. Every keyword's real results are tracked (products found → AI-approved → posted) and
+combined into a performance score:
+
+```
+perf = approval_rate × 0.55 + post_rate × 0.25 + avg_AI_score/10 × 0.20   (needs ≥5 scored products)
+```
+
+Scans use ~2/3 proven winners + ~1/3 untested keywords; proven losers are skipped. When the
+untested pool runs dry (or weekly), Gemini generates new keywords from the winning patterns.
+
 ### What needs the internet to reach *you*
 
 Only two optional things: the **comment/DM auto-reply webhook** and the **image proxy**.
@@ -74,7 +88,8 @@ for what it cannot decide and for fulfilling orders:
 
 | Stage | What runs automatically | Setting |
 |-------|-------------------------|---------|
-| Find products | scans your saved keywords every *N* hours | `auto_scan_enabled`, `scan_interval_hours` |
+| Find products | rotates through your **brands**, scanning each one's best keywords every *N* hours | `auto_scan_enabled`, `scan_interval_hours` |
+| Keyword lab | AI tops up each brand's keyword pool weekly (or when untested ones run out), copying the patterns of proven winners; losers are skipped | per-brand `auto_keywords_enabled` |
 | AI scoring | Gemini vision scores every scraped product (always on) | Gemini key |
 | Auto-approve | winners above the threshold skip the review queue | `auto_approve_min_score`, `auto_approve_verdicts` |
 | Clean photos | Chinese text / watermarks removed with Clipdrop | `auto_clean_images` + Clipdrop key |
@@ -93,6 +108,7 @@ photos that could not be cleaned, possible orders, and errors.
 | **Review** | *Needs decision* (borderline products), *Text edit* (photos with Chinese text), *Rejected* — hotkeys `j` `k` `a` `r` `Enter` `Esc` |
 | **Posts** | *Queue* (approved, best first — next up marked), *Posted* (with Instagram links), *All products* (search + inline edit) |
 | **Inbox** | comments & DMs from the webhook, possible orders first, reply / mark done |
+| **Brands** | one card per market: its persona (fed into the AI curator) and its keyword pool with real per-keyword results (found / approved / posted / performance score) |
 | **Scans** | start a scan, see where every scraped product dropped out |
 | **Analytics** | overview, real margins, deterministic insights on your decisions |
 | **Assistant** | chat over the pipeline: review in bulk, find rejected gems |
@@ -116,6 +132,7 @@ backend/
   database.py           schema, migrations, queries, embedded Postgres bootstrap
   config/paths.py       data directory layout
   autopilot.py          hands-off policy (what to approve/clean/scan/post) + Home status
+  keyword_lab.py        per-brand keyword scoring, scan selection, AI generation
   activity.py           activity log writer
   frontend/             the SPA — core.js (router/shell), one file per page, styles.css
 data/                   runtime data (created on first start, git-ignored)

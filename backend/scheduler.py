@@ -50,37 +50,86 @@ class PipelineScheduler:
                         pass
 
                 await self._housekeeping(settings)
+                await self._keyword_generation(settings)
 
-                last_job = await db.last_job_time()
-                if not autopilot.scan_due(settings, last_job):
-                    continue
                 if await db.get_active_job():
                     continue
+                brand = await self._next_due_brand(settings)
+                if not brand:
+                    continue
 
-                keywords = settings.get("scan_keywords") or []
-                if isinstance(keywords, str):
-                    keywords = [k.strip() for k in keywords.split(",") if k.strip()]
+                keywords = await self._pick_keywords(brand)
                 if not keywords:
                     continue
 
                 self.scanning = True
-                await activity.record("scan_started", f"Autopilot scan started — {len(keywords)} keywords")
+                await activity.record("scan_started", f"Autopilot scan for {brand['name']} — {len(keywords)} keywords: {', '.join(keywords[:4])}{'…' if len(keywords) > 4 else ''}",
+                                      meta={"brand_id": brand["id"], "keywords": keywords})
                 try:
-                    summary = await run_pipeline(keywords=keywords, max_per_keyword=50, settings=settings)
-                    self._last_run = f"job={summary.get('job_id')} candidates={summary.get('after_score')}"
+                    await db.touch_keywords_scanned(brand["id"], keywords)
+                    summary = await run_pipeline(keywords=keywords, max_per_keyword=50, settings=settings, brand_id=brand["id"])
+                    self._last_run = f"brand={brand['name']} job={summary.get('job_id')} candidates={summary.get('after_score')}"
                     self._last_error = None
-                    await activity.record("scan_done", f"Scan finished: {summary.get('scraped', 0)} scraped, {summary.get('after_score', 0)} sent to AI scoring",
-                                          meta=summary)
+                    await activity.record("scan_done", f"{brand['name']}: scan finished — {summary.get('scraped', 0)} scraped, {summary.get('after_score', 0)} sent to AI scoring",
+                                          meta={**summary, "brand_id": brand["id"]})
                     log.info("Autopilot scan complete: %s", summary)
                 except Exception as exc:
                     self._last_error = str(exc)
-                    await activity.record("scan_failed", f"Scan failed: {exc}", level="error")
+                    await activity.record("scan_failed", f"{brand['name']}: scan failed: {exc}", level="error")
                     log.exception("Autopilot scan failed")
                 finally:
                     self.scanning = False
             except Exception as exc:
                 self._last_error = str(exc)
                 log.exception("Scheduler tick failed")
+
+    async def _next_due_brand(self, settings: dict):
+        """Round-robin: the active brand whose last scan is oldest and past the interval."""
+        if not autopilot.enabled(settings) or not autopilot._b(settings.get("auto_scan_enabled"), True):
+            return None
+        if not autopilot.has_scraper(settings):
+            return None
+        brands = [b for b in await db.list_brands() if b.get("active")]
+        if not brands:
+            return None
+        due = []
+        for b in brands:
+            last = await db.fetchval("SELECT created_at FROM jobs WHERE brand_id=$1 ORDER BY id DESC LIMIT 1", b["id"])
+            if autopilot.scan_due(settings, last):
+                due.append((str(last or ""), b))
+        if not due:
+            return None
+        due.sort(key=lambda x: x[0])   # oldest last-scan first
+        return due[0][1]
+
+    async def _pick_keywords(self, brand: dict) -> list:
+        import keyword_lab
+        keywords = await db.list_keywords(brand["id"])
+        perf = await db.keyword_performance(brand["id"])
+        limit = max(1, int(brand.get("keywords_per_scan") or 6))
+        return keyword_lab.select(keywords, perf, limit)
+
+    async def _keyword_generation(self, settings: dict) -> None:
+        """Autopilot: top up each brand's keyword pool with AI-generated candidates."""
+        if not autopilot.enabled(settings) or not autopilot.has_gemini(settings):
+            return
+        import keyword_lab
+        for brand in await db.list_brands():
+            if not brand.get("active"):
+                continue
+            try:
+                keywords = await db.list_keywords(brand["id"])
+                perf = await db.keyword_performance(brand["id"])
+                if not keyword_lab.generation_due(brand, keywords, perf):
+                    continue
+                fresh = await keyword_lab.generate(brand, keywords, perf, settings)
+                await db.update_brand(brand["id"], {"last_keywords_generated_at": datetime.now(timezone.utc).isoformat()})
+                if fresh:
+                    added = await db.add_keywords(brand["id"], fresh, source="ai")
+                    await activity.record("keywords_generated", f"{brand['name']}: AI added {added} new keywords — {', '.join(fresh[:5])}{'…' if len(fresh) > 5 else ''}",
+                                          meta={"brand_id": brand["id"], "keywords": fresh})
+            except Exception as exc:
+                log.warning("Keyword generation for brand %s failed: %s", brand.get("id"), exc)
 
     async def _housekeeping(self, settings: dict) -> None:
         days = 0

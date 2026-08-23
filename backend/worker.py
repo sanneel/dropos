@@ -47,19 +47,33 @@ async def run_worker_loop():
 
     while True:
         try:
-            # ── Poll for SCRAPED products ─────────────────────────────────────
+            # ── Poll for SCRAPED products — one brand per batch, so every
+            #    collage is judged with that brand's persona ──────────────────
+            head = await db.get_products(stage=ProductStage.SCRAPED.value, limit=1, sort="created")
+            if not head:
+                await asyncio.sleep(10)
+                continue
+            batch_brand_id = head[0].get("brand_id")
             products = await db.get_products(
                 stage=ProductStage.SCRAPED.value,
                 limit=_BATCH_SIZE,
                 sort="created",
-            )
-
-            if not products:
-                await asyncio.sleep(10)
-                continue
+                brand_id=batch_brand_id,
+            ) if batch_brand_id else head
 
             settings = merge_env_with_settings(await db.get_settings())
-            log.info("Worker: Running Batch Vision AI for %d products...", len(products))
+            # Brand persona overrides the global store persona in the AI prompt
+            if batch_brand_id:
+                brand = await db.get_brand(batch_brand_id)
+                if brand:
+                    settings = {**settings,
+                                "store_name": brand.get("name") or settings.get("store_name"),
+                                "niche": brand.get("niche") or settings.get("niche"),
+                                "target_audience": brand.get("target_audience") or settings.get("target_audience"),
+                                "example_products": brand.get("example_products") or settings.get("example_products"),
+                                "sell_price_min": brand.get("sell_price_min") or settings.get("sell_price_min"),
+                                "sell_price_max": brand.get("sell_price_max") or settings.get("sell_price_max")}
+            log.info("Worker: Running Batch Vision AI for %d products (brand=%s)...", len(products), batch_brand_id)
 
             # ── Decision-memory context injection (feature flag: ai_context_injection) ──
             # When OFF (default): context_snippet=None → Gemini call is byte-for-byte

@@ -14,18 +14,38 @@ async function renderScanNew() {
   try {
     settingsData = await api('/settings');
     scanSource = String(settingsData.cssbuy_source || scanSource || '1688');
-    if (!scanKeywords.length) scanKeywords = [...(settingsData.scan_keywords || [])];
   } catch (e) {}
+  await loadBrandsCache(true);
+  if (!scanBrandId || !brandsCache.some(b => b.id === scanBrandId)) scanBrandId = brandsCache[0]?.id || null;
+  await loadScanBrandKeywords();
   // pick up a scan that is already running (e.g. started by Autopilot)
   try { const jobs = await api('/jobs?limit=1'); const j = jobs[0]; if (j && !['done','error','interrupted'].includes(j.status)) activeJob = j; } catch(e) {}
   renderScanContent();
   if (activeJob && !activeJobPoll) activeJobPoll = setInterval(pollActiveJob, 2000);
 }
 
+async function loadScanBrandKeywords() {
+  if (!scanBrandId) { scanKeywords = []; return; }
+  try {
+    const kw = await api(`/brands/${scanBrandId}/keywords`);
+    // preload what Autopilot would pick; the user can add/remove before scanning
+    scanKeywords = kw.next_scan?.length ? [...kw.next_scan] : (kw.keywords || []).filter(k => k.status === 'active').slice(0, 8).map(k => k.keyword);
+  } catch(e) { scanKeywords = []; }
+}
+
+async function switchScanBrand(id) {
+  scanBrandId = parseInt(id) || null;
+  await loadScanBrandKeywords();
+  renderScanContent();
+}
+
 function renderScanContent() {
   const localOnly = !!settingsData.local_scraping_only;
   const host = document.getElementById('scans-body'); if (!host) return;
   const noCreds = !settingsData.cssbuy_username || !settingsData.cssbuy_password_set;
+  const brandSel = brandsCache.length > 1
+    ? `<div class="form-group"><label>Brand</label><select id="scan-brand" onchange="switchScanBrand(this.value)">${brandsCache.map(b => `<option value="${b.id}" ${b.id === scanBrandId ? 'selected' : ''}>${escHtml(b.name)}</option>`).join('')}</select></div>`
+    : '';
   host.innerHTML = `
     ${noCreds && !localOnly ? `<div class="hint warn">CSSBuy login is not set — scans will find nothing. <a href="#" onclick="navigate('settings','connections');return false">Add it in Settings → Connections</a>.</div>` : ''}
     ${autopilotData?.enabled && settingsData.auto_scan_enabled !== false ? `<div class="hint ok">Autopilot scans these saved keywords every ${settingsData.scan_interval_hours || 12}h. You can still start one now.</div>` : ''}
@@ -34,6 +54,7 @@ function renderScanContent() {
       <div>
         <div class="card" style="margin-bottom:14px">
           <div class="card-title">Search keywords</div>
+          ${brandSel}
           <div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:12px">
             ${scanKeywords.map((kw, i) => `
               <div class="keyword-tag">${escHtml(kw)}
@@ -41,7 +62,8 @@ function renderScanContent() {
               </div>`).join('')}
             ${!scanKeywords.length ? '<span class="muted">No keywords yet — add a few below</span>' : ''}
           </div>
-          <div style="margin-top:8px"><button class="btn btn-sm" onclick="saveScanKeywords()">Save as Autopilot keywords</button></div>
+          <div style="margin-top:8px" class="row"><button class="btn btn-sm" onclick="saveScanKeywords()">Save to brand's keyword pool</button>
+          <button class="btn btn-sm btn-ghost" onclick="navigate('brands')">Manage keywords →</button></div>
           <div style="display:flex;gap:8px">
             <input type="text" id="kw-input" placeholder="Add keyword…" style="flex:1" onkeydown="if(event.key==='Enter')addKeyword()"/>
             <button class="btn btn-sm" onclick="addKeyword()">Add</button>
@@ -160,7 +182,7 @@ async function startScan() {
   try {
     if (!scanKeywords.length) { toast('Add at least one keyword', 'error'); return; }
     const max = parseInt(document.getElementById('max-per-kw')?.value || 100);
-    const job = await api('/scan', 'POST', { keywords: scanKeywords, max_per_keyword: max, source: scanSource });
+    const job = await api('/scan', 'POST', { keywords: scanKeywords, max_per_keyword: max, source: scanSource, brand_id: scanBrandId });
     activeJob = { id: job.job_id, status: 'queued', progress: 0 };
     const dot = document.getElementById('status-dot');
     const lbl = document.getElementById('status-label');
@@ -176,7 +198,8 @@ async function startScan() {
 
 
 async function saveScanKeywords() {
-  try { await api('/settings', 'PATCH', { scan_keywords: scanKeywords }); settingsData.scan_keywords = [...scanKeywords]; toast('Saved — Autopilot will scan these keywords', 'success'); } catch(e) {}
+  if (!scanBrandId) { navigate('brands'); return; }
+  try { const r = await api(`/brands/${scanBrandId}/keywords`, 'POST', { keywords: scanKeywords }); toast(`Saved ${r.added} new keyword${r.added === 1 ? '' : 's'} to ${brandName(scanBrandId)}`, 'success'); } catch(e) {}
 }
 
 

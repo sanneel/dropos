@@ -116,8 +116,8 @@ class Database:
              images_json, url, category, keyword,
              score, niche_fit, visual_appeal, trend_score, competition_score,
              caption, description, hashtags_json, ai_provider, has_chinese_text,
-             chinese_text_note, rejection_reason, stage, created_at, rejected_at)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
+             chinese_text_note, rejection_reason, stage, created_at, rejected_at, brand_id)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32)
             ON CONFLICT (source_id) DO NOTHING
         """,
             job_id,
@@ -151,9 +151,10 @@ class Database:
             p.get("stage", "SCRAPED"),
             now,
             now if p.get("stage") == "REJECTED" else None,
+            p.get("brand_id"),
         )
 
-    async def get_products(self, stage: str = "SCRAPED", limit: int = 50, offset: int = 0, sort: str = "score", q: str = "") -> list:
+    async def get_products(self, stage: str = "SCRAPED", limit: int = 50, offset: int = 0, sort: str = "score", q: str = "", brand_id: int | None = None) -> list:
         sort_map = {
             "score": "score DESC",
             "margin": "margin_pct DESC",
@@ -162,6 +163,9 @@ class Database:
         }
         order = sort_map.get(sort, "score DESC")
         where, args = "stage=$1", [stage]
+        if brand_id:
+            args.append(brand_id)
+            where += f" AND brand_id=${len(args)}"
         if q:
             args.append(f"%{q.strip()}%")
             where += (f" AND (product_name ILIKE ${len(args)} OR title_translated ILIKE ${len(args)}"
@@ -178,7 +182,18 @@ class Database:
         rows = await self.fetch("SELECT * FROM products ORDER BY id DESC LIMIT $1", limit)
         return [_row_to_product(r) for r in rows]
 
-    async def count_products(self, stage: str = "SCRAPED", q: str = "") -> int:
+    async def count_products(self, stage: str = "SCRAPED", q: str = "", brand_id: int | None = None) -> int:
+        if brand_id:
+            if q:
+                like = f"%{q.strip()}%"
+                val = await self.fetchval("""
+                    SELECT COUNT(*) FROM products WHERE stage=$1 AND brand_id=$3 AND (
+                        product_name ILIKE $2 OR title_translated ILIKE $2 OR title ILIKE $2
+                        OR category ILIKE $2 OR caption ILIKE $2 OR keyword ILIKE $2)
+                """, stage, like, brand_id)
+            else:
+                val = await self.fetchval("SELECT COUNT(*) FROM products WHERE stage=$1 AND brand_id=$2", stage, brand_id)
+            return val if val else 0
         if q:
             like = f"%{q.strip()}%"
             val = await self.fetchval("""
@@ -590,13 +605,13 @@ class Database:
 
     # ── Jobs ──────────────────────────────────────────────────────────────────
 
-    async def create_job(self, keywords: list) -> int:
+    async def create_job(self, keywords: list, brand_id: int | None = None) -> int:
         job_id = await self.fetchval("""
             INSERT INTO jobs (keywords_json, status, progress, scraped,
-               after_basic, after_profit, after_dedup, after_ai, created_at)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+               after_basic, after_profit, after_dedup, after_ai, created_at, brand_id)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
             RETURNING id
-        """, json.dumps(keywords), "queued", 0, 0, 0, 0, 0, 0, _now())
+        """, json.dumps(keywords), "queued", 0, 0, 0, 0, 0, 0, _now(), brand_id)
         return job_id
 
     async def update_job(self, job_id: int, **kwargs):
@@ -861,6 +876,126 @@ class Database:
         stats["approval_rate"] = round(approved / decided * 100, 1) if decided else 0
 
         return stats
+
+    # ── Brands (markets) ──────────────────────────────────────────────────────
+
+    async def list_brands(self) -> list:
+        rows = await self.fetch("SELECT * FROM brands ORDER BY id")
+        return [dict(r) for r in rows]
+
+    async def get_brand(self, brand_id: int):
+        row = await self.fetchrow("SELECT * FROM brands WHERE id=$1", brand_id)
+        return dict(row) if row else None
+
+    async def default_brand_id(self) -> Optional[int]:
+        return await self.fetchval("SELECT id FROM brands ORDER BY id LIMIT 1")
+
+    async def create_brand(self, data: dict) -> int:
+        slug_base = str(data.get("name") or "brand").strip().lower().replace(" ", "-")[:40]
+        slug = f"{slug_base}-{int(datetime.now().timestamp()) % 100000}"
+        return await self.fetchval("""
+            INSERT INTO brands (name, slug, active, niche, target_audience, example_products,
+                                sell_price_min, sell_price_max, auto_keywords_enabled, keywords_per_scan, created_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id
+        """,
+            str(data.get("name") or "New brand").strip(),
+            slug,
+            1 if data.get("active", True) else 0,
+            str(data.get("niche") or ""), str(data.get("target_audience") or ""),
+            str(data.get("example_products") or ""),
+            float(data.get("sell_price_min") or 40), float(data.get("sell_price_max") or 119),
+            1 if data.get("auto_keywords_enabled", True) else 0,
+            int(data.get("keywords_per_scan") or 6),
+            _now(),
+        )
+
+    async def update_brand(self, brand_id: int, data: dict) -> None:
+        allowed = {"name", "active", "niche", "target_audience", "example_products",
+                   "sell_price_min", "sell_price_max", "auto_keywords_enabled",
+                   "keywords_per_scan", "last_keywords_generated_at"}
+        updates = {k: v for k, v in (data or {}).items() if k in allowed}
+        if not updates:
+            return
+        for k in ("active", "auto_keywords_enabled"):
+            if k in updates:
+                updates[k] = 1 if updates[k] else 0
+        sets = ", ".join(f"{k}=${i+1}" for i, k in enumerate(updates))
+        vals = list(updates.values()) + [brand_id]
+        await self.execute(f"UPDATE brands SET {sets} WHERE id=${len(vals)}", *vals)
+
+    async def delete_brand(self, brand_id: int) -> bool:
+        n = await self.fetchval("SELECT COUNT(*) FROM products WHERE brand_id=$1", brand_id)
+        total = await self.fetchval("SELECT COUNT(*) FROM brands")
+        if n or total <= 1:
+            return False  # keep brands that own products, never delete the last one
+        await self.execute("DELETE FROM brand_keywords WHERE brand_id=$1", brand_id)
+        await self.execute("DELETE FROM brands WHERE id=$1", brand_id)
+        return True
+
+    async def brand_product_counts(self) -> dict:
+        rows = await self.fetch("""
+            SELECT brand_id,
+                   COUNT(*) AS total,
+                   COUNT(*) FILTER (WHERE stage='ENRICHED') AS in_review,
+                   COUNT(*) FILTER (WHERE stage IN ('REVIEWED','TEXT_REMOVAL','QUEUED')) AS approved,
+                   COUNT(*) FILTER (WHERE stage='LIVE') AS live
+            FROM products WHERE brand_id IS NOT NULL GROUP BY brand_id
+        """)
+        return {int(r["brand_id"]): dict(r) for r in rows}
+
+    # ── Brand keywords ────────────────────────────────────────────────────────
+
+    async def add_keywords(self, brand_id: int, keywords: list, source: str = "manual") -> int:
+        added = 0
+        for kw in keywords:
+            kw = str(kw).strip().lower()
+            if not kw or len(kw) > 80:
+                continue
+            row = await self.fetchrow("""
+                INSERT INTO brand_keywords (brand_id, keyword, source, status, created_at)
+                VALUES ($1,$2,$3,'active',$4)
+                ON CONFLICT (brand_id, keyword) DO NOTHING RETURNING id
+            """, brand_id, kw, source, _now())
+            if row:
+                added += 1
+        return added
+
+    async def list_keywords(self, brand_id: int, include_retired: bool = True) -> list:
+        sql = "SELECT * FROM brand_keywords WHERE brand_id=$1" + ("" if include_retired else " AND status != 'retired'") + " ORDER BY id"
+        return [dict(r) for r in await self.fetch(sql, brand_id)]
+
+    async def set_keyword_status(self, keyword_id: int, status: str) -> None:
+        await self.execute("UPDATE brand_keywords SET status=$1 WHERE id=$2", status, keyword_id)
+
+    async def delete_keyword(self, keyword_id: int) -> None:
+        await self.execute("DELETE FROM brand_keywords WHERE id=$1", keyword_id)
+
+    async def touch_keywords_scanned(self, brand_id: int, keywords: list) -> None:
+        await self.execute("""
+            UPDATE brand_keywords SET last_scanned_at=$1, scans=scans+1
+            WHERE brand_id=$2 AND keyword = ANY($3::text[])
+        """, _now(), brand_id, [str(k).lower() for k in keywords])
+
+    async def keyword_performance(self, brand_id: int) -> dict:
+        """Live aggregation over products: how each keyword actually performed."""
+        rows = await self.fetch("""
+            SELECT LOWER(keyword) AS kw,
+                   COUNT(*) AS scraped,
+                   COUNT(*) FILTER (WHERE ai_provider IS NOT NULL AND ai_provider NOT IN ('', 'mock')) AS scored,
+                   COUNT(*) FILTER (WHERE stage IN ('REVIEWED','TEXT_REMOVAL','QUEUED','LIVE') OR approved_at IS NOT NULL) AS approved,
+                   COUNT(*) FILTER (WHERE stage='LIVE') AS posted,
+                   AVG(NULLIF(composite_score, 0)) AS avg_score
+            FROM products
+            WHERE brand_id=$1 AND keyword IS NOT NULL AND keyword != ''
+            GROUP BY LOWER(keyword)
+        """, brand_id)
+        return {r["kw"]: {
+            "scraped": int(r["scraped"] or 0),
+            "scored": int(r["scored"] or 0),
+            "approved": int(r["approved"] or 0),
+            "posted": int(r["posted"] or 0),
+            "avg_score": round(float(r["avg_score"] or 0), 2),
+        } for r in rows}
 
     # ── Activity log ──────────────────────────────────────────────────────────
 
@@ -1402,6 +1537,41 @@ async def init_db():
                 pass  # Already JSONB or table just created — either way correct
 
             await conn.execute("""
+                CREATE TABLE IF NOT EXISTS brands (
+                    id                SERIAL PRIMARY KEY,
+                    name              TEXT NOT NULL,
+                    slug              TEXT UNIQUE,
+                    active            INTEGER DEFAULT 1,
+                    niche             TEXT DEFAULT '',
+                    target_audience   TEXT DEFAULT '',
+                    example_products  TEXT DEFAULT '',
+                    sell_price_min    DOUBLE PRECISION DEFAULT 40,
+                    sell_price_max    DOUBLE PRECISION DEFAULT 119,
+                    auto_keywords_enabled INTEGER DEFAULT 1,
+                    keywords_per_scan INTEGER DEFAULT 6,
+                    last_keywords_generated_at TEXT,
+                    created_at        TEXT
+                )
+            """)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS brand_keywords (
+                    id              SERIAL PRIMARY KEY,
+                    brand_id        INTEGER NOT NULL,
+                    keyword         TEXT NOT NULL,
+                    source          TEXT DEFAULT 'manual',   -- manual | ai
+                    status          TEXT DEFAULT 'active',   -- active | paused | retired
+                    created_at      TEXT,
+                    last_scanned_at TEXT,
+                    scans           INTEGER DEFAULT 0,
+                    UNIQUE(brand_id, keyword)
+                )
+            """)
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_bkw_brand ON brand_keywords(brand_id, status)")
+            await conn.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS brand_id INTEGER")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_products_brand ON products(brand_id)")
+            await conn.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS brand_id INTEGER")
+
+            await conn.execute("""
                 CREATE TABLE IF NOT EXISTS activity_log (
                     id         SERIAL PRIMARY KEY,
                     ts         TEXT NOT NULL,
@@ -1528,5 +1698,42 @@ async def init_db():
                     ON CONFLICT (email) DO UPDATE 
                     SET password_hash = EXCLUDED.password_hash
                 """, admin_email.strip().lower(), admin_pass_hash, _now())
+
+    # ── Default brand: created from the store persona on first boot ─────────
+    async with db._pool.acquire() as conn:
+        if not await conn.fetchval("SELECT COUNT(*) FROM brands"):
+            def _sv(key, default=""):
+                return None  # placeholder, replaced below
+            rows = await conn.fetch("SELECT key, value FROM settings")
+            sv = {}
+            for r in rows:
+                try:
+                    sv[r["key"]] = json.loads(r["value"])
+                except Exception:
+                    sv[r["key"]] = r["value"]
+            brand_id = await conn.fetchval("""
+                INSERT INTO brands (name, slug, niche, target_audience, example_products,
+                                    sell_price_min, sell_price_max, created_at)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id
+            """,
+                str(sv.get("store_name") or "Tskvili"), "default",
+                str(sv.get("niche") or ""), str(sv.get("target_audience") or ""),
+                str(sv.get("example_products") or ""),
+                float(sv.get("sell_price_min") or 40), float(sv.get("sell_price_max") or 119),
+                _now(),
+            )
+            for kw in (sv.get("scan_keywords") or []):
+                kw = str(kw).strip()
+                if kw:
+                    await conn.execute("""
+                        INSERT INTO brand_keywords (brand_id, keyword, source, status, created_at)
+                        VALUES ($1,$2,'manual','active',$3) ON CONFLICT (brand_id, keyword) DO NOTHING
+                    """, brand_id, kw, _now())
+            log.info("Seeded default brand #%s from store settings", brand_id)
+        # Orphan products/jobs (pre-brands data) belong to the default brand
+        default_id = await conn.fetchval("SELECT id FROM brands ORDER BY id LIMIT 1")
+        if default_id:
+            await conn.execute("UPDATE products SET brand_id=$1 WHERE brand_id IS NULL", default_id)
+            await conn.execute("UPDATE jobs SET brand_id=$1 WHERE brand_id IS NULL", default_id)
 
     log.info("Database schema initialised.")

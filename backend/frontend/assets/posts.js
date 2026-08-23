@@ -6,6 +6,7 @@ async function renderPosts(tab) {
   setActions(`<button class="btn btn-sm" onclick="renderPosts('${tab}')" title="Refresh">↻</button>`);
   const el = document.getElementById('content');
   el.innerHTML = tabBar('posts') + `<div id="posts-body">${loadingState()}</div>`;
+  await loadBrandsCache();
   if (tab === 'posted') return renderPosted();
   if (tab === 'all') return renderCatalog();
   return loadApproved();
@@ -15,7 +16,8 @@ async function renderPosts(tab) {
 async function loadApproved(append = false) {
   const offset = append ? approvedProducts.length : 0;
   if (!append) approvedProducts = [];
-  const data = await api(`/products?stage=REVIEWED&limit=60&offset=${offset}&sort=score`).catch(() => ({ products: [], total: 0 }));
+  const bq = brandFilter ? `&brand_id=${brandFilter}` : '';
+  const data = await api(`/products?stage=REVIEWED&limit=60&offset=${offset}&sort=score${bq}`).catch(() => ({ products: [], total: 0 }));
   approvedProducts = append ? approvedProducts.concat(data.products) : data.products;
   approvedTotal = data.total;
   renderApprovedGrid();
@@ -42,7 +44,7 @@ function renderApprovedGrid() {
   body.innerHTML = `
     <div class="hint ${sum.cls}">${sum.text}</div>
     <div class="toolbar">
-      <div class="toolbar-l"><span class="toolbar-count"><b>${approvedTotal}</b> in queue · best score posts first</span></div>
+      <div class="toolbar-l"><span class="toolbar-count"><b>${approvedTotal}</b> in queue · best score posts first</span>${brandFilterChips('loadApproved()')}</div>
       <div class="toolbar-r">
         <button class="btn btn-sm" onclick="selectAll()">Select visible</button>
         <button class="btn btn-sm" onclick="batchPublishWebsite()" title="Mark selected as live without posting">Skip IG for selected</button>

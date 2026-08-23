@@ -171,13 +171,21 @@ async def status(db, settings: dict, posting_jobs: list | None = None, scan_loop
         except Exception:
             next_scan = None
 
+    brands = await db.list_brands()
+    active_brands = [b for b in brands if b.get("active")]
+    kw_counts = {}
+    for b in active_brands:
+        kw_counts[b["id"]] = sum(1 for k in await db.list_keywords(b["id"]) if k.get("status") == "active")
+
     scan_blockers = []
     if _b(settings.get("local_scraping_only")):
         scan_blockers.append("Server scraping is disabled (local scraping only)")
     elif not (settings.get("cssbuy_username") and settings.get("cssbuy_password")):
         scan_blockers.append("Add your CSSBuy login in Settings → Connections")
-    if not (settings.get("scan_keywords") or []):
-        scan_blockers.append("Add scan keywords")
+    if not active_brands:
+        scan_blockers.append("No active brands — create one on the Brands page")
+    elif not any(kw_counts.values()):
+        scan_blockers.append("No active keywords — add or generate some on the Brands page")
 
     score_blockers = [] if has_ai(settings) else ["Add a Gemini key (free) in Settings → Connections"]
     if has_ai(settings) and not has_gemini(settings):
@@ -194,7 +202,7 @@ async def status(db, settings: dict, posting_jobs: list | None = None, scan_loop
 
     stages = [
         stage("scan", "Find products", _b(settings.get("auto_scan_enabled"), True), not scan_blockers, scan_blockers,
-              detail=f"every {scan_hours:g}h · {len(settings.get('scan_keywords') or [])} keywords",
+              detail=f"every {scan_hours:g}h · {len(active_brands)} brand{'s' if len(active_brands) != 1 else ''} · {sum(kw_counts.values())} keywords",
               next_run=next_scan, last_run=last_job, today=counts.get("scan_done", 0) + counts.get("scan_started", 0),
               running=scan_loop_running),
         stage("score", "AI scoring", True, not score_blockers, score_blockers,

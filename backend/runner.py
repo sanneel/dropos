@@ -24,6 +24,7 @@ async def run_pipeline(
     max_per_keyword: int = 50,
     settings: Optional[dict] = None,
     source: Optional[str] = None,
+    brand_id: Optional[int] = None,
 ) -> dict:
     """
     Full pipeline for one job. Returns summary dict.
@@ -39,8 +40,10 @@ async def run_pipeline(
         keywords = raw_kw if isinstance(raw_kw, list) else [raw_kw]
     if not keywords:
         keywords = ["aesthetic home decor"]
+    if brand_id is None:
+        brand_id = await db.default_brand_id()
     if job_id is None:
-        job_id = await db.create_job(keywords=keywords)
+        job_id = await db.create_job(keywords=keywords, brand_id=brand_id)
 
     await db.update_job(job_id, status="scraping", progress=5)
 
@@ -63,16 +66,20 @@ async def run_pipeline(
 
     log.info("Job %d scraped %d products (source=%s)", job_id, len(raw_all), scan_source)
 
-    return await process_scraped_products(job_id, raw_all, settings)
+    return await process_scraped_products(job_id, raw_all, settings, brand_id=brand_id)
 
 
-async def process_scraped_products(job_id: int, raw_all: list, settings: Optional[dict] = None) -> dict:
+async def process_scraped_products(job_id: int, raw_all: list, settings: Optional[dict] = None, brand_id: Optional[int] = None) -> dict:
     """
     Process products that were scraped outside this server.
     """
     if settings is None:
         settings = await db.get_settings()
     settings = merge_env_with_settings(settings)
+    if brand_id is None:
+        brand_id = await db.default_brand_id()
+    for p in raw_all:
+        p.setdefault("brand_id", brand_id)
 
     # ── 2. Store raw data ──────────────────────────────────────────────────────
     for p in raw_all:

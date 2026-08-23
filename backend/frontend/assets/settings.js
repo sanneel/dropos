@@ -36,7 +36,9 @@ function setupPanel(s) {
     { ok: !!(s.instagram_access_token_set && s.instagram_user_id), title: 'Instagram', desc: (s.instagram_access_token_set && s.instagram_user_id) ? `Posting to account ${escHtml(s.instagram_user_id)}.` : 'Page access token + business account ID. Until then posts are simulated.', tab: 'connections' },
     { ok: !!s.image_storage_set, soft: true, title: 'Image storage (Supabase)', desc: s.image_storage_set ? 'Photos are re-hosted on a public URL Instagram can always fetch.' : 'Optional but recommended: supplier CDN links usually work, Supabase Storage (free) always works. Set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY in .env.', tab: 'connections' },
     { ok: !!s.clipdrop_key_set, soft: true, title: 'Photo cleaning (Clipdrop)', desc: s.clipdrop_key_set ? 'Chinese text / watermarks are removed automatically.' : 'Optional: cleans Chinese text from photos so they can be posted. 100 free images / month.', tab: 'connections' },
-    { ok: !!(s.scan_keywords || []).length, title: 'Scan keywords', desc: (s.scan_keywords || []).length ? `${s.scan_keywords.length} keywords saved.` : 'Autopilot needs keywords to search for.', tab: 'automation' },
+    (() => { const sc = (ap.stages || []).find(x => x.key === 'scan') || { blockers: [] };
+       const kwOk = !sc.blockers.some(b => /brands page/i.test(b));
+       return { ok: kwOk, title: 'Brands & keywords', desc: kwOk ? (sc.detail || 'Keyword pools are ready.') : sc.blockers.find(b => /brands page/i.test(b)), action: `<button class="btn btn-sm ${kwOk ? '' : 'btn-primary'}" onclick="navigate('brands')">${kwOk ? 'Open Brands' : 'Set up'}</button>` }; })(),
     { ok: !!ap.enabled, title: 'Autopilot', desc: ap.enabled ? `On — ${ap.stages.filter(x => x.active).length} of 6 stages running.` : 'Off — turn it on once the items above are green.', tab: null, action: `<button class="btn btn-sm ${ap.enabled ? '' : 'btn-primary'}" onclick="navigate('home')">${ap.enabled ? 'Open Home' : 'Turn on'}</button>` },
   ];
   const done = items.filter(i => i.ok).length;
@@ -162,8 +164,9 @@ function automationPanel(s) {
       <div class="card">
         <div class="card-hd"><h3>Find products</h3><span class="muted">scheduled scans</span></div>
         <label class="check"><input type="checkbox" id="s-auto-scan" ${s.auto_scan_enabled !== false ? 'checked' : ''}/> Scan automatically</label>
-        ${fieldRow('Every (hours)', `<input type="number" id="s-scan-hours" value="${s.scan_interval_hours ?? 12}" min="0.5" step="0.5" style="max-width:120px"/>`)}
-        ${fieldRow('Keywords <span class="muted">(one per line)</span>', `<textarea id="s-scan-kw" rows="6" class="mono">${escHtml((s.scan_keywords || []).join('\n'))}</textarea>`)}
+        ${fieldRow('Every (hours, per brand)', `<input type="number" id="s-scan-hours" value="${s.scan_interval_hours ?? 12}" min="0.5" step="0.5" style="max-width:120px"/>`)}
+        <div class="hint info" style="margin:10px 0">Keywords now live per <b>brand</b> — each market keeps its own pool, the AI tops it up, and
+          Autopilot scans the best performers first. <a href="#" onclick="navigate('brands');return false">Open Brands →</a></div>
         <div class="row"><button class="btn btn-sm" onclick="triggerScheduledScan()" ${s.local_scraping_only ? 'disabled' : ''}>Scan now</button><span id="sched-status" class="muted">…</span></div>
       </div>
 

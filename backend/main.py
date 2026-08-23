@@ -77,6 +77,7 @@ from scheduler import create_scheduler, get_scheduler_status
 from posting_scheduler import create_posting_scheduler, get_posting_scheduler_status
 import activity
 import autopilot
+import keyword_lab
 import instagram
 import instagram_replies
 import sheets
@@ -485,11 +486,13 @@ class ScanRequest(BaseModel):
     keywords: List[str]
     max_per_keyword: int = 50
     source: str = "taobao"
+    brand_id: Optional[int] = None
 
 class IngestProductsRequest(BaseModel):
     products: List[dict]
     keywords: List[str] = []
     source: Optional[str] = None
+    brand_id: Optional[int] = None
 
 class ApproveRequest(BaseModel):
     product_ids: List[int]
@@ -704,12 +707,15 @@ def _pipeline_summary(job: dict, stages: dict) -> dict:
         "recommendations": recommendations,
     }
 
-async def _create_scan_job(bg: BackgroundTasks, keywords: list, max_per_keyword: int, source: str) -> int:
+async def _create_scan_job(bg: BackgroundTasks, keywords: list, max_per_keyword: int, source: str, brand_id: Optional[int] = None) -> int:
     active = await db.get_active_job()
     if active:
         raise HTTPException(409, {"message": f"Job #{active['id']} is already running", "job_id": active["id"]})
-    job_id = await db.create_job(keywords=keywords)
-    bg.add_task(_run_scan, job_id, keywords, max_per_keyword, source)
+    brand_id = brand_id or await db.default_brand_id()
+    job_id = await db.create_job(keywords=keywords, brand_id=brand_id)
+    if brand_id:
+        await db.touch_keywords_scanned(brand_id, keywords)
+    bg.add_task(_run_scan, job_id, keywords, max_per_keyword, source, brand_id)
     return job_id
 
 async def _stage_products(product_ids: List[int], stage: str, **kwargs) -> list:
@@ -832,10 +838,10 @@ async def get_stats():
     return await db.get_stats()
 
 @app.get("/api/products")
-async def get_products(stage: str = ProductStage.SCRAPED.value, limit: int = 50, offset: int = 0, sort: str = "score", q: str = ""):
+async def get_products(stage: str = ProductStage.SCRAPED.value, limit: int = 50, offset: int = 0, sort: str = "score", q: str = "", brand_id: Optional[int] = None):
     limit = max(1, min(limit, 500))
-    products = await db.get_products(stage=stage, limit=limit, offset=max(0, offset), sort=sort, q=q)
-    total = await db.count_products(stage=stage, q=q)
+    products = await db.get_products(stage=stage, limit=limit, offset=max(0, offset), sort=sort, q=q, brand_id=brand_id)
+    total = await db.count_products(stage=stage, q=q, brand_id=brand_id)
     return {"products": products, "total": total}
 
 @app.get("/api/products/{product_id}")
@@ -1084,14 +1090,15 @@ async def update_note(product_id: int, body: NoteUpdate):
 
 @app.post("/api/scan")
 async def start_scan(body: ScanRequest, bg: BackgroundTasks):
-    job_id = await _create_scan_job(bg, body.keywords, body.max_per_keyword, body.source)
+    job_id = await _create_scan_job(bg, body.keywords, body.max_per_keyword, body.source, body.brand_id)
     return {"job_id": job_id, "status": "started"}
 
 @app.post("/api/ingest/products")
 async def ingest_products(body: IngestProductsRequest, bg: BackgroundTasks, authorization: Optional[str] = Header(None), x_ingest_token: Optional[str] = Header(None)):
     await _verify_ingest_token(authorization, x_ingest_token)
-    job_id = await db.create_job(keywords=body.keywords or ["local upload"])
-    bg.add_task(_run_ingest, job_id, body.products)
+    brand_id = body.brand_id or await db.default_brand_id()
+    job_id = await db.create_job(keywords=body.keywords or ["local upload"], brand_id=brand_id)
+    bg.add_task(_run_ingest, job_id, body.products, brand_id)
     return {"job_id": job_id, "status": "uploaded"}
 
 @app.get("/api/jobs")
@@ -1252,6 +1259,131 @@ async def ai_chat(body: ChatRequest):
     settings = await _settings()
     context = await _build_chat_context()
     return await ai_assistant.chat(body.message, context, settings)
+
+# ── Brands (markets) ──────────────────────────────────────────────────────────
+
+class BrandBody(BaseModel):
+    name: Optional[str] = None
+    active: Optional[bool] = None
+    niche: Optional[str] = None
+    target_audience: Optional[str] = None
+    example_products: Optional[str] = None
+    sell_price_min: Optional[float] = None
+    sell_price_max: Optional[float] = None
+    auto_keywords_enabled: Optional[bool] = None
+    keywords_per_scan: Optional[int] = None
+
+class KeywordsBody(BaseModel):
+    keywords: List[str]
+
+class GenerateBody(BaseModel):
+    count: int = 10
+
+
+@app.get("/api/brands")
+async def brands_list():
+    brands = await db.list_brands()
+    counts = await db.brand_product_counts()
+    out = []
+    for b in brands:
+        kws = await db.list_keywords(b["id"])
+        perf = await db.keyword_performance(b["id"])
+        rows = keyword_lab.annotate(kws, perf)
+        active_rows = [k for k in rows if k["status"] == "active"]
+        scored = [k for k in rows if k["tested"]]
+        out.append({**b,
+            "products": counts.get(b["id"], {}),
+            "keywords_active": len(active_rows),
+            "keywords_untested": sum(1 for k in active_rows if not k["tested"]),
+            "keywords_ai": sum(1 for k in rows if k["source"] == "ai"),
+            "best_keyword": max(scored, key=lambda k: k["perf_score"] or 0)["keyword"] if scored else None,
+        })
+    return {"brands": out}
+
+
+@app.post("/api/brands")
+async def brands_create(body: BrandBody):
+    if not (body.name or "").strip():
+        raise HTTPException(400, "Brand name is required")
+    brand_id = await db.create_brand(body.model_dump(exclude_none=True))
+    await activity.record("config", f"Created brand “{body.name.strip()}”")
+    return {"ok": True, "id": brand_id}
+
+
+@app.patch("/api/brands/{brand_id}")
+async def brands_update(brand_id: int, body: BrandBody):
+    if not await db.get_brand(brand_id):
+        raise HTTPException(404, "Brand not found")
+    await db.update_brand(brand_id, body.model_dump(exclude_none=True))
+    return {"ok": True}
+
+
+@app.delete("/api/brands/{brand_id}")
+async def brands_delete(brand_id: int):
+    ok = await db.delete_brand(brand_id)
+    if not ok:
+        raise HTTPException(409, "Brand has products (or is the last one) — deactivate it instead.")
+    return {"ok": True}
+
+
+@app.get("/api/brands/{brand_id}/keywords")
+async def brand_keywords(brand_id: int):
+    if not await db.get_brand(brand_id):
+        raise HTTPException(404, "Brand not found")
+    kws = await db.list_keywords(brand_id)
+    perf = await db.keyword_performance(brand_id)
+    rows = keyword_lab.annotate(kws, perf)
+    brand = await db.get_brand(brand_id)
+    next_scan = keyword_lab.select(kws, perf, max(1, int(brand.get("keywords_per_scan") or 6)))
+    return {"keywords": rows, "next_scan": next_scan, "min_sample": keyword_lab.MIN_SAMPLE}
+
+
+@app.post("/api/brands/{brand_id}/keywords")
+async def brand_keywords_add(brand_id: int, body: KeywordsBody):
+    if not await db.get_brand(brand_id):
+        raise HTTPException(404, "Brand not found")
+    added = await db.add_keywords(brand_id, body.keywords, source="manual")
+    return {"ok": True, "added": added}
+
+
+@app.post("/api/brands/{brand_id}/keywords/generate")
+async def brand_keywords_generate(brand_id: int, body: GenerateBody):
+    brand = await db.get_brand(brand_id)
+    if not brand:
+        raise HTTPException(404, "Brand not found")
+    settings = await _settings()
+    if not autopilot.has_gemini(settings):
+        raise HTTPException(400, "Keyword generation needs a Gemini key (Settings → Connections).")
+    kws = await db.list_keywords(brand_id)
+    perf = await db.keyword_performance(brand_id)
+    fresh = await keyword_lab.generate(brand, kws, perf, settings, n=max(1, min(body.count, 25)))
+    if not fresh:
+        raise HTTPException(502, "The AI returned no usable keywords — try again.")
+    added = await db.add_keywords(brand_id, fresh, source="ai")
+    await db.update_brand(brand_id, {"last_keywords_generated_at": _now_iso()})
+    await activity.record("keywords_generated", f"{brand['name']}: AI added {added} keywords — {', '.join(fresh[:5])}{'…' if len(fresh) > 5 else ''}",
+                          meta={"brand_id": brand_id, "keywords": fresh})
+    return {"ok": True, "added": added, "keywords": fresh}
+
+
+@app.patch("/api/keywords/{keyword_id}")
+async def keyword_update(keyword_id: int, status: str):
+    if status not in ("active", "paused", "retired"):
+        raise HTTPException(400, "status must be active | paused | retired")
+    await db.set_keyword_status(keyword_id, status)
+    return {"ok": True}
+
+
+@app.delete("/api/keywords/{keyword_id}")
+async def keyword_delete(keyword_id: int):
+    await db.delete_keyword(keyword_id)
+    return {"ok": True}
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone as _tz
+    return datetime.now(_tz.utc).isoformat()
+
 
 # ── Autopilot ─────────────────────────────────────────────────────────────────
 
@@ -1414,21 +1546,25 @@ async def ig_webhook_receive(request: Request, bg: BackgroundTasks):
     return {"ok": True}
 
 @app.post("/api/scheduler/trigger")
-async def trigger_scheduled_scan(bg: BackgroundTasks):
-    """Run a server-side scan now using the saved scan keywords."""
+async def trigger_scheduled_scan(bg: BackgroundTasks, brand_id: Optional[int] = None):
+    """Run a scan now for one brand, picking keywords the way Autopilot would."""
     settings = await _settings()
     if settings.get("local_scraping_only"):
         raise HTTPException(409, "Server-side scraping is disabled (local scraping only). Upload from the local scraper instead.")
     if not (settings.get("cssbuy_username") and settings.get("cssbuy_password")):
         raise HTTPException(400, "CSSBuy username/password are not configured.")
-    keywords = settings.get("scan_keywords") or []
-    if isinstance(keywords, str):
-        keywords = [k.strip() for k in keywords.split(",") if k.strip()]
+    brand_id = brand_id or await db.default_brand_id()
+    brand = await db.get_brand(brand_id) if brand_id else None
+    if not brand:
+        raise HTTPException(404, "Brand not found.")
+    kws = await db.list_keywords(brand_id)
+    perf = await db.keyword_performance(brand_id)
+    keywords = keyword_lab.select(kws, perf, max(1, int(brand.get("keywords_per_scan") or 6)))
     if not keywords:
-        raise HTTPException(400, "No scan keywords saved.")
+        raise HTTPException(400, f"“{brand['name']}” has no active keywords — add some on the Brands page.")
     source = str(settings.get("cssbuy_source") or "1688")
-    job_id = await _create_scan_job(bg, keywords, 50, source)
-    return {"job_id": job_id, "status": "started", "keywords": keywords}
+    job_id = await _create_scan_job(bg, keywords, 50, source, brand_id)
+    return {"job_id": job_id, "status": "started", "keywords": keywords, "brand_id": brand_id}
 
 
 # ── Collage posting ───────────────────────────────────────────────────────────
@@ -1515,17 +1651,17 @@ async def restore_from_sheets():
 
 # ── Background Helpers ────────────────────────────────────────────────────────
 
-async def _run_scan(job_id: int, keywords: list, max_per_keyword: int, source: str) -> None:
+async def _run_scan(job_id: int, keywords: list, max_per_keyword: int, source: str, brand_id: Optional[int] = None) -> None:
     try:
-        await run_pipeline(job_id, keywords, max_per_keyword, source=source)
+        await run_pipeline(job_id, keywords, max_per_keyword, source=source, brand_id=brand_id)
         await _backup_products_to_sheets()
     except Exception as e:
         log.error("Scan %d failed: %s", job_id, e)
         await db.update_job(job_id, status="error")
 
-async def _run_ingest(job_id: int, products: list) -> None:
+async def _run_ingest(job_id: int, products: list, brand_id: Optional[int] = None) -> None:
     try:
-        await process_scraped_products(job_id, products)
+        await process_scraped_products(job_id, products, brand_id=brand_id)
         await _backup_products_to_sheets()
     except Exception as e:
         log.error("Ingest %d failed: %s", job_id, e)
