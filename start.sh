@@ -18,14 +18,14 @@ RED='\033[0;31m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-# Resolve python command — try py launcher (Windows), then python3, then python
+# Resolve python command — python, python3, then the Windows py launcher
 _py_ok() { "$1" -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" 2>/dev/null; }
-if command -v py &>/dev/null && _py_ok py; then
-  PY=py
+if command -v python &>/dev/null && _py_ok python; then
+  PY=python
 elif command -v python3 &>/dev/null && _py_ok python3; then
   PY=python3
-elif command -v python &>/dev/null && _py_ok python; then
-  PY=python
+elif command -v py &>/dev/null && _py_ok py; then
+  PY=py
 else
   _WIN_PY="$(ls /c/Users/*/AppData/Local/Programs/Python/Python3*/python.exe 2>/dev/null | head -1)"
   if [ -n "$_WIN_PY" ] && _py_ok "$_WIN_PY"; then
