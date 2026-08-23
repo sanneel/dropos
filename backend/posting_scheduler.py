@@ -16,6 +16,7 @@ Settings used:
 
 import asyncio
 import logging
+import random
 from typing import Callable, Coroutine
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -41,6 +42,7 @@ def create_posting_scheduler(get_settings_fn: Callable[[], Coroutine]) -> AsyncI
     import autopilot
     import content_ai
     import instagram
+    import instagram_private
     from models import ProductStage
 
     scheduler = AsyncIOScheduler()
@@ -53,6 +55,25 @@ def create_posting_scheduler(get_settings_fn: Callable[[], Coroutine]) -> AsyncI
             if not autopilot.posting_allowed(settings):
                 log.debug("Peak-post: autopilot posting off / Instagram not connected — skipping")
                 return
+
+            # Direct-login safety: never post during quiet hours or an action block
+            import instagram_private
+            if instagram.backend_mode(settings) == "private":
+                if instagram_private.in_quiet_hours(settings):
+                    log.info("Peak-post: quiet hours — skipping")
+                    return
+                if instagram_private.posting_blocked():
+                    log.info("Peak-post: posting paused (action block) — skipping")
+                    return
+
+            # Human jitter: wait a random slice of the slot so posts don't fire at
+            # exactly HH:MM:00 every day.
+            jitter = int(float(settings.get("ig_post_jitter_min") or 0))
+            if jitter > 0:
+                wait = random.randint(0, jitter * 60)
+                log.info("Peak-post: jitter %ds before posting", wait)
+                await asyncio.sleep(wait)
+                settings = await get_settings_fn()
 
             posts_per_slot = max(1, int(settings.get("posts_per_slot", 1)))
             max_per_day = max(1, int(float(settings.get("max_posts_per_day") or 2)))

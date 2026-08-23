@@ -5,27 +5,34 @@ Uses the community instagrapi library (Instagram's private mobile API) with your
 plain Instagram username + password. Running from a home PC (residential IP) is
 the good case for this approach. It covers everything DropOS needs:
 
-  • posting photos / albums with captions        → post_product()
-  • reading comments on your own recent posts    → poll() → Inbox + auto-reply
-  • reading and answering DMs                    → poll() / reply()
+  • posting photos / albums with captions        → post_photos()
+  • reading comments on your own recent posts     → poll_loop() → Inbox + auto-reply
+  • reading and answering DMs                      → poll_loop() / reply_*()
 
-Honest notes:
-  - This is against Instagram's ToS; accounts doing aggressive automation get
-    action-blocked. DropOS keeps volumes human (posting capped per day, polling
-    every few minutes, randomized delays between calls).
-  - Instagram sometimes asks for a verification code / in-app approval
-    ("challenge"). We surface that on the Home page; approve the login in the
-    Instagram app or submit the e-mail/SMS code in Settings, then retry.
+Configured for safety (Settings → Connections → Instagram → Advanced):
+  - Consistent device profile — country / phone code / timezone / locale are
+    fixed (Georgia by default) so the session always looks like the same phone
+    in the same place; optional residential proxy.
+  - Session-first login — the saved session is reused and only validated with a
+    lightweight timeline fetch; a full password login runs solely when the
+    session died, and the device UUIDs are preserved so Instagram sees the same
+    "phone" logging back in (not a brand-new device every time).
+  - Human pacing — randomized delay between API calls, quiet hours at night, and
+    typed handling of Instagram's pushback: challenge / 2FA surface as "needs
+    you"; "please wait a few minutes" and rate limits trigger an automatic
+    backoff; an action block (FeedbackRequired) pauses posting for a day.
 
-The session (cookies/device) is persisted in DATA_DIR/ig_session.json so a
+The session (cookies + device) is persisted in DATA_DIR/ig_session.json so a
 successful login survives restarts and re-login is rare.
 """
 
 import asyncio
 import logging
 import os
+import random
 import tempfile
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
@@ -38,10 +45,29 @@ SESSION_FILE = data_path("ig_session.json", is_file=True)
 
 _client = None            # instagrapi.Client — one per process
 _client_user = None       # username the client is logged in as
+_client_sig = None        # device signature the client was built with
 _lock = asyncio.Lock()
-_state = {"status": "logged_out", "error": "", "challenge": False, "username": ""}
-# status: logged_out | ok | challenge | error
 
+_state = {
+    "status": "logged_out",   # logged_out | ok | challenge | error
+    "error": "",
+    "challenge": False,       # needs a human: challenge / 2FA / bad password
+    "username": "",
+    "last_login_at": None,
+    "last_poll_at": None,
+    "last_poll_new": 0,
+    "backoff_until": None,    # ISO — all private calls paused until then (rate limit)
+    "post_block_until": None, # ISO — posting paused (action block) until then
+}
+
+# Default device: a phone in Georgia. Kept stable across logins.
+_DEFAULT_DEVICE = {
+    "country": "GE", "country_code": 995, "locale": "ka_GE",
+    "timezone_offset": 4 * 3600,  # Asia/Tbilisi = UTC+4
+}
+
+
+# ── helpers ───────────────────────────────────────────────────────────────────
 
 def creds(settings: dict) -> tuple[str, str]:
     return (str(settings.get("ig_private_username") or "").strip(),
@@ -53,72 +79,215 @@ def configured(settings: dict) -> bool:
     return bool(u and p)
 
 
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _iso(dt: Optional[datetime]) -> Optional[str]:
+    return dt.astimezone(timezone.utc).isoformat() if dt else None
+
+
+def _parse_iso(s) -> Optional[datetime]:
+    if not s:
+        return None
+    try:
+        d = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
 def state() -> dict:
-    return dict(_state)
+    return {**_state, "session_saved": os.path.exists(SESSION_FILE)}
+
+
+def _backoff_active() -> bool:
+    until = _parse_iso(_state.get("backoff_until"))
+    return bool(until and _now() < until)
+
+
+def posting_blocked() -> bool:
+    until = _parse_iso(_state.get("post_block_until"))
+    return bool(until and _now() < until)
+
+
+def _set_backoff(minutes: float, reason: str) -> None:
+    _state["backoff_until"] = _iso(_now() + timedelta(minutes=minutes))
+    _state["error"] = reason[:300]
+    log.warning("IG private: backing off %.0f min — %s", minutes, reason)
+
+
+def _device_settings(settings: dict) -> dict:
+    def _num(key, default):
+        v = settings.get(key)
+        return default if v in (None, "") else v
+    return {
+        "country": str(settings.get("ig_country") or _DEFAULT_DEVICE["country"]).strip() or "GE",
+        "country_code": int(_num("ig_country_code", _DEFAULT_DEVICE["country_code"])),
+        "locale": str(settings.get("ig_locale") or _DEFAULT_DEVICE["locale"]).strip() or "ka_GE",
+        "timezone_offset": int(_num("ig_timezone_offset", _DEFAULT_DEVICE["timezone_offset"])),
+        "proxy": str(settings.get("ig_proxy") or "").strip(),
+        "delay_min": float(_num("ig_delay_min", 1.5)),
+        "delay_max": float(_num("ig_delay_max", 4.0)),
+    }
 
 
 # ── Login / client management (sync internals, called via to_thread) ──────────
 
-def _login_sync(username: str, password: str, verification_code: str = ""):
-    """Create/return a logged-in instagrapi Client. Raises on failure."""
-    global _client, _client_user
-    from instagrapi import Client
+def _apply_device(cl, dev: dict) -> None:
+    """Pin locale / country / timezone / proxy so the session is consistent."""
+    try:
+        cl.set_locale(dev["locale"])
+        cl.set_country(dev["country"])
+        cl.set_country_code(dev["country_code"])
+        cl.set_timezone_offset(dev["timezone_offset"])
+    except Exception as exc:
+        log.debug("IG private: device pin partial: %s", exc)
+    if dev.get("proxy"):
+        try:
+            cl.set_proxy(dev["proxy"])
+        except Exception as exc:
+            log.warning("IG private: proxy rejected (%s) — continuing without it", exc)
+    lo, hi = dev["delay_min"], dev["delay_max"]
+    cl.delay_range = [max(0.5, lo), max(lo + 0.5, hi)]
 
-    if _client is not None and _client_user == username:
-        return _client
+
+def _login_sync(username: str, password: str, dev: dict, verification_code: str = ""):
+    """
+    Return a logged-in instagrapi Client, reusing the saved session when valid.
+
+    Session-first (the recommended instagrapi pattern):
+      1. load session → try a cheap authenticated call (timeline feed).
+      2. if that fails, log in with the password but KEEP the device UUIDs so
+         Instagram sees the same device re-authenticating.
+    """
+    global _client, _client_user, _client_sig
+    from instagrapi import Client
+    from instagrapi.exceptions import LoginRequired
 
     cl = Client()
-    cl.delay_range = [1, 3]  # human-ish delay between private API calls
+    _apply_device(cl, dev)
+
+    loaded = False
     if os.path.exists(SESSION_FILE):
         try:
             cl.load_settings(SESSION_FILE)
+            _apply_device(cl, dev)   # re-pin (load_settings can overwrite locale)
+            loaded = True
         except Exception as exc:
             log.warning("IG private: stale session file ignored: %s", exc)
+
+    if loaded and not verification_code:
+        try:
+            cl.login(username, password)   # cheap when the session cookie is valid
+            cl.get_timeline_feed()          # validate the session actually works
+            _client, _client_user, _client_sig = cl, username, dev
+            return cl
+        except LoginRequired:
+            log.info("IG private: saved session expired — logging in fresh (same device)")
+            old = cl.get_settings()
+            cl = Client()
+            _apply_device(cl, dev)
+            cl.set_settings({})
+            cl.set_uuids(old.get("uuids", {}))   # keep the device identity
+        except Exception as exc:
+            log.info("IG private: session validation failed (%s) — full login", exc)
+
     cl.login(username, password, verification_code=verification_code or "")
+    cl.get_timeline_feed()
     try:
         cl.dump_settings(SESSION_FILE)
     except Exception as exc:
         log.warning("IG private: could not persist session: %s", exc)
-    _client, _client_user = cl, username
+    _client, _client_user, _client_sig = cl, username, dev
     return cl
 
 
-async def get_client(settings: dict, verification_code: str = ""):
-    """Async wrapper with state tracking. Returns client or None."""
+def _classify(exc: Exception) -> str:
+    """Map an instagrapi exception to a state category."""
+    name = type(exc).__name__
+    if name in ("ChallengeRequired", "TwoFactorRequired", "BadPassword",
+                "RecaptchaChallengeForm", "SelectContactPointRecoveryForm"):
+        return "challenge"
+    if name == "FeedbackRequired":
+        return "action_block"
+    if name in ("PleaseWaitFewMinutes", "RateLimitError", "ProxyAddressIsBlocked"):
+        return "rate_limit"
+    if name == "LoginRequired":
+        return "login_required"
+    return "error"
+
+
+async def get_client(settings: dict, verification_code: str = "", force: bool = False):
+    """Async wrapper with state tracking + backoff. Returns client or None."""
     username, password = creds(settings)
     if not username or not password:
-        _state.update(status="logged_out", error="No username/password", username="")
+        _state.update(status="logged_out", error="No username/password", username="", challenge=False)
         return None
+    if _backoff_active() and not force and not verification_code:
+        return None
+    dev = _device_settings(settings)
     async with _lock:
+        if _client is not None and _client_user == username and _client_sig == dev and not verification_code and not force:
+            return _client
         try:
-            cl = await asyncio.to_thread(_login_sync, username, password, verification_code)
-            _state.update(status="ok", error="", challenge=False, username=username)
+            cl = await asyncio.to_thread(_login_sync, username, password, dev, verification_code)
+            _state.update(status="ok", error="", challenge=False, username=username,
+                          last_login_at=_iso(_now()), backoff_until=None)
             return cl
         except Exception as exc:
-            name = type(exc).__name__
-            challenge = "Challenge" in name or "challenge" in str(exc).lower() or "TwoFactor" in name
-            _state.update(status="challenge" if challenge else "error", error=f"{name}: {exc}"[:300],
-                          challenge=challenge, username=username)
-            log.error("IG private login failed (%s): %s", name, exc)
+            kind = _classify(exc)
+            msg = f"{type(exc).__name__}: {exc}"[:300]
+            if kind == "challenge":
+                _state.update(status="challenge", challenge=True, username=username, error=msg)
+            elif kind == "rate_limit":
+                _state.update(status="error", challenge=False, username=username)
+                _set_backoff(random.uniform(30, 60), msg)
+            elif kind == "action_block":
+                _state.update(status="error", challenge=False, username=username)
+                _set_backoff(180, "Action block — " + msg)
+            else:
+                _state.update(status="error", challenge=False, username=username, error=msg)
+            log.error("IG private login failed (%s): %s", kind, exc)
             return None
 
 
 def reset_session() -> None:
     """Forget the cached client + saved session (forces a fresh login)."""
-    global _client, _client_user
-    _client, _client_user = None, None
+    global _client, _client_user, _client_sig
+    _client, _client_user, _client_sig = None, None, None
     try:
         if os.path.exists(SESSION_FILE):
             os.remove(SESSION_FILE)
     except Exception:
         pass
-    _state.update(status="logged_out", error="", challenge=False)
+    _state.update(status="logged_out", error="", challenge=False,
+                  backoff_until=None, post_block_until=None)
+
+
+def _note_exception(exc: Exception) -> None:
+    """Update shared state from an error raised during an authenticated call."""
+    global _client
+    kind = _classify(exc)
+    msg = f"{type(exc).__name__}: {exc}"[:300]
+    if kind == "challenge":
+        _state.update(status="challenge", challenge=True, error=msg)
+    elif kind == "action_block":
+        _state["post_block_until"] = _iso(_now() + timedelta(hours=24))
+        _set_backoff(60, "Action block — posting paused 24h — " + msg)
+    elif kind == "rate_limit":
+        _set_backoff(random.uniform(30, 60), msg)
+    elif kind == "login_required":
+        _state.update(status="error", error="Session expired — will re-login")
+        _client = None   # drop the cached client so the next call re-logs in
+    else:
+        _state["error"] = msg
 
 
 # ── Posting ───────────────────────────────────────────────────────────────────
 
 async def _download(url: str) -> Optional[str]:
-    """Download an image to a temp .jpg; returns the local path or None."""
+    """Download an image to a temp .jpg (or return a local file:// path). None on failure."""
     if url.startswith("file://"):
         local = url[7:]
         return local if os.path.exists(local) else None
@@ -127,7 +296,6 @@ async def _download(url: str) -> Optional[str]:
             r = await client.get(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.1688.com/"})
         if r.status_code != 200 or not r.content:
             return None
-        # instagrapi needs a real JPEG on disk
         from PIL import Image
         import io
         img = Image.open(io.BytesIO(r.content))
@@ -144,10 +312,9 @@ async def _download(url: str) -> Optional[str]:
 
 
 async def post_photos(image_urls: list, caption: str, settings: dict) -> dict:
-    """
-    Post one photo or an album. Returns {"ok", "url", "error"}.
-    Absolute http(s) URLs only — the caller filters like the Graph path does.
-    """
+    """Post one photo or an album. Returns {"ok", "url", "error"}."""
+    if posting_blocked():
+        return {"ok": False, "error": f"Posting paused until {_state.get('post_block_until')} (Instagram action block)", "url": ""}
     cl = await get_client(settings)
     if cl is None:
         return {"ok": False, "error": _state.get("error") or "Not logged in", "url": ""}
@@ -167,6 +334,7 @@ async def post_photos(image_urls: list, caption: str, settings: dict) -> dict:
             code = getattr(media, "code", None)
             return f"https://www.instagram.com/p/{code}/" if code else ""
         url = await asyncio.to_thread(_upload)
+        _state["error"] = ""
         return {"ok": True, "url": url, "error": ""}
     except Exception as exc:
         log.error("IG private: upload failed: %s", exc)
@@ -179,22 +347,16 @@ async def post_photos(image_urls: list, caption: str, settings: dict) -> dict:
                 except Exception: pass
 
 
-def _note_exception(exc: Exception) -> None:
-    name = type(exc).__name__
-    if "Challenge" in name or "LoginRequired" in name:
-        _state.update(status="challenge" if "Challenge" in name else "error",
-                      challenge="Challenge" in name, error=f"{name}: {exc}"[:300])
-
-
 # ── Reading communications (the polling side) ────────────────────────────────
 
 async def fetch_incoming(settings: dict, media_amount: int = 6, dm_amount: int = 10) -> dict:
     """
-    Pull recent comments on our own posts + recent DMs.
-    Returns {"comments": [...], "dms": [...], "error": str|None} with normalized dicts:
+    Pull recent comments on our own posts + recent DMs. Normalized dicts:
       comment: {external_id, media_id, sender_id, sender_name, text, media_url}
       dm:      {external_id, thread_id, sender_id, sender_name, text}
     """
+    if _backoff_active():
+        return {"comments": [], "dms": [], "error": f"backing off until {_state.get('backoff_until')}"}
     cl = await get_client(settings)
     if cl is None:
         return {"comments": [], "dms": [], "error": _state.get("error") or "Not logged in"}
@@ -202,10 +364,7 @@ async def fetch_incoming(settings: dict, media_amount: int = 6, dm_amount: int =
     def _pull():
         me = str(cl.user_id)
         comments, dms = [], []
-        try:
-            medias = cl.user_medias(cl.user_id, amount=media_amount)
-        except Exception as exc:
-            raise RuntimeError(f"user_medias: {exc}") from exc
+        medias = cl.user_medias(cl.user_id, amount=media_amount)
         for m in medias:
             try:
                 for c in cl.media_comments(m.id, amount=20):
@@ -244,7 +403,9 @@ async def fetch_incoming(settings: dict, media_amount: int = 6, dm_amount: int =
         return {"comments": comments, "dms": dms, "error": None}
 
     try:
-        return await asyncio.to_thread(_pull)
+        result = await asyncio.to_thread(_pull)
+        _state["error"] = ""
+        return result
     except Exception as exc:
         _note_exception(exc)
         log.warning("IG private: fetch_incoming failed: %s", exc)
@@ -280,14 +441,12 @@ async def reply_dm(thread_id: str, text: str, settings: dict) -> bool:
         return False
 
 
-# ── Polling loop body: capture → lead flag → auto-reply ──────────────────────
+# ── Polling: capture → lead flag → auto-reply ─────────────────────────────────
 
 async def process_incoming(db, settings: dict) -> dict:
-    """
-    One polling pass. New messages land in the Inbox exactly like webhook
+    """One polling pass. New messages land in the Inbox exactly like webhook
     traffic; auto-reply rules run when enabled. Dedup: inbox_add returns None
-    for anything already seen.
-    """
+    for anything already seen."""
     from instagram_replies import match_rule, is_lead
     import activity
 
@@ -309,7 +468,7 @@ async def process_incoming(db, settings: dict) -> dict:
                                     c["text"], c["media_id"], is_lead=is_lead(c["text"], settings),
                                     auto_reply=rule["reply"] if rule else "")
         if new_id is None:
-            continue  # already seen in a previous poll
+            continue
         stats["new"] += 1
         if is_lead(c["text"], settings):
             await activity.record("lead_received", f"Possible order from {c['sender_name'] or 'someone'}: “{c['text'][:80]}”",
@@ -338,15 +497,35 @@ async def process_incoming(db, settings: dict) -> dict:
                 await db.log_comment_reply(m["external_id"], ",".join(rule["keywords"]) or "*", "dm")
                 await activity.record("reply_sent", f"Replied to a DM from {m['sender_name'] or m['sender_id']}: “{rule['reply'][:60]}”")
 
+    _state.update(last_poll_at=_iso(_now()), last_poll_new=stats["new"])
     if stats["new"]:
         log.info("IG private poll: %s", stats)
     return stats
 
 
+def in_quiet_hours(settings: dict) -> bool:
+    """True during the configured night window (local time), when we don't act."""
+    try:
+        start = 1 if settings.get("ig_quiet_start") in (None, "") else int(settings.get("ig_quiet_start"))
+        end = 7 if settings.get("ig_quiet_end") in (None, "") else int(settings.get("ig_quiet_end"))
+    except (TypeError, ValueError):
+        start, end = 1, 7
+    if start == end:
+        return False
+    tz = str(settings.get("post_timezone") or "Asia/Tbilisi")
+    try:
+        from zoneinfo import ZoneInfo
+        hour = datetime.now(ZoneInfo(tz)).hour
+    except Exception:
+        hour = _now().hour
+    return (start <= hour < end) if start < end else (hour >= start or hour < end)
+
+
 async def poll_loop(db, get_settings):
     """
-    Background task: read Instagram communications every ig_poll_minutes
-    (default 5) when the direct-login backend is configured and Autopilot runs.
+    Background task: read Instagram communications on a jittered interval
+    (ig_poll_minutes ± 30%, default 5) when direct login is configured, Autopilot
+    is on, and we're not in quiet hours or a backoff.
     """
     import autopilot
     log.info("Started Instagram polling loop (direct login).")
@@ -354,9 +533,13 @@ async def poll_loop(db, get_settings):
     while True:
         try:
             settings = await get_settings()
-            minutes = max(2, float(settings.get("ig_poll_minutes") or 5))
-            if not (configured(settings) and str(settings.get("instagram_backend") or "auto") in ("auto", "private")
-                    and autopilot.enabled(settings)):
+            base = max(2.0, float(settings.get("ig_poll_minutes") or 5))
+            active = (configured(settings)
+                      and str(settings.get("instagram_backend") or "auto") in ("auto", "private")
+                      and autopilot.enabled(settings)
+                      and not in_quiet_hours(settings)
+                      and not _backoff_active())
+            if not active:
                 await asyncio.sleep(60)
                 continue
             stats = await process_incoming(db, settings)
@@ -366,7 +549,8 @@ async def poll_loop(db, get_settings):
                 await activity.record("config", f"Instagram polling problem: {stats['error'][:140]}"
                                       + (" — approve the login in the Instagram app, then use “Log in now” in Settings." if _state.get("challenge") else ""),
                                       level="warn")
-            await asyncio.sleep(minutes * 60)
+            jitter = base * random.uniform(0.7, 1.3)
+            await asyncio.sleep(jitter * 60)
         except asyncio.CancelledError:
             break
         except Exception as exc:

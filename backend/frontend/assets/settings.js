@@ -136,7 +136,27 @@ function connectionsPanel(s) {
             <button class="btn btn-sm" onclick="igPrivatePoll(this)" title="Read comments & DMs right now">Check messages now</button>
             <button class="btn btn-sm btn-danger-ghost" onclick="igPrivateReset()" title="Forget the saved session">Reset session</button>
           </div>
-          <div id="igp-status" class="help">${s.ig_private_state?.status === 'ok' ? `✓ Logged in as @${escHtml(s.ig_private_state.username)}` : s.ig_private_state?.error ? `✗ ${escHtml(s.ig_private_state.error)}` : 'Not logged in yet — save the credentials, then “Log in now”.'}</div>
+          <div id="igp-status" class="help">${igPrivateStatusLine(s.ig_private_state)}</div>
+          <details class="adv"><summary>Advanced — device &amp; safety</summary>
+            <div class="help" style="margin-bottom:8px">Defaults are tuned for a Georgian phone posting a couple of times a day. Change these only if you know why.</div>
+            <div class="form-row">
+              ${fieldRow('Country', `<input type="text" id="s-ig-country" value="${escHtml(s.ig_country || 'GE')}" maxlength="2" class="mono"/>`)}
+              ${fieldRow('Phone code', `<input type="number" id="s-ig-cc" value="${s.ig_country_code ?? 995}"/>`)}
+            </div>
+            <div class="form-row">
+              ${fieldRow('Locale', `<input type="text" id="s-ig-locale" value="${escHtml(s.ig_locale || 'ka_GE')}" class="mono"/>`)}
+              ${fieldRow('Timezone offset (seconds)', `<input type="number" id="s-ig-tzoff" value="${s.ig_timezone_offset ?? 14400}"/>`, 'UTC+4 = 14400 (Tbilisi).')}
+            </div>
+            ${fieldRow('Proxy <span class="muted">(optional residential)</span>', `<input type="text" id="s-ig-proxy" value="${escHtml(s.ig_proxy || '')}" placeholder="http://user:pass@host:port" class="mono"/>`, 'A residential proxy in Georgia further lowers block risk. Leave empty to use this PC.')}
+            <div class="form-row">
+              ${fieldRow('Delay between actions (s)', `<div class="row"><input type="number" step="0.5" id="s-ig-dmin" value="${s.ig_delay_min ?? 1.5}" style="flex:1"/><span class="muted">–</span><input type="number" step="0.5" id="s-ig-dmax" value="${s.ig_delay_max ?? 4}" style="flex:1"/></div>`)}
+              ${fieldRow('Poll every (min)', `<input type="number" id="s-ig-poll" value="${s.ig_poll_minutes ?? 5}" min="2"/>`)}
+            </div>
+            <div class="form-row">
+              ${fieldRow('Quiet hours', `<div class="row"><input type="number" id="s-ig-qstart" value="${s.ig_quiet_start ?? 1}" min="0" max="23" style="flex:1"/><span class="muted">to</span><input type="number" id="s-ig-qend" value="${s.ig_quiet_end ?? 7}" min="0" max="23" style="flex:1"/></div>`, 'No posts or polling during these local hours.')}
+              ${fieldRow('Post time jitter (min)', `<input type="number" id="s-ig-jitter" value="${s.ig_post_jitter_min ?? 20}" min="0" max="120"/>`, 'Randomizes each scheduled post so it never fires at exactly HH:MM:00.')}
+            </div>
+          </details>
         </div>
 
         <div id="ig-graph-box" style="display:${s.instagram_backend==='private'?'none':'block'};margin-top:10px;border-top:1px solid var(--b1);padding-top:10px">
@@ -312,12 +332,17 @@ async function saveSettings() {
     's-cssbuy-user': 'cssbuy_username', 's-cssbuy-source': 'cssbuy_source', 's-sheets-id': 'google_sheets_id',
     's-post-tz': 'post_timezone', 's-webhook-token': 'instagram_webhook_token', 's-gemini-model': 'gemini_model',
     's-content-provider': 'content_provider', 's-anthropic-model': 'anthropic_model', 's-openai-model': 'openai_model',
-    's-ig-backend': 'instagram_backend', 's-igp-user': 'ig_private_username' };
+    's-ig-backend': 'instagram_backend', 's-igp-user': 'ig_private_username',
+    's-ig-country': 'ig_country', 's-ig-locale': 'ig_locale', 's-ig-proxy': 'ig_proxy' };
   for (const [id, key] of Object.entries(txt)) if (has(id)) data[key] = (g(id).value || '').trim();
   const nums = { 's-price-min': ['sell_price_min', 40], 's-price-max': ['sell_price_max', 119], 's-margin': ['min_margin', 60], 's-rating': ['min_rating', 4.5],
     's-exchange': ['exchange_rate', 0.353], 's-ml': ['sell_markup_low', 3.5], 's-mm': ['sell_markup_mid', 2.8], 's-mh': ['sell_markup_high', 2.2],
     's-scan-hours': ['scan_interval_hours', 12], 's-auto-min': ['auto_approve_min_score', 7], 's-auto-reject-days': ['auto_reject_pending_days', 0],
-    's-posts-per-slot': ['posts_per_slot', 1], 's-max-posts': ['max_posts_per_day', 2] };
+    's-posts-per-slot': ['posts_per_slot', 1], 's-max-posts': ['max_posts_per_day', 2],
+    's-ig-cc': ['ig_country_code', 995], 's-ig-tzoff': ['ig_timezone_offset', 14400],
+    's-ig-dmin': ['ig_delay_min', 1.5], 's-ig-dmax': ['ig_delay_max', 4],
+    's-ig-poll': ['ig_poll_minutes', 5], 's-ig-qstart': ['ig_quiet_start', 1],
+    's-ig-qend': ['ig_quiet_end', 7], 's-ig-jitter': ['ig_post_jitter_min', 20] };
   for (const [id, [key, d]] of Object.entries(nums)) if (has(id)) data[key] = num(id, d);
   const bools = { 's-local-only': 'local_scraping_only', 's-context-injection': 'ai_context_injection', 's-auto-scan': 'auto_scan_enabled',
     's-auto-approve': 'auto_approve_enabled', 's-auto-clean': 'auto_clean_images', 's-post-enabled': 'post_schedule_enabled',
@@ -385,6 +410,20 @@ async function resetDatabase() {
   if (!confirm('Final confirmation: wipe the entire catalog?')) return;
   try { const res = await api('/admin/reset-database', 'POST'); if (res.ok) { toast('Database reset', 'success'); refreshStats(); navigate('home'); } } catch(e) {}
 }
+function igPrivateStatusLine(st) {
+  if (!st) return 'Not logged in yet — save the credentials, then “Log in now”.';
+  if (st.status === 'ok') {
+    let extra = '';
+    if (st.last_poll_at) extra += ` · last checked ${relTime(st.last_poll_at)}`;
+    if (st.post_block_until && new Date(st.post_block_until) > new Date()) extra += ` · ⚠ posting paused until ${fmtDate(st.post_block_until)}`;
+    else if (st.backoff_until && new Date(st.backoff_until) > new Date()) extra += ` · cooling down until ${fmtDate(st.backoff_until)}`;
+    return `✓ Logged in as @${escHtml(st.username)}${extra}`;
+  }
+  if (st.challenge) return `⚠ Instagram wants to confirm this login — approve it in the Instagram app (or enter the emailed/SMS code above), then press “Log in now”. <span class="muted">${escHtml(st.error || '')}</span>`;
+  if (st.error) return `✗ ${escHtml(st.error)}`;
+  return 'Not logged in yet — save the credentials, then “Log in now”.';
+}
+
 async function igPrivateLogin(btn) {
   if (btn) { btn.disabled = true; btn.textContent = 'Logging in…'; }
   const el = document.getElementById('igp-status');

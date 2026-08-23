@@ -95,6 +95,14 @@ for what it cannot decide and for fulfilling orders:
 | Clean photos | Chinese text / watermarks removed with Clipdrop | `auto_clean_images` + Clipdrop key |
 | Post to Instagram | best approved product posted at peak hours, daily cap | `post_schedule_enabled`, `post_times`, `max_posts_per_day` |
 | Content writer | a second model (Claude / OpenAI) rewrites the caption right before each post — hook → desire → order CTA, fresh hashtags | `content_provider`, `content_rewrite_enabled` |
+
+**Instagram without a Meta developer account.** Set *Connection method* to **Direct login**
+(Settings → Connections → Instagram) and sign in with your Instagram username + password —
+DropOS then posts, reads comments & DMs (polled every few minutes) and auto-replies, all from
+your PC. It's configured to stay under the radar: a fixed Georgian device profile, session reuse,
+randomized delays and post-time jitter, quiet hours at night, and automatic backoff when
+Instagram pushes back (rate limits → cooldown, action block → posting paused 24h). This uses
+Instagram's private API (against their ToS) — keep volumes human and don't raise the caps.
 | Answer comments & DMs | keyword rules reply instantly; order intent lands in **Inbox** | `instagram_*_reply_enabled`, `lead_keywords` |
 
 Everything Autopilot does is written to the activity feed on Home, and the

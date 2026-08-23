@@ -1668,6 +1668,17 @@ async def init_db():
                 "ig_private_username": "",
                 "ig_private_password": "",
                 "ig_poll_minutes": 5,
+                # Direct-login device profile + safety
+                "ig_country": "GE",
+                "ig_country_code": 995,
+                "ig_locale": "ka_GE",
+                "ig_timezone_offset": 14400,     # UTC+4 seconds (Asia/Tbilisi)
+                "ig_proxy": "",                  # optional residential proxy DSN
+                "ig_delay_min": 1.5,
+                "ig_delay_max": 4.0,
+                "ig_quiet_start": 1,             # local hour: don't post/poll from 01:00
+                "ig_quiet_end": 7,               # …until 07:00
+                "ig_post_jitter_min": 20,        # randomize the peak-post time by up to N minutes
                 # Content writer (second model next to Gemini)
                 "content_provider": "auto",
                 "content_rewrite_enabled": True,
