@@ -130,6 +130,18 @@ function connectionsPanel(s) {
             ${fieldRow('Instagram username', `<input type="text" id="s-igp-user" value="${escHtml(s.ig_private_username || '')}" placeholder="yourstore" autocomplete="off"/>`)}
             ${fieldRow('Instagram password', secretInput('s-igp-pass', s.ig_private_password_set, ''))}
           </div>
+          <details class="adv" ${s.ig_private_state?.challenge ? 'open' : ''}>
+            <summary>Instagram keeps asking to confirm? Sign in with a session cookie</summary>
+            <div class="help" style="margin-bottom:8px">
+              When Instagram answers with a checkpoint that has no code, hand over a session from a browser
+              where you are already logged in — that skips the login step completely.<br/>
+              In Chrome on this PC, open <span class="mono">instagram.com</span> (logged in) →
+              <b>F12</b> → <b>Application</b> → <b>Cookies</b> → <span class="mono">https://www.instagram.com</span> →
+              copy the value of <span class="mono">sessionid</span> and paste it here, then Save and press “Log in now”.
+              <span class="muted">Treat it like a password. Logging out of that browser tab invalidates it.</span>
+            </div>
+            ${fieldRow('sessionid cookie', secretInput('s-igp-sid', s.ig_session_id_set, ''))}
+          </details>
           <div class="row" style="margin-bottom:8px">
             <button class="btn btn-sm btn-green" onclick="igPrivateLogin(this)">Log in now</button>
             <input type="text" id="s-igp-code" placeholder="verification code (only if asked)" style="max-width:220px"/>
@@ -358,6 +370,7 @@ async function saveSettings() {
   // secrets: only when typed
   const secrets = { 's-gemini': 'gemini_key', 's-groq': 'groq_key', 's-clipdrop': 'clipdrop_key', 's-ig-token': 'instagram_access_token',
     's-anthropic': 'anthropic_key', 's-openai': 'openai_key', 's-igp-pass': 'ig_private_password',
+    's-igp-sid': 'ig_session_id',
     's-ig-app-secret': 'instagram_app_secret', 's-cssbuy-pass': 'cssbuy_password', 's-captcha-key': 'captcha_2captcha_key',
     's-ingest-token': 'ingest_api_token', 's-sheets-creds': 'google_sheets_credentials' };
   for (const [id, key] of Object.entries(secrets)) { const v = g(id)?.value?.trim(); if (v) data[key] = v; }
@@ -419,7 +432,12 @@ function igPrivateStatusLine(st) {
     else if (st.backoff_until && new Date(st.backoff_until) > new Date()) extra += ` · cooling down until ${fmtDate(st.backoff_until)}`;
     return `✓ Logged in as @${escHtml(st.username)}${extra}`;
   }
-  if (st.challenge) return `⚠ Instagram wants to confirm this login — approve it in the Instagram app (or enter the emailed/SMS code above), then press “Log in now”. <span class="muted">${escHtml(st.error || '')}</span>`;
+  if (st.challenge) {
+    const native = /native challenge|not handled by challenge_code_handler/i.test(st.error || '');
+    return native
+      ? `⚠ Instagram is blocking this login with a checkpoint that has no code to enter. Use <b>“Sign in with a session cookie”</b> above — paste the <span class="mono">sessionid</span> from a browser where you are already logged in. <span class="muted">${escHtml(st.error || '')}</span>`
+      : `⚠ Instagram wants to confirm this login — approve it in the Instagram app (or enter the emailed/SMS code above), then press “Log in now”. <span class="muted">${escHtml(st.error || '')}</span>`;
+  }
   if (st.error) return `✗ ${escHtml(st.error)}`;
   return 'Not logged in yet — save the credentials, then “Log in now”.';
 }

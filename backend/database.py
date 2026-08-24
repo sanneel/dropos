@@ -1667,6 +1667,7 @@ async def init_db():
                 "instagram_backend": "auto",
                 "ig_private_username": "",
                 "ig_private_password": "",
+                "ig_session_id": "",             # sessionid cookie from a logged-in browser
                 "ig_poll_minutes": 5,
                 # Direct-login device profile + safety
                 "ig_country": "GE",

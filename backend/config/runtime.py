@@ -12,6 +12,7 @@ SENSITIVE_KEYS = {
     "instagram_webhook_token",
     "instagram_app_secret",
     "ig_private_password",
+    "ig_session_id",
     "ig_proxy",
     "cssbuy_password",
     "cssbuy_session_json",

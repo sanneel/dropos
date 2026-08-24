@@ -184,6 +184,7 @@ _SENSITIVE_SETTING_FIELDS = {
     "instagram_webhook_token",
     "instagram_app_secret",
     "ig_private_password",
+    "ig_session_id",
     "ig_proxy",
     "cssbuy_password",
     "captcha_2captcha_key",
@@ -561,6 +562,7 @@ class SettingsUpdate(BaseModel):
     instagram_backend: Optional[str] = None
     ig_private_username: Optional[str] = None
     ig_private_password: Optional[str] = None
+    ig_session_id: Optional[str] = None
     ig_poll_minutes: Optional[float] = None
     ig_country: Optional[str] = None
     ig_country_code: Optional[int] = None

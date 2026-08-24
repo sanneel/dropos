@@ -74,9 +74,24 @@ def creds(settings: dict) -> tuple[str, str]:
             str(settings.get("ig_private_password") or "").strip())
 
 
+def session_id(settings: dict) -> str:
+    """The `sessionid` cookie copied from a browser already logged into Instagram.
+
+    Instagram sometimes answers a password login with a native checkpoint that
+    has no code to enter ("complete it in the official app") — unsolvable from
+    here. Handing over an already-authenticated session sidesteps the login
+    entirely, so this is the reliable way in once a checkpoint appears.
+    """
+    raw = str(settings.get("ig_session_id") or "").strip()
+    # Accept a pasted cookie string ("sessionid=abc%3A...; ds_user_id=...") too
+    if "sessionid=" in raw:
+        raw = raw.split("sessionid=", 1)[1].split(";", 1)[0].strip()
+    return raw.strip('"').strip()
+
+
 def configured(settings: dict) -> bool:
     u, p = creds(settings)
-    return bool(u and p)
+    return bool(session_id(settings) or (u and p))
 
 
 def _now() -> datetime:
@@ -152,13 +167,16 @@ def _apply_device(cl, dev: dict) -> None:
     cl.delay_range = [max(0.5, lo), max(lo + 0.5, hi)]
 
 
-def _login_sync(username: str, password: str, dev: dict, verification_code: str = ""):
+def _login_sync(username: str, password: str, dev: dict, verification_code: str = "",
+                sessionid: str = ""):
     """
     Return a logged-in instagrapi Client, reusing the saved session when valid.
 
     Session-first (the recommended instagrapi pattern):
       1. load session → try a cheap authenticated call (timeline feed).
-      2. if that fails, log in with the password but KEEP the device UUIDs so
+      2. adopt the browser `sessionid` cookie when one is configured — this is
+         the only way past Instagram's native checkpoint, which offers no code.
+      3. otherwise log in with the password but KEEP the device UUIDs so
          Instagram sees the same device re-authenticating.
     """
     global _client, _client_user, _client_sig
@@ -193,6 +211,31 @@ def _login_sync(username: str, password: str, dev: dict, verification_code: str 
         except Exception as exc:
             log.info("IG private: session validation failed (%s) — full login", exc)
 
+    if sessionid and not verification_code:
+        try:
+            uuids = {}
+            try:
+                uuids = cl.get_settings().get("uuids", {}) or {}
+            except Exception:
+                pass
+            sc = Client()
+            _apply_device(sc, dev)
+            if uuids:
+                sc.set_uuids(uuids)   # keep this "phone" identity across methods
+            sc.login_by_sessionid(sessionid)
+            sc.get_timeline_feed()    # a checkpointed session fails here, not silently
+            try:
+                sc.dump_settings(SESSION_FILE)
+            except Exception as exc:
+                log.warning("IG private: could not persist session: %s", exc)
+            log.info("IG private: authenticated with the browser sessionid cookie")
+            _client, _client_user, _client_sig = sc, username, dev
+            return sc
+        except Exception as exc:
+            log.warning("IG private: sessionid login failed (%s: %s)", type(exc).__name__, exc)
+            if not (username and password):
+                raise
+
     cl.login(username, password, verification_code=verification_code or "")
     cl.get_timeline_feed()
     try:
@@ -201,6 +244,14 @@ def _login_sync(username: str, password: str, dev: dict, verification_code: str 
         log.warning("IG private: could not persist session: %s", exc)
     _client, _client_user, _client_sig = cl, username, dev
     return cl
+
+
+def _client_username(cl) -> str:
+    """Best-effort handle for the logged-in account (sessionid login has no username)."""
+    try:
+        return str(cl.username or "") or str(cl.account_info().username or "")
+    except Exception:
+        return ""
 
 
 def _classify(exc: Exception) -> str:
@@ -221,7 +272,8 @@ def _classify(exc: Exception) -> str:
 async def get_client(settings: dict, verification_code: str = "", force: bool = False):
     """Async wrapper with state tracking + backoff. Returns client or None."""
     username, password = creds(settings)
-    if not username or not password:
+    sid = session_id(settings)
+    if not sid and (not username or not password):
         _state.update(status="logged_out", error="No username/password", username="", challenge=False)
         return None
     if _backoff_active() and not force and not verification_code:
@@ -231,8 +283,9 @@ async def get_client(settings: dict, verification_code: str = "", force: bool = 
         if _client is not None and _client_user == username and _client_sig == dev and not verification_code and not force:
             return _client
         try:
-            cl = await asyncio.to_thread(_login_sync, username, password, dev, verification_code)
-            _state.update(status="ok", error="", challenge=False, username=username,
+            cl = await asyncio.to_thread(_login_sync, username, password, dev, verification_code, sid)
+            name = username or _client_username(cl)
+            _state.update(status="ok", error="", challenge=False, username=name,
                           last_login_at=_iso(_now()), backoff_until=None)
             return cl
         except Exception as exc:
