@@ -449,9 +449,11 @@ async function igPrivateLogin(btn) {
     // save typed credentials first so the backend has them
     const u = document.getElementById('s-igp-user')?.value?.trim();
     const p = document.getElementById('s-igp-pass')?.value?.trim();
+    const sid = document.getElementById('s-igp-sid')?.value?.trim();
     const body = {};
     if (u) body.ig_private_username = u;
     if (p) body.ig_private_password = p;
+    if (sid) body.ig_session_id = sid;
     if (Object.keys(body).length) await api('/settings', 'PATCH', body);
     const code = document.getElementById('s-igp-code')?.value?.trim() || null;
     const r = await api('/instagram/private/login', 'POST', { verification_code: code });
@@ -459,7 +461,14 @@ async function igPrivateLogin(btn) {
     toast('Instagram connected (direct login)', 'success');
     refreshStats();
   } catch(e) {
-    if (el) { el.className = 'help err-txt'; el.textContent = `✗ ${e.message || 'Login failed'} — if Instagram asked to confirm, approve it in the app or enter the code, then retry.`; }
+    if (el) {
+      const msg = e.message || 'Login failed';
+      const native = /native challenge|not handled by challenge_code_handler/i.test(msg);
+      el.className = 'help err-txt';
+      el.textContent = native
+        ? `✗ ${msg} — this checkpoint has no code: paste the sessionid cookie in the section above and press “Log in now” again.`
+        : `✗ ${msg} — if Instagram asked to confirm, approve it in the app or enter the code, then retry.`;
+    }
   } finally { if (btn) { btn.disabled = false; btn.textContent = 'Log in now'; } }
 }
 async function igPrivatePoll(btn) {
