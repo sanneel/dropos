@@ -1567,7 +1567,9 @@ async def ig_private_login(body: PrivateLoginBody):
     settings = await _settings()
     if not instagram_private.configured(settings):
         raise HTTPException(400, "Enter the Instagram username and password first, then Save.")
-    cl = await instagram_private.get_client(settings, verification_code=(body.verification_code or "").strip())
+    # force=True: this is a deliberate human attempt, so it runs even while a
+    # challenge is pending (the polling loop deliberately does not).
+    cl = await instagram_private.get_client(settings, verification_code=(body.verification_code or "").strip(), force=True)
     st = instagram_private.state()
     if cl is None:
         raise HTTPException(502, st.get("error") or "Login failed")

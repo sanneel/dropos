@@ -278,6 +278,10 @@ async def get_client(settings: dict, verification_code: str = "", force: bool = 
         return None
     if _backoff_active() and not force and not verification_code:
         return None
+    # A pending challenge needs a human. Retrying on the polling loop only piles
+    # up failed logins against the account, so wait for an explicit attempt.
+    if _state.get("challenge") and not force and not verification_code:
+        return None
     dev = _device_settings(settings)
     async with _lock:
         if _client is not None and _client_user == username and _client_sig == dev and not verification_code and not force:
@@ -591,6 +595,7 @@ async def poll_loop(db, get_settings):
                       and str(settings.get("instagram_backend") or "auto") in ("auto", "private")
                       and autopilot.enabled(settings)
                       and not in_quiet_hours(settings)
+                      and not _state.get("challenge")   # needs a human first
                       and not _backoff_active())
             if not active:
                 await asyncio.sleep(60)
