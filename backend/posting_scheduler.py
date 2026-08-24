@@ -56,9 +56,10 @@ def create_posting_scheduler(get_settings_fn: Callable[[], Coroutine]) -> AsyncI
                 log.debug("Peak-post: autopilot posting off / Instagram not connected — skipping")
                 return
 
-            # Direct-login safety: never post during quiet hours or an action block
+            # Unofficial-backend safety: never post during quiet hours or an
+            # action block. Both backends drive the same account, so both wait.
             import instagram_private
-            if instagram.backend_mode(settings) == "private":
+            if instagram.backend_mode(settings) in ("private", "browser"):
                 if instagram_private.in_quiet_hours(settings):
                     log.info("Peak-post: quiet hours — skipping")
                     return

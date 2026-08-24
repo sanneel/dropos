@@ -563,6 +563,8 @@ class SettingsUpdate(BaseModel):
     ig_private_username: Optional[str] = None
     ig_private_password: Optional[str] = None
     ig_session_id: Optional[str] = None
+    ig_browser_enabled: Optional[bool] = None
+    ig_browser_headed: Optional[bool] = None
     ig_poll_minutes: Optional[float] = None
     ig_country: Optional[str] = None
     ig_country_code: Optional[int] = None
@@ -815,6 +817,8 @@ async def get_settings():
     data["instagram_mode"] = instagram.backend_mode(merged)
     data["instagram_connected"] = data["instagram_mode"] != "none"
     data["ig_private_state"] = instagram_private.state()
+    import instagram_browser
+    data["ig_browser_state"] = instagram_browser.state()
     data["runtime"] = {
         "data_dir": str(DATA_DIR),
         "embedded_db": bool(getattr(db, "embedded", False)),
@@ -1575,6 +1579,25 @@ async def ig_private_login(body: PrivateLoginBody):
         raise HTTPException(502, st.get("error") or "Login failed")
     await activity.record("config", f"Instagram direct login OK as @{st.get('username')}")
     return {"ok": True, "state": st}
+
+@app.post("/api/instagram/browser/check")
+async def ig_browser_check():
+    """Open instagram.com in the automation profile and report the session."""
+    import instagram_browser
+    settings = await _settings()
+    res = await instagram_browser.check_session(settings)
+    if res.get("ok"):
+        await activity.record("config", f"Instagram browser session OK as @{res.get('username') or '?'}")
+    return {**res, "state": instagram_browser.state()}
+
+
+@app.post("/api/instagram/browser/reset")
+async def ig_browser_reset():
+    """Forget the automation browser profile (re-seeds from the cookie next time)."""
+    import instagram_browser
+    await instagram_browser.reset_profile()
+    return {"ok": True, "state": instagram_browser.state()}
+
 
 @app.post("/api/instagram/private/reset")
 async def ig_private_reset():

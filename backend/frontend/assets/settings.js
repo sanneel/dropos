@@ -33,7 +33,10 @@ function setupPanel(s) {
   const items = [
     { ok: !!s.gemini_key_set, title: 'AI scoring (Gemini)', desc: s.gemini_key_set ? `Products are scored by ${escHtml(s.gemini_model || 'gemini-2.5-flash-lite')}.` : 'Without it nothing is judged — every product lands in Review unscored. Free key at aistudio.google.com.', tab: 'connections' },
     { ok: !!(s.cssbuy_username && s.cssbuy_password_set), title: 'Product source (CSSBuy)', desc: s.cssbuy_username ? `Logged in as ${escHtml(s.cssbuy_username)} · source: ${escHtml(s.cssbuy_source || '1688')}.` : 'Your CSSBuy login lets DropOS scrape 1688 / Taobao.', tab: 'connections' },
-    { ok: !!s.instagram_connected, title: 'Instagram', desc: s.instagram_connected ? (s.instagram_mode === 'private' ? `Connected by direct login${s.ig_private_state?.username ? ' as @' + escHtml(s.ig_private_state.username) : ''} — posts, reads comments & DMs.` : `Official API — posting to ${escHtml(s.instagram_user_id || '')}.`) : 'Easiest: direct login with your Instagram username & password — no Meta developer account. Until then posts are simulated.', tab: 'connections' },
+    { ok: !!s.instagram_connected, title: 'Instagram', desc: s.instagram_connected ? ({
+        browser: `Posting through the browser${s.ig_browser_state?.username ? ' as @' + escHtml(s.ig_browser_state.username) : ''} — no login event, so no checkpoint.`,
+        private: `Connected by direct login${s.ig_private_state?.username ? ' as @' + escHtml(s.ig_private_state.username) : ''} — posts, reads comments & DMs.`,
+      }[s.instagram_mode] || `Official API — posting to ${escHtml(s.instagram_user_id || '')}.`) : 'Easiest: direct login with your Instagram username & password — no Meta developer account. Until then posts are simulated.', tab: 'connections' },
     { ok: !!s.image_storage_set, soft: true, title: 'Image storage (Supabase)', desc: s.image_storage_set ? 'Photos are re-hosted on a public URL Instagram can always fetch.' : 'Optional but recommended: supplier CDN links usually work, Supabase Storage (free) always works. Set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY in .env.', tab: 'connections' },
     { ok: !!s.clipdrop_key_set, soft: true, title: 'Photo cleaning (Clipdrop)', desc: s.clipdrop_key_set ? 'Chinese text / watermarks are removed automatically.' : 'Optional: cleans Chinese text from photos so they can be posted. 100 free images / month.', tab: 'connections' },
     { ok: !!(s.anthropic_key_set || s.openai_key_set), soft: true, title: 'Content writer (Claude / OpenAI)', desc: (s.anthropic_key_set || s.openai_key_set) ? `Captions are rewritten by ${escHtml(s.content_provider === 'auto' ? (s.anthropic_key_set ? 'Claude' : 'OpenAI') : s.content_provider || 'auto')} right before posting.` : 'Optional: a second model writes stronger Georgian captions (hook → desire → CTA) at post time, generates keywords and powers the Assistant.', tab: 'connections' },
@@ -115,10 +118,27 @@ function connectionsPanel(s) {
       <div class="card">
         <div class="card-hd"><h3>Instagram</h3>${statusChip(s.instagram_connected, s.instagram_mode === 'private' ? 'Direct login' : 'Official API', 'Simulated')}</div>
         ${fieldRow('Connection method', `<select id="s-ig-backend" onchange="document.getElementById('ig-private-box').style.display=this.value==='graph'?'none':'block';document.getElementById('ig-graph-box').style.display=this.value==='private'?'none':'block'">
-            <option value="auto"    ${(s.instagram_backend||'auto')==='auto'    ? 'selected':''}>Auto — direct login when set, else official API</option>
+            <option value="auto"    ${(s.instagram_backend||'auto')==='auto'    ? 'selected':''}>Auto — browser when on, else direct login, else official API</option>
+            <option value="browser" ${s.instagram_backend==='browser' ? 'selected':''}>Browser — posts through instagram.com (no login event)</option>
             <option value="private" ${s.instagram_backend==='private' ? 'selected':''}>Direct login — no Meta account needed</option>
             <option value="graph"   ${s.instagram_backend==='graph'   ? 'selected':''}>Official API (Meta developer app)</option>
           </select>`)}
+
+        <div class="card-sm" style="margin:10px 0 14px">
+          <label class="check"><input type="checkbox" id="s-igb-enabled" ${s.ig_browser_enabled ? 'checked' : ''}/>
+            <b>Use the browser backend</b> <span class="muted">— Playwright posts through instagram.com</span></label>
+          <div class="help" style="margin-top:6px">
+            It never signs in: the automation profile is seeded with the <span class="mono">sessionid</span> cookie above,
+            so there is no login for Instagram to challenge. This is the way in when direct login is stuck on a checkpoint.
+            <span class="muted">Set your Instagram language to English — the flow follows the English buttons first.</span>
+          </div>
+          <div class="row" style="margin-top:8px">
+            <button class="btn btn-sm btn-green" onclick="igBrowserCheck(this)">Check browser session</button>
+            <button class="btn btn-sm btn-danger-ghost" onclick="igBrowserReset()" title="Delete the automation profile">Reset profile</button>
+            <label class="check" style="margin-left:6px"><input type="checkbox" id="s-igb-headed" ${s.ig_browser_headed !== false ? 'checked' : ''}/> Show the window</label>
+          </div>
+          <div id="igb-status" class="help" style="margin-top:6px">${igBrowserStatusLine(s.ig_browser_state)}</div>
+        </div>
 
         <div id="ig-private-box" style="display:${(s.instagram_backend||'auto')==='graph'?'none':'block'}">
           <div class="hint ${s.ig_private_state?.status === 'ok' ? 'ok' : 'info'}" style="margin:8px 0 12px">
@@ -359,6 +379,7 @@ async function saveSettings() {
   const bools = { 's-local-only': 'local_scraping_only', 's-context-injection': 'ai_context_injection', 's-auto-scan': 'auto_scan_enabled',
     's-auto-approve': 'auto_approve_enabled', 's-auto-clean': 'auto_clean_images', 's-post-enabled': 'post_schedule_enabled',
     's-autoreply-enabled': 'instagram_auto_reply_enabled', 's-dm-enabled': 'instagram_dm_reply_enabled',
+    's-igb-enabled': 'ig_browser_enabled', 's-igb-headed': 'ig_browser_headed',
     's-content-rewrite': 'content_rewrite_enabled' };
   for (const [id, key] of Object.entries(bools)) if (has(id)) data[key] = !!g(id).checked;
   if (has('s-scan-kw')) data.scan_keywords = g('s-scan-kw').value.split('\n').map(s => s.trim()).filter(Boolean);
@@ -422,6 +443,39 @@ async function resetDatabase() {
   if (!confirm('Delete ALL products, scans and history? This cannot be undone.')) return;
   if (!confirm('Final confirmation: wipe the entire catalog?')) return;
   try { const res = await api('/admin/reset-database', 'POST'); if (res.ok) { toast('Database reset', 'success'); refreshStats(); navigate('home'); } } catch(e) {}
+}
+function igBrowserStatusLine(st) {
+  if (!st) return 'Not checked yet — tick the box, Save, then “Check browser session”.';
+  if (st.status === 'ok') return `✓ Browser session live${st.username ? ` as @${escHtml(st.username)}` : ''}${st.last_post_at ? ` · last post ${relTime(st.last_post_at)}` : ''}`;
+  if (st.status === 'needs_login') return `⚠ ${escHtml(st.error || 'The automation browser is not signed in')} — paste a fresh sessionid above and press “Check browser session”.`;
+  if (st.error) return `✗ ${escHtml(st.error)}`;
+  return st.profile_saved ? 'Profile saved — press “Check browser session”.' : 'Not checked yet — tick the box, Save, then “Check browser session”.';
+}
+async function igBrowserCheck(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Opening browser…'; }
+  const el = document.getElementById('igb-status');
+  try {
+    // persist the cookie + toggles first so the backend uses what is on screen
+    const body = { ig_browser_enabled: !!document.getElementById('s-igb-enabled')?.checked,
+                   ig_browser_headed:  !!document.getElementById('s-igb-headed')?.checked };
+    const sid = document.getElementById('s-igp-sid')?.value?.trim();
+    if (sid) body.ig_session_id = sid;
+    await api('/settings', 'PATCH', body);
+    const r = await api('/instagram/browser/check', 'POST');
+    if (el) { el.className = 'help ' + (r.ok ? 'ok-txt' : 'err-txt'); el.innerHTML = igBrowserStatusLine(r.state); }
+    if (r.ok) { toast('Instagram browser session live', 'success'); refreshStats(); }
+    else toast(r.error || 'Not signed in', 'error');
+  } catch(e) {
+    if (el) { el.className = 'help err-txt'; el.textContent = `✗ ${e.message || 'Check failed'}`; }
+  } finally { if (btn) { btn.disabled = false; btn.textContent = 'Check browser session'; } }
+}
+async function igBrowserReset() {
+  if (!confirm('Delete the automation browser profile? It will be re-seeded from the sessionid cookie.')) return;
+  try { const r = await api('/instagram/browser/reset', 'POST');
+    const el = document.getElementById('igb-status');
+    if (el) el.innerHTML = igBrowserStatusLine(r.state);
+    toast('Browser profile cleared', 'success');
+  } catch(e) { toast(e.message || 'Reset failed', 'error'); }
 }
 function igPrivateStatusLine(st) {
   if (!st) return 'Not logged in yet — save the credentials, then “Log in now”.';

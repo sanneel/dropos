@@ -22,6 +22,7 @@ Falls back to mock mode when token/user_id are not configured.
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import quote
@@ -44,17 +45,45 @@ def _graph(settings: dict = None) -> str:
 
 
 def backend_mode(settings: dict) -> str:
-    """Which Instagram backend is usable: 'private' | 'graph' | 'none'.
-    'auto' prefers direct login (no Meta account needed) when its creds exist."""
+    """Which Instagram backend is usable: 'browser' | 'private' | 'graph' | 'none'.
+
+    'auto' takes the first usable one in that order: the browser backend is only
+    ever "usable" once switched on deliberately, so having it win means the user
+    asked for it; direct login needs no Meta account; graph is the official API.
+    """
     import instagram_private
-    pref = str((settings or {}).get("instagram_backend") or "auto").strip().lower()
-    graph_ok = bool(_token(settings) and str((settings or {}).get("instagram_user_id") or "").strip())
-    private_ok = instagram_private.configured(settings or {})
-    if pref == "graph":
-        return "graph" if graph_ok else ("private" if private_ok else "none")
-    if pref == "private":
-        return "private" if private_ok else ("graph" if graph_ok else "none")
-    return "private" if private_ok else ("graph" if graph_ok else "none")
+    import instagram_browser
+    s = settings or {}
+    pref = str(s.get("instagram_backend") or "auto").strip().lower()
+    usable = {
+        "browser": instagram_browser.configured(s),
+        "private": instagram_private.configured(s),
+        "graph": bool(_token(settings) and str(s.get("instagram_user_id") or "").strip()),
+    }
+    order = ("browser", "private", "graph")
+    if pref in usable and usable[pref]:
+        return pref
+    return next((m for m in order if usable[m]), "none")
+
+
+def _uploadable_sources(raw_images: list) -> list:
+    """Image references an uploading backend can read: http(s) URLs as-is, and
+    locally cleaned files as file:// paths (they exist on this machine)."""
+    from config.paths import CLEANED_DIR
+    out = []
+    for img in raw_images or []:
+        img = (img or "").strip()
+        if img.startswith(("http://", "https://")):
+            out.append(img)
+        elif "/cleaned-image" in img:
+            try:
+                pid = img.split("/products/")[1].split("/")[0]
+                local = os.path.join(str(CLEANED_DIR), f"cleaned_{pid}.jpg")
+                if os.path.exists(local):
+                    out.append("file://" + local)
+            except Exception:
+                pass
+    return out
 
 
 def _token(settings: dict) -> str:
@@ -261,25 +290,23 @@ async def post_product(product: dict, settings: dict) -> PostResult:
     raw_images   = product.get("images") or []
     image_urls   = [u for u in (_publishable_image_url(img, settings) for img in raw_images if img) if u][:_MAX_CAROUSEL_IMAGES]
 
+    mode = backend_mode(settings)
+
+    # ── Browser backend (Playwright on instagram.com — no login, no Meta app) ──
+    if mode == "browser":
+        import instagram_browser
+        urls = _uploadable_sources(raw_images)
+        if not urls:
+            return PostResult(product_id=pid, status="error", error="Product has no usable image")
+        res = await instagram_browser.post_photos(urls, full_caption, settings)
+        if res.get("ok"):
+            return PostResult(product_id=pid, status="posted", post_url=res.get("url") or "")
+        return PostResult(product_id=pid, status="error", error=res.get("error") or "Browser post failed")
+
     # ── Direct-login backend (no Meta developer account) ──────────────────────
-    if backend_mode(settings) == "private":
+    if mode == "private":
         import instagram_private
-        from config.paths import CLEANED_DIR
-        import os as _os
-        urls = []
-        for img in raw_images:
-            img = (img or "").strip()
-            if img.startswith(("http://", "https://")):
-                urls.append(img)
-            elif "/cleaned-image" in img:
-                # local cleaned file — the private uploader reads it from disk
-                try:
-                    _pid = img.split("/products/")[1].split("/")[0]
-                    local = _os.path.join(str(CLEANED_DIR), f"cleaned_{_pid}.jpg")
-                    if _os.path.exists(local):
-                        urls.append("file://" + local)
-                except Exception:
-                    pass
+        urls = _uploadable_sources(raw_images)
         if not urls:
             return PostResult(product_id=pid, status="error", error="Product has no usable image")
         res = await instagram_private.post_photos(urls, full_caption, settings)

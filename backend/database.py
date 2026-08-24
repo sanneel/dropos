@@ -1668,6 +1668,9 @@ async def init_db():
                 "ig_private_username": "",
                 "ig_private_password": "",
                 "ig_session_id": "",             # sessionid cookie from a logged-in browser
+                # Browser backend: Playwright drives instagram.com (no login event)
+                "ig_browser_enabled": False,
+                "ig_browser_headed": True,       # show the window (Instagram trusts it more)
                 "ig_poll_minutes": 5,
                 # Direct-login device profile + safety
                 "ig_country": "GE",
