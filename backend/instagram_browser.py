@@ -45,6 +45,7 @@ PROFILE_DIR = data_path("ig_browser_profile")
 
 _pw = None            # playwright driver
 _ctx = None           # persistent browser context
+_ctx_headless = None  # how the live context was launched
 _lock = asyncio.Lock()
 
 _state = {
@@ -100,9 +101,14 @@ async def _human_pause(lo: float = 0.6, hi: float = 1.8) -> None:
 async def _ensure_context(settings: dict):
     """Return a logged-in persistent context, seeding the sessionid cookie when
     the profile has none yet. None when the browser could not be started."""
-    global _pw, _ctx
+    global _pw, _ctx, _ctx_headless
+    want_headless = _headless(settings)
     if _ctx is not None:
-        return _ctx
+        if _ctx_headless == want_headless:
+            return _ctx
+        # A visible window was asked for but the live browser is headless (or
+        # vice versa) — relaunch, otherwise the user would see nothing.
+        await close()
     try:
         from playwright.async_api import async_playwright
     except ImportError:
@@ -114,7 +120,7 @@ async def _ensure_context(settings: dict):
         _pw = await async_playwright().start()
         _ctx = await _pw.chromium.launch_persistent_context(
             str(PROFILE_DIR),
-            headless=_headless(settings),
+            headless=want_headless,
             viewport={"width": 1280, "height": 900},
             locale="en-US",
             timezone_id=str(settings.get("post_timezone") or "Asia/Tbilisi"),
@@ -123,28 +129,47 @@ async def _ensure_context(settings: dict):
     except Exception as exc:
         _state.update(status="error", error=f"Could not start the browser: {exc}"[:300])
         log.error("IG browser: launch failed: %s", exc)
-        _pw, _ctx = None, None
+        _pw, _ctx, _ctx_headless = None, None, None
         return None
+    _ctx_headless = want_headless
 
-    # Seed the session cookie so the profile starts authenticated (no login event)
+    await _seed_cookies(_ctx, settings)
+    return _ctx
+
+
+async def _seed_cookies(ctx, settings: dict) -> None:
+    """Plant the browser session so the profile starts authenticated.
+
+    Instagram's web app wants `ds_user_id` alongside `sessionid`; the user id is
+    the numeric prefix of the sessionid itself, so both come from one paste.
+    """
+    import re
     import instagram_private
     sid = instagram_private.session_id(settings)
-    if sid:
-        try:
-            await _ctx.add_cookies([{
-                "name": "sessionid", "value": sid,
-                "domain": ".instagram.com", "path": "/",
-                "httpOnly": True, "secure": True, "sameSite": "Lax",
-            }])
-            log.info("IG browser: seeded the profile with the saved sessionid cookie")
-        except Exception as exc:
-            log.warning("IG browser: could not seed the sessionid cookie: %s", exc)
-    return _ctx
+    if not sid:
+        return
+    cookies = [{
+        "name": "sessionid", "value": sid,
+        "domain": ".instagram.com", "path": "/",
+        "httpOnly": True, "secure": True, "sameSite": "Lax",
+    }]
+    m = re.match(r"^(\d+)", sid)
+    if m:
+        cookies.append({
+            "name": "ds_user_id", "value": m.group(1),
+            "domain": ".instagram.com", "path": "/",
+            "httpOnly": False, "secure": True, "sameSite": "Lax",
+        })
+    try:
+        await ctx.add_cookies(cookies)
+        log.info("IG browser: seeded the profile with the saved session cookies (%d)", len(cookies))
+    except Exception as exc:
+        log.warning("IG browser: could not seed the session cookies: %s", exc)
 
 
 async def close() -> None:
     """Shut the browser down (used on reset and at shutdown)."""
-    global _pw, _ctx
+    global _pw, _ctx, _ctx_headless
     try:
         if _ctx is not None:
             await _ctx.close()
@@ -155,7 +180,7 @@ async def close() -> None:
             await _pw.stop()
     except Exception:
         pass
-    _pw, _ctx = None, None
+    _pw, _ctx, _ctx_headless = None, None, None
 
 
 async def reset_profile() -> None:
@@ -171,26 +196,93 @@ async def reset_profile() -> None:
 
 # ── Session check ─────────────────────────────────────────────────────────────
 
-async def _current_username(page) -> str:
-    """Read the signed-in handle from the app's own bootstrap data."""
-    for script in (
-        "() => window._sharedData?.config?.viewer?.username || ''",
-        "() => document.cookie.match(/ds_user_id=(\\d+)/) ? 'id:' + RegExp.$1 : ''",
-    ):
-        try:
-            val = await page.evaluate(script)
-            if val:
-                return str(val)
-        except Exception:
-            continue
-    # Fall back to the profile link in the nav bar
+_WEB_APP_ID = "936619743392459"   # the app id instagram.com sends on its own calls
+
+
+async def _auth_probe(page) -> dict:
+    """Ask Instagram who we are. {"logged_in": bool, "username": str, "why": str}
+
+    The logged-out site renders at the same URL as the logged-in one, so "we did
+    not get redirected" proves nothing. This asks the app's own endpoint from
+    inside the page, which answers only for a real session.
+    """
     try:
-        href = await page.get_attribute('a[href^="/"][role="link"]:has(img[alt*="profile picture"])', "href")
-        if href:
-            return href.strip("/").split("/")[0]
+        res = await page.evaluate(
+            """async (appId) => {
+                try {
+                    const r = await fetch('/api/v1/accounts/current_user/', {
+                        headers: {'x-ig-app-id': appId},
+                        credentials: 'include',
+                    });
+                    const text = await r.text();
+                    let username = '';
+                    // Logged out, Instagram answers 200 with its HTML app shell,
+                    // so JSON with a username is the only proof of a session.
+                    try { username = (JSON.parse(text)?.user?.username) || ''; } catch (e) {}
+                    return {status: r.status, username, html: text.trim().startsWith('<')};
+                } catch (e) { return {status: -1, username: '', error: String(e)}; }
+            }""",
+            _WEB_APP_ID,
+        )
+    except Exception as exc:
+        return {"logged_in": False, "username": "", "why": f"probe failed: {exc}"[:200]}
+
+    res = res or {}
+    status = res.get("status")
+    username = str(res.get("username") or "")
+    if username:
+        return {"logged_in": True, "username": username, "why": ""}
+    if status in (401, 403):
+        return {"logged_in": False, "username": "", "why": "Instagram rejected the session cookie — it is expired or not accepted"}
+    if status == 200 and res.get("html"):
+        return {"logged_in": False, "username": "",
+                "why": "Instagram served its logged-out page — the sessionid cookie was not accepted. Use “Open login window” and sign in by hand."}
+    if status == -1:
+        return {"logged_in": False, "username": "", "why": f"Could not reach Instagram from the page: {res.get('error') or 'network error'}"[:200]}
+
+    # Fall back to DOM evidence when the endpoint moves or is blocked
+    try:
+        if await page.locator('input[name="username"]').count():
+            return {"logged_in": False, "username": "", "why": "Instagram is showing the login form"}
+        for marker in ('svg[aria-label="Home"]', 'a[href*="/direct/inbox/"]', '[aria-label="New post"]'):
+            if await page.locator(marker).count():
+                return {"logged_in": True, "username": "", "why": ""}
     except Exception:
         pass
-    return ""
+    return {"logged_in": False, "username": "", "why": f"Could not confirm a signed-in session (probe status {status})"}
+
+
+async def _current_username(page) -> str:
+    return (await _auth_probe(page)).get("username") or ""
+
+
+async def open_login_window(settings: dict) -> dict:
+    """Open a visible Instagram login page in the automation profile and leave it.
+
+    The reliable bootstrap: signing in by hand in this window is an ordinary web
+    login — the flow that already works for this account — and the persistent
+    profile keeps that session afterwards, so it happens once.
+    """
+    async with _lock:
+        settings = {**settings, "ig_browser_headed": True}
+        ctx = await _ensure_context(settings)
+        if ctx is None:
+            return {"ok": False, "error": _state.get("error") or "No browser"}
+        if _headless(settings):
+            return {"ok": False, "error": "The browser is running headless — untick 'Show the window' is not enough here; unset PLAYWRIGHT_HEADLESS."}
+        try:
+            page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+            await page.bring_to_front()
+            await page.goto("https://www.instagram.com/accounts/login/",
+                            wait_until="domcontentloaded", timeout=45000)
+            _state.update(status="needs_login",
+                          error="Waiting for you to sign in in the browser window that just opened")
+            log.info("IG browser: login window opened for manual sign-in")
+            return {"ok": True, "error": ""}
+        except Exception as exc:
+            msg = f"{type(exc).__name__}: {exc}"[:300]
+            _state.update(status="error", error=msg)
+            return {"ok": False, "error": msg}
 
 
 async def check_session(settings: dict) -> dict:
@@ -203,15 +295,21 @@ async def check_session(settings: dict) -> dict:
         try:
             await page.goto("https://www.instagram.com/", wait_until="domcontentloaded", timeout=45000)
             await _human_pause(1.5, 2.5)
-            url = page.url
-            if "/accounts/login" in url or "/challenge" in url:
-                reason = ("Instagram is showing a checkpoint in the browser — open it and complete the prompt"
-                          if "/challenge" in url else
-                          "The browser profile is not signed in — paste a fresh sessionid, or sign in in the window")
+            if "/challenge" in page.url:
+                reason = "Instagram is showing a checkpoint in the browser window — complete it there, then check again"
                 _state.update(status="needs_login", error=reason, username="", last_check_at=_now_iso())
                 return {"ok": False, "error": reason, "username": ""}
-            name = await _current_username(page)
+
+            probe = await _auth_probe(page)
+            if not probe["logged_in"]:
+                reason = probe["why"] or "The automation browser is not signed in"
+                _state.update(status="needs_login", error=reason, username="", last_check_at=_now_iso())
+                log.warning("IG browser: session check failed — %s", reason)
+                return {"ok": False, "error": reason, "username": ""}
+
+            name = probe["username"]
             _state.update(status="ok", error="", username=name, last_check_at=_now_iso())
+            log.info("IG browser: session check OK as @%s", name or "(handle unknown)")
             return {"ok": True, "error": "", "username": name}
         except Exception as exc:
             msg = f"{type(exc).__name__}: {exc}"[:300]
@@ -348,12 +446,12 @@ async def post_photos(image_urls: list, caption: str, settings: dict) -> dict:
         try:
             await page.goto("https://www.instagram.com/", wait_until="domcontentloaded", timeout=45000)
             await _human_pause(2, 3.5)
-            if "/accounts/login" in page.url or "/challenge" in page.url:
-                msg = "The browser profile is not signed in (Instagram showed a login or checkpoint page)"
+            probe = await _auth_probe(page)
+            if not probe["logged_in"]:
+                msg = probe["why"] or "The automation browser is not signed in"
                 _state.update(status="needs_login", error=msg)
                 return {"ok": False, "url": "", "error": msg}
-
-            username = await _current_username(page)
+            username = probe["username"]
 
             if not await _open_composer(page):
                 return {"ok": False, "url": "", "error": "Could not open the Create dialog — Instagram's UI may have changed"}

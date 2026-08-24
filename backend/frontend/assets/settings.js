@@ -134,6 +134,7 @@ function connectionsPanel(s) {
           </div>
           <div class="row" style="margin-top:8px">
             <button class="btn btn-sm btn-green" onclick="igBrowserCheck(this)">Check browser session</button>
+            <button class="btn btn-sm" onclick="igBrowserLoginWindow(this)" title="Open Instagram in the automation browser and sign in by hand">Open login window</button>
             <button class="btn btn-sm btn-danger-ghost" onclick="igBrowserReset()" title="Delete the automation profile">Reset profile</button>
             <label class="check" style="margin-left:6px"><input type="checkbox" id="s-igb-headed" ${s.ig_browser_headed !== false ? 'checked' : ''}/> Show the window</label>
           </div>
@@ -468,6 +469,18 @@ async function igBrowserCheck(btn) {
   } catch(e) {
     if (el) { el.className = 'help err-txt'; el.textContent = `✗ ${e.message || 'Check failed'}`; }
   } finally { if (btn) { btn.disabled = false; btn.textContent = 'Check browser session'; } }
+}
+async function igBrowserLoginWindow(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Opening…'; }
+  const el = document.getElementById('igb-status');
+  try {
+    await api('/settings', 'PATCH', { ig_browser_enabled: true, ig_browser_headed: true });
+    await api('/instagram/browser/login-window', 'POST');
+    if (el) { el.className = 'help'; el.textContent = 'A browser window opened — sign in to Instagram there, then press “Check browser session”.'; }
+    toast('Sign in inside the browser window that opened', 'success');
+  } catch(e) {
+    if (el) { el.className = 'help err-txt'; el.textContent = `✗ ${e.message || 'Could not open the browser'}`; }
+  } finally { if (btn) { btn.disabled = false; btn.textContent = 'Open login window'; } }
 }
 async function igBrowserReset() {
   if (!confirm('Delete the automation browser profile? It will be re-seeded from the sessionid cookie.')) return;

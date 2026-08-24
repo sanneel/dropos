@@ -1591,6 +1591,17 @@ async def ig_browser_check():
     return {**res, "state": instagram_browser.state()}
 
 
+@app.post("/api/instagram/browser/login-window")
+async def ig_browser_login_window():
+    """Open a visible Instagram login page in the automation profile."""
+    import instagram_browser
+    settings = await _settings()
+    res = await instagram_browser.open_login_window(settings)
+    if not res.get("ok"):
+        raise HTTPException(502, res.get("error") or "Could not open the browser")
+    return {"ok": True, "state": instagram_browser.state()}
+
+
 @app.post("/api/instagram/browser/reset")
 async def ig_browser_reset():
     """Forget the automation browser profile (re-seeds from the cookie next time)."""
