@@ -94,7 +94,7 @@ REJECT products that are:
 - Children's toys with no romantic angle
 - Industrial, home appliance, kitchen, office products
 - Anything where you have to stretch to explain the romantic connection
-CHINESE TEXT / WATERMARKS: if the product itself is good but the photo has Chinese text, a supplier watermark, factory logo or certificate badge, do NOT reject it — score it normally and set has_chinese_text=true with a short chinese_text_note describing where the text is. The image will be cleaned before posting.
+TEXT / WATERMARKS — BE VERY STRICT: examine the photo carefully (including corners, edges, backgrounds, packaging, labels and the product surface itself). If the image contains ANY visible text at all — Chinese, English or any language, supplier watermarks, factory logos, certificate badges, size charts, price stickers, QR codes, URLs or phone numbers — set has_chinese_text=true. When in doubt, set it to true; a false positive only costs one extra cleaning pass, a miss puts unprofessional text on Instagram. Do NOT reject a good product because of removable text — score it normally. In chinese_text_note TRANSCRIBE the text you can read (translate Chinese to English) and say where it is, e.g. "top-left watermark: 'Yiwu Factory 义乌工厂'; size chart along bottom edge". Text printed on the product BY DESIGN (e.g. a necklace engraved 'I love you', a neon sign's words) does NOT count — only supplier/marketing text overlays do; still transcribe design text in chinese_text_note prefixed with 'design:' so a human can verify. The image will be cleaned before posting.
 SCORING:
 cute_appeal (0–10) × 0.30 — Is this instantly cute or beautiful? Would someone screenshot it?
 romantic_trigger (0–10) × 0.25 — Does it create a "thinking of you" or "we need this" feeling?
@@ -120,10 +120,10 @@ Return ONLY valid JSON:
   "rejection_reason": "string or null",
   "viral_angle": "one sentence or null",
   "emotional_hook": "one sentence or null",
-  "has_chinese_text": true|false,
-  "chinese_text_note": "string or null",
+  "has_chinese_text": true|false (true if ANY removable text/watermark/logo is visible),
+  "chinese_text_note": "transcription of the visible text + its location, or null",
   "product_name": "Georgian 3-5 words if verdict is not auto_reject else empty string",
-  "caption": "Georgian 2-3 sentences for Instagram if verdict is not auto_reject else empty string",
+  "caption": "Georgian 2-3 sentences for Instagram if verdict is not auto_reject else empty string; NEVER use any dash character (-, –, —) — rephrase with commas or periods",
   "hashtags": ["up to 12 hashtags without # sign"],
   "confidence": float
 }}
@@ -394,6 +394,9 @@ def _normalize_enrichment(result: dict, product: dict, provider: str) -> dict:
     result.setdefault("rejection_reason", "" if result["store_match"] else "Score below threshold")
     result.setdefault("product_name", _clean_name(product) if result["store_match"] else "")
     result.setdefault("caption", "")
+    if result.get("caption"):
+        from content_ai import strip_dashes
+        result["caption"] = strip_dashes(result["caption"])
     result["hashtags"] = result.get("hashtags") or _get_tags(product)
     result["audience"] = result.get("audience") or infer_audience(product)
     result["has_chinese_text"] = bool(result.get("has_chinese_text", False))
@@ -800,10 +803,10 @@ Required shape:
       "viral_angle": "one sentence or null",
       "emotional_hook": "one sentence or null",
       "rejection_reason": "string or null",
-      "has_chinese_text": true|false,
-      "chinese_text_note": "string or null",
+      "has_chinese_text": true|false (true if ANY removable text/watermark/logo is visible),
+      "chinese_text_note": "transcription of the visible text + its location, or null",
       "product_name": "Georgian 3-5 words if verdict is not auto_reject else empty string",
-      "caption": "Georgian 2-3 sentences if verdict is not auto_reject else empty string",
+      "caption": "Georgian 2-3 sentences if verdict is not auto_reject else empty string; NEVER use any dash character (-, –, —)",
       "hashtags": []
     }
   ]

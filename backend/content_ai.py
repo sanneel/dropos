@@ -77,6 +77,24 @@ def _parse_json(text: str) -> Any:
     return json.loads(text)
 
 
+_DASH_CHARS = "‐‑‒–—―−"  # ‐ ‑ ‒ – — ― −
+
+
+def strip_dashes(text: str) -> str:
+    """Hard no-dash rule for customer-facing copy: models are told not to use
+    dashes, but this guarantees it even when they slip."""
+    text = str(text or "")
+    # em/en/unicode dashes → comma-space (mid-sentence pause) or nothing at line edges
+    text = re.sub(rf"\s*[{_DASH_CHARS}]+\s*", ", ", text)
+    # plain hyphen used as punctuation (surrounded by spaces or starting a line)
+    text = re.sub(r"(^|\n)\s*-\s+", r"\1", text)
+    text = re.sub(r"\s+-\s+", ", ", text)
+    # tidy up artifacts: ", ," / trailing ", " before a newline or end
+    text = re.sub(r"(,\s*)+,", ",", text)
+    text = re.sub(r",\s*(\n|$)", r"\1", text)
+    return text.strip()
+
+
 # ── Claude (official Anthropic SDK) ───────────────────────────────────────────
 
 async def _claude_json(system: str, prompt: str, settings: dict, max_tokens: int) -> Any:
@@ -245,6 +263,9 @@ Write captions that sell without sounding like ads:
 3. CTA — how to order: DM with the word "მინდა", mention the price ₾{price}.
 Style: warm, playful, like texting a friend; 2–4 fitting emojis; short lines;
 total under 500 characters; NO hashtags inside the caption text.
+NEVER use dash characters of any kind — no hyphens, en dashes or em dashes
+(-, –, —) anywhere in the caption. Rephrase with a comma, a period or a new
+line instead. This is a hard rule.
 
 Return ONLY JSON:
 {{"caption": "the Georgian caption with \\n line breaks",
@@ -273,7 +294,7 @@ async def generate_caption(product: dict, settings: dict, brand: dict | None = N
     if not isinstance(result, dict) or not str(result.get("caption") or "").strip():
         return None
     hashtags = [re.sub(r"^#", "", str(h)).strip() for h in (result.get("hashtags") or []) if str(h).strip()][:15]
-    return {"caption": str(result["caption"]).strip(), "hashtags": hashtags, "hook": str(result.get("hook") or "").strip()}
+    return {"caption": strip_dashes(result["caption"]), "hashtags": hashtags, "hook": strip_dashes(result.get("hook") or "")}
 
 
 async def maybe_rewrite_caption(db, product: dict, settings: dict) -> dict:
