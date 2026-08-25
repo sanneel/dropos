@@ -117,15 +117,22 @@ async def remove_text(image_url: str, api_key: str) -> Optional[bytes]:
     Returns:
         Cleaned JPEG/PNG image bytes, or None on any failure.
     """
-    if not api_key or not api_key.strip():
-        log.warning("Clipdrop: api_key not configured — add clipdrop_key in Settings")
-        return None
-
     img_data = await _download_image(image_url)
     if not img_data:
         return None
-
     image_bytes, content_type = img_data
+    return await remove_text_bytes(image_bytes, content_type, api_key)
+
+
+async def remove_text_bytes(image_bytes: bytes, content_type: str, api_key: str) -> Optional[bytes]:
+    """Same as remove_text() but takes in-memory image bytes.
+
+    Lets callers run a second cleaning pass on an already-cleaned image without
+    re-hosting it anywhere.
+    """
+    if not api_key or not api_key.strip():
+        log.warning("Clipdrop: api_key not configured — add clipdrop_key in Settings")
+        return None
 
     # Convert AVIF / HEIC / any unsupported format → JPEG so Clipdrop accepts it
     if content_type not in _CLIPDROP_SUPPORTED_TYPES:

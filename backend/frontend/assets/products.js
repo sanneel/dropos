@@ -62,7 +62,8 @@ function productCard(p, mode) {
         <div class="pcard-placeholder" style="${img ? 'display:none' : ''}">no photo</div>
         <div class="pcard-top">
           <span class="score-pill ${sc}" title="AI composite score">${scored ? score.toFixed(1) : '–'}</span>
-          ${p.has_chinese_text ? `<span class="chip v-text" title="${escHtml(p.chinese_text_note || 'Chinese text in photo')}">文 text</span>` : ''}
+          ${p.has_chinese_text ? `<span class="chip v-text" title="${escHtml(p.chinese_text_note || 'Text in photo')}">文 text</span>`
+            : (p.chinese_text_note ? `<span class="chip v-strong" title="${escHtml(p.chinese_text_note)}">文 cleaned</span>` : '')}
         </div>
         <button class="pcard-check ${sel ? 'on' : ''}" onclick="event.stopPropagation();toggleSel(${p.id})" title="Select">${IC.check}</button>
       </div>
@@ -468,9 +469,13 @@ async function showDetail(id) {
 
         ${p.has_chinese_text ? `
         <div class="detail-sec">
-          <span class="detail-sec-lbl">Chinese text detected</span>
-          <div class="card-sm" style="font-size:12px;color:var(--amber);line-height:1.6">${escHtml(p.chinese_text_note || 'Chinese text is visible in the product image.')}</div>
-        </div>` : ''}
+          <span class="detail-sec-lbl">Text detected in photo</span>
+          <div class="card-sm" style="font-size:12px;color:var(--amber);line-height:1.6">${escHtml(p.chinese_text_note || 'Text is visible in the product image.')}</div>
+        </div>` : (p.chinese_text_note ? `
+        <div class="detail-sec">
+          <span class="detail-sec-lbl">Text removed from photo</span>
+          <div class="card-sm" style="font-size:12px;color:var(--green);line-height:1.6">${escHtml(p.chinese_text_note)}</div>
+        </div>` : '')}
 
         <div class="detail-sec">
           <span class="detail-sec-lbl">Pricing</span>

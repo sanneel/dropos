@@ -519,6 +519,62 @@ async def _fetch_image_b64(url: str) -> Optional[tuple]:
     return None
 
 
+_TEXT_CHECK_PROMPT = """
+You are a strict pre-publish inspector for e-commerce product photos.
+Examine the ENTIRE image: corners, edges, background, packaging, labels and the
+product surface itself. Report ANY visible text in ANY language — Chinese
+characters, English words, watermarks, logos with letters, size charts, price
+stickers, QR codes, URLs, phone numbers, certificate badges. Faint, small,
+partially-erased or blurred leftover text COUNTS. When in doubt, report it.
+The ONLY exception: text that is clearly part of the product's own design
+(an engraving, a neon sign's words) — mention it but prefix with 'design:'.
+Return ONLY valid JSON:
+{"has_text": true|false, "note": "transcription of each piece of text (translate Chinese to English) + where it is, or empty string"}
+has_text must be true if ANY non-design text (even partial smudged remains) is visible.
+""".strip()
+
+
+async def detect_image_text(image_bytes: bytes, settings: dict, mime: str = "image/jpeg") -> Optional[dict]:
+    """Strict any-text check on in-memory image bytes via Gemini.
+
+    Returns {"has_text": bool, "note": str}, or None when Gemini is not
+    available / errors out (caller decides how to degrade).
+    """
+    api_key = get_config("GEMINI_KEY", settings.get("gemini_key", ""))
+    if not api_key or not gemini_available(settings):
+        return None
+    payload = {
+        "contents": [{"parts": [
+            {"inline_data": {"mime_type": mime, "data": base64.b64encode(image_bytes).decode()}},
+            {"text": _TEXT_CHECK_PROMPT},
+        ]}],
+        "generationConfig": {
+            "response_mime_type": "application/json",
+            "max_output_tokens": 400,
+            "temperature": 0.1,
+        },
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                _GEMINI_URL.format(model=_gemini_model(settings)),
+                headers={"x-goog-api-key": api_key, "content-type": "application/json"},
+                json=payload,
+            )
+        if resp.status_code == 429:
+            _gemini_backoff("429 rate limit / quota (text check)")
+            return None
+        if resp.status_code != 200:
+            log.warning("Text-check Gemini %d: %s", resp.status_code, resp.text[:200])
+            return None
+        text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+        parsed = json.loads(re.sub(r"```json|```", "", text).strip())
+        return {"has_text": bool(parsed.get("has_text")), "note": str(parsed.get("note") or "")}
+    except Exception as exc:
+        log.warning("Text-check error: %s", exc)
+        return None
+
+
 async def gemini_enrich(product: dict, settings: dict, context_snippet: str | None = None) -> Optional[dict]:
     api_key = get_config("GEMINI_KEY", settings.get("gemini_key", ""))
     if not api_key or not gemini_available(settings):

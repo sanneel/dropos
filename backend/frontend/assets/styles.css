@@ -38,6 +38,13 @@ body {
   background: var(--bg); color: var(--t1);
   font-family: var(--ff-b); font-size: 14px; line-height: 1.55;
   -webkit-font-smoothing: antialiased; letter-spacing: 0;
+  /* Letters must stand upright: never slant, never let the browser fake an
+     italic/bold face when a weight is missing from the loaded font. */
+  font-style: normal;
+  font-synthesis: none;
+}
+h1, h2, h3, h4, h5, h6, button, input, select, textarea, em, i, cite, address, var, dfn {
+  font-style: normal;
 }
 body::before {
   content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;

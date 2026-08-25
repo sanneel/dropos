@@ -3,6 +3,11 @@
 Status: proposal, written 2026-08-24 by the scheduled DropOS task. Nothing here is
 implemented yet.
 
+Update 2026-08-26: `enrichment.detect_image_text()` now exists (strict Gemini
+any-text check on raw image bytes, added for verified image cleaning). Stage 0's
+review-photo mining can reuse it as-is to screen buyer photos before using them
+in content.
+
 ## Why move off the agent
 
 Today products come from CSSBuy's search proxy (`scraper_cssbuy.py` listens to
