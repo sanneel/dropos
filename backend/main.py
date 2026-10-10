@@ -202,11 +202,34 @@ _CSSBUY_DEBUG_DIR = os.getenv("CSSBUY_DEBUG_DIR") or str(data_path("cssbuy_debug
 os.environ.setdefault("CSSBUY_DEBUG_DIR", _CSSBUY_DEBUG_DIR)
 
 # ── Lifespan ───────────────────────────────────────────────────────────────
+# Vercel runs the app as a serverless function: no long-lived process, so the
+# worker loops and schedulers are skipped and the DB is connected on demand.
+ON_VERCEL = bool(os.getenv("VERCEL"))
+_db_ready = False
+_db_lock = asyncio.Lock()
+
+
+async def _ensure_db():
+    global _db_ready
+    if _db_ready:
+        return
+    async with _db_lock:
+        if not _db_ready:
+            await init_db()
+            activity.bind(db)
+            _db_ready = True
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _scheduler, _posting_scheduler
-    await init_db()
-    activity.bind(db)
+    if ON_VERCEL:
+        log.info("Running on Vercel — background workers and schedulers are disabled.")
+        yield
+        if _db_ready:
+            await db.close()
+        return
+    await _ensure_db()
     interrupted = await db.mark_active_jobs_interrupted()
     if interrupted:
         log.warning("Marked %d stale active job(s) as interrupted on startup", interrupted)
@@ -323,6 +346,12 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     return response
+
+@app.middleware("http")
+async def ensure_db_middleware(request: Request, call_next):
+    if not _db_ready and request.url.path.startswith(("/api/", "/shop", "/health")):
+        await _ensure_db()
+    return await call_next(request)
 
 @app.middleware("http")
 async def jwt_auth_middleware(request: Request, call_next):

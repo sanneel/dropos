@@ -88,6 +88,17 @@ in `.env`, then `cloudflared tunnel --url http://localhost:8000` — it prints a
 If the host blocks scraping (datacenter IP / no browser), run the scraper on your PC with
 [LOCAL_SCRAPING.md](LOCAL_SCRAPING.md) and upload into the hosted app.
 
+## Deploy on Vercel (UI + API, no login)
+
+Import the repo in Vercel (framework preset: **Other**) and set one env var:
+`DATABASE_URL` — a hosted Postgres (Supabase session pooler, or add the Neon integration,
+whose `POSTGRES_URL` is picked up automatically). `api/index.py` + `vercel.json` serve the
+whole app from one Python function, with the login **off** (`AUTH_DISABLED=0` turns it back on).
+
+A serverless function has no long-running process, so on Vercel the scraper, the AI worker
+loop, Autopilot and scheduled posting do not run. Review, Posts, Settings and manual posting
+work. Run scraping on your PC and upload with [LOCAL_SCRAPING.md](LOCAL_SCRAPING.md).
+
 ## Autopilot — hands-off mode
 
 Turn **Autopilot** on (Home page) and the whole flow runs by itself; you only step in

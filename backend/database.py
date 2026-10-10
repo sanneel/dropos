@@ -44,7 +44,8 @@ class Database:
         log.warning("Database: ALL PRODUCT DATA TRUNCATED.")
 
     async def connect(self):
-        db_url = os.getenv("DATABASE_URL")
+        # POSTGRES_URL is what the Vercel Neon / Supabase integrations set.
+        db_url = _strip_unsupported_params(os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL") or "")
         if not db_url:
             db_url = await asyncio.to_thread(_start_embedded_postgres)
             if not db_url:
@@ -1251,6 +1252,17 @@ class Database:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _strip_unsupported_params(url: str) -> str:
+    """Drop DSN query params asyncpg would forward to Postgres as unknown settings
+    (Neon's channel_binding, Supabase's pgbouncer/supa). SSL is set separately."""
+    if "?" not in url:
+        return url
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+    parts = urlsplit(url)
+    query = [(k, v) for k, v in parse_qsl(parts.query) if k not in ("channel_binding", "pgbouncer", "supa")]
+    return urlunsplit(parts._replace(query=urlencode(query)))
+
 
 _embedded_pg = None  # keep the pgserver handle alive for the life of the process
 

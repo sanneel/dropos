@@ -1,0 +1,6 @@
+data/
+backend/data/
+*.log
+.env
+tskvili_workspace/
+start_bat_output.txt
