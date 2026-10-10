@@ -1,5 +1,14 @@
+# Vercel serves only the static presentation demo (demo/build.sh). Hide all the
+# Python so Vercel never detects a Python app and tries to install it.
+backend/*
+!backend/frontend
+demo/tools
+*.py
+Dockerfile
+docker-compose.yml
+nixpacks.toml
+railway.toml
 data/
-backend/data/
 *.log
 .env
 tskvili_workspace/
