@@ -19,3 +19,6 @@ backend/*_session.json
 # Runtime data (embedded Postgres, generated secret, collages, cleaned images)
 data/
 backend/data/
+
+# Static demo build output (demo/build.sh)
+dist/

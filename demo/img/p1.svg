@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" width="600" height="600">
+<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff9a9e"/><stop offset="1" stop-color="#fad0c4"/></linearGradient>
+<radialGradient id="s" cx=".5" cy=".85" r=".35"><stop offset="0" stop-color="#000" stop-opacity=".18"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient></defs>
+<rect width="600" height="600" fill="url(#g)"/><ellipse cx="300" cy="470" rx="190" ry="40" fill="url(#s)"/>
+<text x="300" y="350" font-size="260" text-anchor="middle" dominant-baseline="middle">☕</text>
+</svg>
