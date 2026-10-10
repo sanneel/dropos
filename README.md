@@ -78,6 +78,13 @@ docker compose up -d --build      # app + Postgres, data in named volumes
 The image is based on Microsoft's Playwright image, so scraping works in the container.
 Set `APP_ENV=production` (done in compose), put it behind HTTPS, and set
 `PUBLIC_BASE_URL`. `railway.toml` / `nixpacks.toml` are kept for Railway-style hosts.
+Set `AUTH_DISABLED=1` to skip the login screen entirely — the backoffice is then open to
+anyone who has the URL, so only use it for a private or demo host.
+
+**Fastest public URL, no account anywhere:** run the app on your PC with `AUTH_DISABLED=1`
+in `.env`, then `cloudflared tunnel --url http://localhost:8000` — it prints a
+`https://….trycloudflare.com` link that works as long as the PC and the tunnel are running.
+
 If the host blocks scraping (datacenter IP / no browser), run the scraper on your PC with
 [LOCAL_SCRAPING.md](LOCAL_SCRAPING.md) and upload into the hosted app.
 

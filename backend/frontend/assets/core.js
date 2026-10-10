@@ -378,6 +378,10 @@ function _startPageFromHash() {
   return pageDef(p) ? [p, t || null] : ['home', null];
 }
 async function bootApp() {
+  if (!getToken()) {
+    // Server started with AUTH_DISABLED: no login, any placeholder token is accepted.
+    try { const st = await fetch(API + '/auth/status').then(r => r.ok ? r.json() : null); if (st && st.auth_disabled) setToken('open'); } catch(e) {}
+  }
   if (!getToken()) { currentPage = 'login'; await renderPage(); return false; }
   try { stats = await api('/stats'); } catch(e) { clearToken(); currentPage = 'login'; await renderPage(); return false; }
   _isLoggedOut = false;

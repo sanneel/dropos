@@ -99,6 +99,10 @@ def verify_password(plain_password, hashed_password):
 
 _JWT_SECRET_CACHE: Optional[str] = None
 
+# AUTH_DISABLED=1 opens the whole backoffice without a login (e.g. a private
+# demo host). Anyone who reaches the URL gets full admin access.
+AUTH_DISABLED = os.getenv("AUTH_DISABLED", "").strip().lower() in ("1", "true", "yes", "on")
+
 def _jwt_secret() -> str:
     """JWT signing secret: JWT_SECRET env var, else a random secret generated once
     and kept in DATA_DIR/jwt_secret so sessions survive restarts (self-hosted mode)."""
@@ -227,7 +231,9 @@ async def lifespan(app: FastAPI):
         log.info("Supabase Storage not configured — product images stay on the supplier CDN. "
                  "Instagram posting needs publicly reachable images: set SUPABASE_URL + "
                  "SUPABASE_SERVICE_ROLE_KEY (free tier) or PUBLIC_BASE_URL of a reachable deployment.")
-    if not await db.count_admin_users():
+    if AUTH_DISABLED:
+        log.warning("AUTH_DISABLED is set — the backoffice is open to anyone who can reach it.")
+    elif not await db.count_admin_users():
         log.warning("No admin user yet — open the app in a browser to create one (first-run setup).")
 
     # Autonomous worker loops
@@ -332,7 +338,7 @@ async def jwt_auth_middleware(request: Request, call_next):
                 path.startswith("/static") or \
                 "/assets/" in path or path.endswith("/assets")
 
-    if is_public:
+    if is_public or AUTH_DISABLED:
         return await call_next(request)
 
     # Only protect API routes with JWT. SPA routes like / return index.html where SPA handles redirect
@@ -400,6 +406,8 @@ class SetupRequest(BaseModel):
 @app.get("/api/auth/status")
 async def auth_status():
     """Public: tells the SPA whether the first-run setup screen is needed."""
+    if AUTH_DISABLED:
+        return {"needs_setup": False, "auth_disabled": True}
     return {"needs_setup": (await db.count_admin_users()) == 0}
 
 
