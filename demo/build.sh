@@ -3,7 +3,8 @@
 # The UI comes straight from backend/frontend, so the demo always shows the current pages.
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUT="$ROOT/dist"
+OUT="${1:-$ROOT/dist}"   # Vercel passes <its working dir>/dist
+echo "repo: $ROOT  working dir: $PWD  output: $OUT"
 rm -rf "$OUT" && mkdir -p "$OUT/assets" "$OUT/demo-img"
 cp -r "$ROOT/backend/frontend/assets/." "$OUT/assets/"
 cp "$ROOT/demo/demo.js" "$OUT/assets/demo.js"
