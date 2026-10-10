@@ -1,5 +1,6 @@
 {
   "framework": null,
+  "installCommand": "echo 'static demo: nothing to install'",
   "buildCommand": "bash demo/build.sh",
   "outputDirectory": "dist",
   "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
