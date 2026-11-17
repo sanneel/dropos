@@ -1,8 +1,9 @@
 # DropOS — product sourcing backoffice for Tskvili / Cute Couple Gifts
 
 DropOS finds couple-gift products on 1688 / Taobao (via CSSBuy), scores them with
-Gemini vision, and gives you a one-screen review queue. Approved products are
-posted to Instagram (single image, carousel, or a multi-product collage).
+Gemini vision, and gives you a one-screen review queue. Any other product can be
+added by pasting its link. Approved products are posted to Instagram (single
+image, carousel, or a multi-product collage), connected with one button.
 It is a single-user tool that **runs on your own PC — no hosting required**.
 
 ```
@@ -31,9 +32,11 @@ create your admin account. After that:
    opens on first login so you can pass the captcha; the session is saved afterwards.
 3. **Scans → New scan** — keywords, start. Scored products appear in **Review** (or skip it
    when Autopilot approves them).
-4. **Settings → Connections → Instagram** — Page access token + business account ID to post
-   for real (until then posting is simulated).
-5. **Home → Autopilot ON.** From here on it scans, scores, approves, cleans and posts by
+4. **Settings → Connections → Instagram → Connect Instagram** — approve on Instagram's own
+   page; no password or token is pasted. Needs a one-time app setup first, see
+   [Connect Instagram in one click](#connect-instagram-in-one-click). Until then posting is simulated.
+5. **Scans → Add by link** *(optional)* — paste any product link to put it straight into Review.
+6. **Home → Autopilot ON.** From here on it scans, scores, approves, cleans and posts by
    itself; check *Needs you* once a day and fulfil orders from **Inbox**.
 
 Everything you configure is stored in the database; `./data` is the whole installation
@@ -62,6 +65,51 @@ perf = approval_rate × 0.55 + post_rate × 0.25 + avg_AI_score/10 × 0.20   (ne
 
 Scans use ~2/3 proven winners + ~1/3 untested keywords; proven losers are skipped. When the
 untested pool runs dry (or weekly), Gemini generates new keywords from the winning patterns.
+
+## Connect Instagram in one click
+
+For the shop owner it is one button: **Settings → Connections → Instagram → Connect Instagram**,
+log in on Instagram's own page, press Allow. DropOS never sees the password and nobody pastes a
+token. The account has to be a professional one (Business or Creator, a free switch in Instagram);
+no Facebook Page is needed. The connection renews itself about once a month
+(`instagram_oauth.refresh_loop`); if Instagram withdraws access, Settings shows a Reconnect button.
+
+Behind the button is Meta's official **Instagram API with Instagram Login** (`backend/instagram_oauth.py`).
+Whoever runs DropOS sets it up once:
+
+1. developers.facebook.com → create an app → add the **Instagram** product → **API setup with Instagram login**.
+2. Paste the **Instagram app ID** and **app secret** in *Settings → Connections → Instagram → App setup*
+   (or set `INSTAGRAM_APP_ID` / `INSTAGRAM_APP_SECRET` in `.env`).
+3. DropOS must be reachable on **https** (hosting or a tunnel) with *Public app URL* set. In the Meta app set:
+
+   | Meta app field | Value |
+   |---|---|
+   | OAuth redirect URI | `https://<your address>/api/instagram/oauth/callback` (shown in Settings) |
+   | Deauthorize callback | `https://<your address>/api/instagram/oauth/deauthorize` |
+   | Data deletion request | `https://<your address>/api/instagram/oauth/data-deletion` |
+   | Webhook callback | `https://<your address>/api/instagram/webhook`, fields `comments`, `messages`, verify token from Settings → Automation |
+
+4. Until Meta's App Review is approved, only accounts added as **Instagram testers** on the app can
+   connect (each accepts one invite in Instagram). App Review needs a privacy policy URL, and Meta's
+   business verification needs a registered company.
+
+Posting, comment replies and DMs then go through `graph.instagram.com` with that token.
+The older methods (pasted Page token, direct login, browser backend) are still under
+*Other connection methods*.
+
+## Add products by link
+
+**Scans → Add by link**: paste a product page address, or the whole text a shopping app shares.
+DropOS reads the photos, name and price (`backend/link_import.py`), converts the cost to ₾ with the
+National Bank of Georgia's daily rates (`backend/fx.py`; ¥ uses your own CNY rate), prices it with your
+markups like a scraped product, and puts it in **Review**. The AI writes the caption as usual, but a
+product picked by hand is never auto-rejected. Pasting the same page twice adds it once.
+
+Ordinary online shops (Shopify, WooCommerce and most others) and Amazon are read directly.
+AliExpress, Temu, Trendyol, Etsy, eBay and some large shops refuse to be read by a server; DropOS
+says so and does not try to get around it. For those there is the **Add to DropOS** browser button
+on the same tab: drag it to the bookmarks bar once, then press it on any product page. It reads the
+page in your own browser and sends it to DropOS, so it works on those sites too.
 
 ### What needs the internet to reach *you*
 
@@ -131,7 +179,7 @@ photos that could not be cleaned, possible orders, and errors.
 | **Posts** | *Queue* (approved, best first — next up marked), *Posted* (with Instagram links), *All products* (search + inline edit) |
 | **Inbox** | comments & DMs from the webhook, possible orders first, reply / mark done |
 | **Brands** | one card per market: its persona (fed into the AI curator) and its keyword pool with real per-keyword results (found / approved / posted / performance score) |
-| **Scans** | start a scan, see where every scraped product dropped out |
+| **Scans** | start a scan, add a product by link (or with the browser button), see where every scraped product dropped out |
 | **Analytics** | overview, real margins, deterministic insights on your decisions |
 | **Assistant** | chat over the pipeline: review in bulk, find rejected gems |
 | **Settings** | setup checklist → connections → curation → automation → advanced |
@@ -147,6 +195,9 @@ backend/
   filter_engine.py      bouncer filters, pricing, dedup
   scorer.py             rule-based pre-score
   instagram.py          Graph API posting (single / carousel)
+  instagram_oauth.py    one-click Instagram connect (Instagram Login), token renewal, Meta callbacks
+  link_import.py        add a product by link / browser button: page reading, SSRF-safe fetching
+  fx.py                 National Bank of Georgia exchange rates
   instagram_replies.py  comment / DM auto-reply engine (webhook)
   posting_scheduler.py  peak-hour auto-posting (APScheduler)
   scraper_cssbuy.py     Playwright CSSBuy scraper
@@ -158,5 +209,6 @@ backend/
   content_ai.py         second-model content layer (Claude via official SDK / OpenAI / Gemini / Groq)
   activity.py           activity log writer
   frontend/             the SPA — core.js (router/shell), one file per page, styles.css
+  tests/                pytest: link import + one-click connect (`cd backend && python -m pytest tests`)
 data/                   runtime data (created on first start, git-ignored)
 ```

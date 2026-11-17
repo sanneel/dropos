@@ -21,6 +21,7 @@ SENSITIVE_KEYS = {
     "google_sheets_credentials",
     "google_service_account_json",
     "clipdrop_key",
+    "import_button_token",
 }
 
 ENV_TO_SETTING = {
@@ -34,6 +35,7 @@ ENV_TO_SETTING = {
     "ANTHROPIC_MODEL": "anthropic_model",
     "OPENAI_MODEL": "openai_model",
     "CONTENT_PROVIDER": "content_provider",
+    "INSTAGRAM_APP_ID": "instagram_app_id",
     "INSTAGRAM_APP_SECRET": "instagram_app_secret",
     "INSTAGRAM_ACCESS_TOKEN": "instagram_access_token",
     "INSTAGRAM_USER_ID": "instagram_user_id",

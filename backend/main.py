@@ -4,15 +4,16 @@ import sys
 import hmac
 import asyncio
 import json
+import secrets
 import uuid as _uuid
 from contextlib import asynccontextmanager
 from typing import List, Optional
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
-from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request
+from fastapi import BackgroundTasks, FastAPI, Form, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -80,8 +81,11 @@ import autopilot
 import content_ai
 import keyword_lab
 import instagram
+import instagram_oauth
 import instagram_private
 import instagram_replies
+import link_import
+import fx
 import sheets
 import ai_assistant
 import decision_memory
@@ -263,6 +267,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(run_worker_loop())
     asyncio.create_task(process_queued_items())
     asyncio.create_task(instagram_private.poll_loop(db, _settings))
+    asyncio.create_task(instagram_oauth.refresh_loop(db, _settings))
 
     if merged_settings.get("local_scraping_only"):
         log.info("Scheduler disabled: local scraping only mode is enabled")
@@ -362,7 +367,8 @@ async def jwt_auth_middleware(request: Request, call_next):
     is_public = path in ["/robots.txt", "/health", "/shop", "/api/catalog", "/api/auth/login", "/api/auth/status", "/api/auth/setup", "/api/version", "/api/ingest/products"] or \
                 path.startswith("/api/image") or \
                 path.startswith("/api/collage-image/") or \
-                path.startswith("/api/instagram/webhook") or \
+                path.startswith("/api/instagram/webhook") or                 path in ("/api/instagram/oauth/callback", "/api/instagram/oauth/deauthorize",
+                         "/api/instagram/oauth/data-deletion", "/api/import/clip") or \
                 (path.startswith("/api/products/") and path.endswith("/cleaned-image")) or \
                 path.startswith("/static") or \
                 "/assets/" in path or path.endswith("/assets")
@@ -595,6 +601,7 @@ class SettingsUpdate(BaseModel):
     instagram_dm_reply_enabled: Optional[bool] = None
     instagram_dm_rules: Optional[list] = None
     instagram_webhook_token: Optional[str] = None
+    instagram_app_id: Optional[str] = None
     instagram_app_secret: Optional[str] = None
     instagram_backend: Optional[str] = None
     ig_private_username: Optional[str] = None
@@ -846,13 +853,14 @@ async def get_catalog(limit: int = 100, offset: int = 0, category: Optional[str]
 
 @app.get("/api/settings")
 
-async def get_settings():
+async def get_settings(request: Request):
     data = sanitize_settings(await _settings())
     # Runtime facts the UI needs to give honest guidance
     data["image_storage_set"] = bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
     merged = await _settings()
     data["instagram_mode"] = instagram.backend_mode(merged)
     data["instagram_connected"] = data["instagram_mode"] != "none"
+    data["instagram_oauth"] = instagram_oauth.status(merged, _request_base(request, merged))
     data["ig_private_state"] = instagram_private.state()
     import instagram_browser
     data["ig_browser_state"] = instagram_browser.state()
@@ -1808,6 +1816,202 @@ async def backup_to_sheets():
 @app.post("/api/sheets/restore")
 async def restore_from_sheets():
     return await _restore_database_from_sheets()
+
+# ── One-click Instagram connect (official Instagram Login) ──────────────────────
+# The merchant presses Connect, approves on Instagram's own page and comes back
+# connected. See instagram_oauth.py.
+
+_IG_STATE_COOKIE = "dropos_ig_state"
+
+
+def _request_base(request: Request, settings: dict) -> str:
+    """Public address of this app: the configured one, else how the browser reached us."""
+    return instagram._public_base_url(settings) or str(request.base_url).rstrip("/")
+
+
+@app.post("/api/instagram/oauth/start")
+@limiter.limit("20/minute")
+async def ig_oauth_start(request: Request):
+    """Returns the Instagram address the Connect button should open."""
+    settings = await _settings()
+    if not instagram_oauth.configured(settings):
+        raise HTTPException(409, "One-time setup is missing: enter the Instagram app ID and secret first.")
+    redirect = instagram_oauth.redirect_uri(_request_base(request, settings))
+    # The state travels to Instagram and back; the cookie stays in this browser.
+    # Both must match on return, so nobody else can finish this connection.
+    nonce = secrets.token_urlsafe(24)
+    state = jwt.encode({"purpose": "ig_oauth", "nonce": nonce, "exp": int(time.time()) + 600},
+                       _jwt_secret(), algorithm="HS256")
+    resp = JSONResponse({"url": instagram_oauth.authorize_url(settings, state, redirect)})
+    resp.set_cookie(_IG_STATE_COOKIE, nonce, max_age=600, httponly=True, samesite="lax",
+                    secure=redirect.startswith("https://"), path="/api/instagram/oauth")
+    return resp
+
+
+@app.get("/api/instagram/oauth/callback")
+@limiter.limit("30/minute")
+async def ig_oauth_callback(request: Request, code: Optional[str] = None, state: Optional[str] = None,
+                            error: Optional[str] = None):
+    """Instagram sends the browser back here. Always ends on Settings → Connections."""
+    def back(outcome: str) -> RedirectResponse:
+        resp = RedirectResponse(f"/?ig={outcome}#settings/connections", status_code=303)
+        resp.delete_cookie(_IG_STATE_COOKIE, path="/api/instagram/oauth")
+        return resp
+
+    if error:
+        return back("cancelled" if error == "access_denied" else "failed")
+    try:
+        claims = jwt.decode(state or "", _jwt_secret(), algorithms=["HS256"])
+    except jwt.PyJWTError:
+        return back("expired")
+    cookie_nonce = request.cookies.get(_IG_STATE_COOKIE) or ""
+    if not code or claims.get("purpose") != "ig_oauth" or not cookie_nonce \
+            or not hmac.compare_digest(str(claims.get("nonce") or ""), cookie_nonce):
+        return back("expired")
+
+    settings = await _settings()
+    redirect = instagram_oauth.redirect_uri(_request_base(request, settings))
+    try:
+        grant = await instagram_oauth.exchange_code(settings, code, redirect)
+        profile = await instagram_oauth.get_profile(grant["access_token"], settings)
+        if not profile["user_id"]:
+            raise instagram_oauth.InstagramOAuthError("api", "Instagram did not return the account id")
+    except instagram_oauth.InstagramOAuthError as exc:
+        log.warning("Instagram connect failed (%s): %s", exc.kind, exc)
+        return back("failed")
+
+    await db.update_settings(instagram_oauth.connection_settings(grant, profile))
+    await activity.record("config", f"Instagram connected as @{profile['username']} (one-click connect)")
+    try:
+        # Comment and message notifications. Not fatal: posting works either way.
+        await instagram_oauth.subscribe_webhooks(grant["access_token"], settings)
+    except instagram_oauth.InstagramOAuthError as exc:
+        log.warning("Instagram webhook subscription failed: %s", exc)
+    return back("connected")
+
+
+@app.post("/api/instagram/oauth/disconnect")
+async def ig_oauth_disconnect():
+    await db.update_settings({**instagram_oauth.DISCONNECTED, "instagram_needs_reconnect": False})
+    await activity.record("config", "Instagram disconnected")
+    return {"ok": True}
+
+
+async def _signed_instagram_user(signed_request: str) -> str:
+    settings = await _settings()
+    payload = instagram_oauth.parse_signed_request(signed_request, str(settings.get("instagram_app_secret") or "").strip())
+    if not payload or not payload.get("user_id"):
+        raise HTTPException(400, "Invalid signed request")
+    ours = {str(settings.get("instagram_user_id") or ""), str(settings.get("instagram_scoped_id") or "")} - {""}
+    return str(payload["user_id"]) if str(payload["user_id"]) in ours else ""
+
+
+@app.post("/api/instagram/oauth/deauthorize")
+async def ig_oauth_deauthorize(signed_request: str = Form("")):
+    """Meta calls this when the merchant removes DropOS in their Instagram settings."""
+    if await _signed_instagram_user(signed_request):
+        await db.update_settings({**instagram_oauth.DISCONNECTED, "instagram_needs_reconnect": True})
+        await activity.record("config", "Instagram access was removed in Instagram — reconnect to keep posting", level="warn")
+    return {"ok": True}
+
+
+@app.post("/api/instagram/oauth/data-deletion")
+async def ig_oauth_data_deletion(request: Request, signed_request: str = Form("")):
+    """Meta calls this when the merchant asks for their data to be deleted."""
+    if await _signed_instagram_user(signed_request):
+        await db.update_settings({**instagram_oauth.DISCONNECTED, "instagram_username": "", "instagram_needs_reconnect": False})
+        await activity.record("config", "Instagram connection and account details deleted on the owner's request", level="warn")
+    code = secrets.token_urlsafe(9)
+    return {"url": f"{_request_base(request, await _settings())}/?deletion={code}", "confirmation_code": code}
+
+
+# ── Add a product by link ──────────────────────────────────────────────────────
+# Paste a product page link (or shared text) → a product in the review queue.
+# See link_import.py.
+
+class LinkImportBody(BaseModel):
+    text: str
+    brand_id: Optional[int] = None
+
+
+async def _store_imported_product(product: dict, brand_id: Optional[int]) -> dict:
+    """Saves an imported product the way a scraped one is saved. The worker then
+    writes its caption; because the merchant picked it by hand it is never auto-rejected."""
+    settings = await _settings()
+    rates = await fx.get_rates()
+    row = link_import.to_dropos_product(product, settings, rates["rates"], brand_id or await db.default_brand_id())
+    existing = await db.fetchval("SELECT id FROM products WHERE source_id=$1", row["source_id"])
+    if existing:
+        return {"product": await db.get_product(existing), "already": True, "rates": rates}
+    await db.insert_product(row, None)
+    pid = await db.fetchval("SELECT id FROM products WHERE source_id=$1", row["source_id"])
+    await activity.record("needs_review", f"Added “{row['title'][:60]}” by link from {product.get('site') or 'a shop'}", product_id=pid)
+    return {"product": await db.get_product(pid), "already": False, "rates": rates}
+
+
+def _import_reply(stored: dict, product: dict) -> dict:
+    cost = product.get("cost") or {}
+    return {
+        "ok": True,
+        "already": stored["already"],
+        "product": stored["product"],
+        "site": product.get("site") or "",
+        "missing": product.get("missing") or [],
+        "cost": {"amount": cost.get("amount"), "currency": cost.get("currency"), "max": cost.get("max")} if cost else None,
+        "rate_date": stored["rates"].get("date"),
+        "rate_approximate": bool(stored["rates"].get("approximate")),
+    }
+
+
+@app.post("/api/import/link")
+@limiter.limit("30/minute")
+async def import_link(request: Request, body: LinkImportBody):
+    """Expected misses (no link, blocked site, not a product page) come back as
+    ok=false with a reason, so the page can explain what to do instead."""
+    result = await link_import.import_from_text((body.text or "")[:2000])
+    if not result["ok"]:
+        shared = result.get("shared") or {}
+        return {"ok": False, "reason": result["reason"], "url": result.get("url"), "site": result.get("site") or "",
+                "shared_title": shared.get("title")}
+    product = result["product"]
+    return _import_reply(await _store_imported_product(product, body.brand_id), product)
+
+
+@app.get("/api/import/button")
+async def import_button(request: Request):
+    """The 'Add to DropOS' browser button for this installation (a bookmark)."""
+    settings = await _settings()
+    token = str(settings.get("import_button_token") or "")
+    if not token:
+        token = secrets.token_urlsafe(24)
+        await db.update_settings({"import_button_token": token})
+    base = _request_base(request, settings)
+    return {"href": link_import.bookmarklet_href(base, token), "base": base}
+
+
+@app.post("/api/import/clip")
+@limiter.limit("30/minute")
+async def import_clip(request: Request, token: str = Form(""), url: str = Form(""), html: str = Form("")):
+    """The browser button posts a snapshot of the product page here, from the
+    shop's own site — so it is recognised by this installation's button token,
+    not by the login. Ends in the app, on the new product."""
+    settings = await _settings()
+    expected = str(settings.get("import_button_token") or "")
+    if not expected or not hmac.compare_digest(token, expected):
+        raise HTTPException(403, "This button is no longer valid. Add it again from DropOS → Scans → Add by link.")
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise HTTPException(400, "Bad page address")
+    try:
+        product = await link_import.import_from_snapshot(html[:400_000], url)
+    except Exception as exc:
+        log.warning("Browser-button import failed for %s: %s", parsed.hostname, exc)
+        product = None
+    if not product:
+        return RedirectResponse("/?imported=none#scans/link", status_code=303)
+    stored = await _store_imported_product(product, None)
+    return RedirectResponse(f"/?imported={stored['product']['id']}#review/queue", status_code=303)
+
 
 # ── Background Helpers ────────────────────────────────────────────────────────
 

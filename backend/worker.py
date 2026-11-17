@@ -125,9 +125,15 @@ async def run_worker_loop():
             for i, p in enumerate(products):
                 pid = p["id"]
                 source_id = p.get("source_id", str(pid))
+                # Added by link (link_import.py): the merchant picked this product
+                # by hand, so the AI may describe it but never throws it away.
+                hand_picked = p.get("source") == "link"
 
                 # Guard: truncated AI response
                 if i >= len(batch_results):
+                    if hand_picked:
+                        await db.update_product_fields(pid, {"stage": ProductStage.ENRICHED.value})
+                        continue
                     log.warning("Worker: Missing AI result for pid=%d, rejecting.", pid)
                     await db.update_product_fields(pid, {
                         "stage": "REJECTED",
@@ -170,7 +176,7 @@ async def run_worker_loop():
                     "ai_provider":     provider,
                 }
 
-                if not store_match:
+                if not store_match and not hand_picked:
                     # ── Hard rejection (auto_reject verdict or composite < 6.0) ─
                     reason = res.get("rejection_reason") or "Score below threshold"
                     await db.update_product_fields(pid, {
