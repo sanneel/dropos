@@ -1,12 +1,168 @@
 /* ═══ DropOS — Scans: start a scan, see where every product dropped out ═══ */
 
 async function renderScans(tab) {
-  setTitle('Scans', tab === 'history' ? 'where each scraped product dropped out' : 'find new products on 1688 / Taobao');
+  setTitle('Scans', tab === 'history' ? 'where each scraped product dropped out' : tab === 'link' ? 'add any product by pasting its link' : 'find new products on 1688 / Taobao');
   setActions(tab === 'history' ? `<button class="btn btn-sm" onclick="clearScanHistory()">Clear history</button>` : '');
   const el = document.getElementById('content');
   el.innerHTML = tabBar('scans') + `<div id="scans-body">${loadingState()}</div>`;
   if (tab === 'history') { pipelineJobs = []; return renderPipeline(); }
+  if (tab === 'link') return renderScanLink();
   return renderScanNew();
+}
+
+// ── Add by link ─────────────────────────────────────────────────────────────
+// Paste a product page link (or the text a shopping app shares) → the product
+// lands in Review with photos, name and cost. Sites that refuse to be read by
+// link are covered by the "Add to DropOS" browser button on the right.
+const LINK_REASONS = {
+  no_url: 'No link found in that text. Paste the address of the product page.',
+  blocked: 'This site refuses to be read by link. Open the product in your browser and press the “Add to DropOS” button (set it up under “One button on any shop page”) — it works on these sites too.',
+  not_product: 'The page opened, but no single product was found on it. Check that the link goes to one product, not a category or search page.',
+  fetch_failed: 'The page could not be opened. Check the link and try again.',
+  unsafe: 'That address cannot be opened.',
+};
+const LINK_STAGE = {
+  SCRAPED: 'Writing the caption… it appears in Review in a moment.',
+  ENRICHED: 'Ready in Review → Needs decision.',
+  REVIEWED: 'Approved — waiting in the post queue.',
+  TEXT_REMOVAL: 'Approved — its photo needs text cleaning first.',
+  QUEUED: 'Queued to post.', LIVE: 'Posted.', REJECTED: 'Rejected.',
+};
+let linkWatch = null;
+
+async function renderScanLink() {
+  await loadBrandsCache();
+  const host = document.getElementById('scans-body'); if (!host) return;
+  const brandSel = brandsCache.length > 1
+    ? `<div class="form-group"><label>Brand</label><select id="link-brand">${brandsCache.map(b => `<option value="${b.id}" ${b.id === scanBrandId ? 'selected' : ''}>${escHtml(b.name)}</option>`).join('')}</select></div>`
+    : '';
+  host.innerHTML = `
+    <div class="two">
+      <div class="card">
+        <div class="card-title">Add a product by link</div>
+        <div class="help" style="margin:-6px 0 12px">Paste the product page address, or the whole text a shopping app shares. DropOS pulls in the photos, name and price, converts the cost to ₾ and puts the product in Review.</div>
+        ${brandSel}
+        <div class="form-group">
+          <label for="link-input">Product link</label>
+          <textarea id="link-input" rows="3" placeholder="https://…  or the whole shared text" onkeydown="onLinkKey(event)" onpaste="onLinkPaste(this)"></textarea>
+        </div>
+        <div class="row">
+          <button id="link-btn" class="btn btn-primary" onclick="importByLink()">Import product</button>
+          <button id="link-paste-btn" class="btn" onclick="pasteLink()" style="display:none">Paste</button>
+        </div>
+        <div id="link-result" style="margin-top:14px"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">One button on any shop page</div>
+        <div class="help" style="margin:-6px 0 12px">Some sites — AliExpress, Temu, Trendyol, Etsy, eBay — refuse to be read by link. Drag this button to your browser's bookmarks bar once. After that, open any product page, press it, and the product lands in Review. It reads the page in your own browser, so it works on those sites too.</div>
+        <div id="clip-box" class="row"><span class="muted">Loading…</span></div>
+        <div class="help" id="clip-tip" style="margin-top:10px">Do not press it here — drag it to the bookmarks bar. On a phone, use the Product link box instead.</div>
+      </div>
+    </div>`;
+  if (navigator.clipboard?.readText) document.getElementById('link-paste-btn').style.display = '';
+  loadClipButton();
+}
+
+function _hasLink(text) { return /https?:\/\/\S+|(?:^|\s)[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\/\S*/i.test(text || ''); }
+function onLinkKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); importByLink(); } }
+// Pasting a link is the whole action: no second click needed.
+function onLinkPaste(el) { setTimeout(() => { if (_hasLink(el.value)) importByLink(); }, 60); }
+async function pasteLink() {
+  const input = document.getElementById('link-input'); if (!input) return;
+  try {
+    const text = (await navigator.clipboard.readText()).trim();
+    if (text) input.value = text;
+    if (_hasLink(text)) importByLink(); else input.focus();
+  } catch(e) { input.focus(); }   // clipboard permission refused: paste by hand
+}
+
+async function importByLink() {
+  const input = document.getElementById('link-input'), btn = document.getElementById('link-btn'), out = document.getElementById('link-result');
+  const text = (input?.value || '').trim();
+  if (!text || !btn || btn.disabled) return;
+  btn.disabled = true; btn.textContent = 'Reading the page…';
+  out.innerHTML = '';
+  try {
+    const res = await api('/import/link', 'POST', { text, brand_id: parseInt(document.getElementById('link-brand')?.value) || null });
+    if (res.demo) { out.innerHTML = `<div class="hint info">This is the presentation demo, so no page is read here. In the real app the product appears in Review.</div>`; return; }
+    if (!res.ok) {
+      out.innerHTML = `<div class="hint warn">${escHtml(LINK_REASONS[res.reason] || LINK_REASONS.fetch_failed)}</div>`;
+      return;
+    }
+    input.value = '';
+    renderLinkResult(res);
+    _cacheInvalidate('/products', '/stats');
+    refreshStats();
+  } catch(e) {
+  } finally { btn.disabled = false; btn.textContent = 'Import product'; }
+}
+
+function renderLinkResult(res) {
+  const out = document.getElementById('link-result'); if (!out) return;
+  const p = res.product || {};
+  const img = imageUrl(firstImage(p));
+  const cost = res.cost?.amount ? `${res.cost.amount} ${res.cost.currency || ''}`.trim() : '';
+  const photos = (p.images || []).length;
+  const facts = [res.site, `${photos} photo${photos === 1 ? '' : 's'}`,
+    cost ? `cost ${cost}${res.cost.currency === 'GEL' ? '' : ' = ' + money(p.cost_eur)}` : '',
+    p.sell_price_eur ? `sell ${money(p.sell_price_eur)}` : ''].filter(Boolean);
+  const notes = [];
+  if (res.already) notes.push('This product was added before — showing the existing one.');
+  if ((res.missing || []).includes('price')) notes.push('No price was found on the page. Open the product and set the sell price.');
+  else if (cost && !p.cost_eur) notes.push('The currency is unclear, so the cost could not be converted to ₾. Open the product and set the sell price.');
+  if (res.cost?.max) notes.push(`The price depends on the variant: ${res.cost.amount} – ${res.cost.max} ${res.cost.currency || ''}. The lowest one was used.`);
+  if (res.rate_approximate && cost && res.cost.currency !== 'GEL' && p.cost_eur) notes.push('The National Bank rate could not be loaded, so an approximate rate was used.');
+  out.innerHTML = `
+    <div class="card-sm" style="display:flex;gap:14px;align-items:flex-start">
+      ${img ? `<img src="${img}" alt="" style="width:96px;height:96px;object-fit:cover;border-radius:var(--r);flex:none" onerror="this.style.display='none'">` : ''}
+      <div style="min-width:0;flex:1">
+        <div style="font-weight:600;color:var(--t1);line-height:1.35">${escHtml(p.title_translated || p.title || '')}</div>
+        <div class="help">${facts.map(escHtml).join(' · ')}</div>
+        <div class="help" id="link-stage">${escHtml(LINK_STAGE[p.stage] || '')}</div>
+        <div class="row" style="margin-top:8px">
+          <button class="btn btn-sm btn-primary" onclick="showDetail(${parseInt(p.id) || 0})">Open product</button>
+          <button class="btn btn-sm" onclick="navigate('review','queue')">Go to Review</button>
+        </div>
+      </div>
+    </div>
+    ${notes.map(n => `<div class="hint warn" style="margin-top:10px">${escHtml(n)}</div>`).join('')}`;
+  watchLinkProduct(p.id, p.stage);
+}
+
+// The caption is written in the background; keep the status line honest until it is done.
+function watchLinkProduct(id, stage) {
+  if (linkWatch) clearInterval(linkWatch);
+  if (stage !== 'SCRAPED') return;
+  let tries = 0;
+  linkWatch = setInterval(async () => {
+    const el = document.getElementById('link-stage');
+    if (!el || ++tries > 40) { clearInterval(linkWatch); linkWatch = null; return; }
+    const r = await fetch(`${API}/products/${id}`, { headers: { Authorization: `Bearer ${getToken()}` } }).then(x => x.ok ? x.json() : null).catch(() => null);
+    if (!r || r.stage === 'SCRAPED') return;
+    el.textContent = LINK_STAGE[r.stage] || r.stage;
+    clearInterval(linkWatch); linkWatch = null;
+    _cacheInvalidate('/products', '/stats'); refreshStats();
+  }, 3000);
+}
+
+async function loadClipButton() {
+  const box = document.getElementById('clip-box'); if (!box) return;
+  let res = null;
+  try { res = await api('/import/button'); } catch(e) {}
+  if (!res?.href) { box.innerHTML = `<span class="muted">The button is available in the running app.</span>`; return; }
+  box.innerHTML = '';
+  const a = document.createElement('a');
+  a.className = 'btn btn-amber';
+  a.textContent = 'Add to DropOS';
+  a.setAttribute('href', res.href);
+  a.style.cursor = 'grab';
+  a.title = 'Drag me to the bookmarks bar';
+  a.addEventListener('click', e => { e.preventDefault(); toast('Drag this button to your bookmarks bar — do not click it here.', 'info', 5000); });
+  box.appendChild(a);
+  if (/\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(res.base || '')) {
+    const tip = document.getElementById('clip-tip');
+    if (tip) tip.insertAdjacentHTML('beforeend', ` This button sends products to <span class="mono">${escHtml(res.base)}</span>, so it works in the browser on this computer while DropOS is running.`);
+  }
 }
 
 // ── Scan ───────────────────────────────────────────────────────────────────

@@ -202,7 +202,7 @@ const PAGES = [
   { id: 'posts',     label: 'Posts',     icon: 'posts',     tabs: [['queue','Queue'],['posted','Posted'],['all','All products']] },
   { id: 'inbox',     label: 'Inbox',     icon: 'inbox' },
   { id: 'brands',    label: 'Brands',    icon: 'brands' },
-  { id: 'scans',     label: 'Scans',     icon: 'scans',     tabs: [['new','New scan'],['history','History']] },
+  { id: 'scans',     label: 'Scans',     icon: 'scans',     tabs: [['new','New scan'],['link','Add by link'],['history','History']] },
   { id: 'analytics', label: 'Analytics', icon: 'analytics', tabs: [['overview','Overview'],['margins','Margins'],['insights','Insights']] },
   { id: 'assistant', label: 'Assistant', icon: 'assistant' },
   { id: 'settings',  label: 'Settings',  icon: 'settings',  tabs: [['setup','Setup'],['connections','Connections'],['curation','Curation'],['automation','Automation'],['advanced','Advanced']] },
@@ -371,6 +371,24 @@ async function handleSetup(ev) {
 function logout() { clearToken(); _isLoggedOut = true; currentPage = 'login'; renderPage(); }
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
+// The app is re-opened with a flag in the address after two round trips:
+// Instagram's approval page (?ig=…) and the "Add to DropOS" browser button (?imported=…).
+const IG_RETURN = {
+  connected: ['Instagram connected', 'success'],
+  cancelled: ['Instagram connection cancelled — nothing was changed', 'info'],
+  expired:   ['That connection attempt expired. Press Connect Instagram again.', 'error'],
+  failed:    ['Instagram could not be connected. Check that the account is a professional one (Business or Creator), then try again.', 'error'],
+};
+function _handleReturnFlags() {
+  const q = new URLSearchParams(location.search);
+  const ig = q.get('ig'), imported = q.get('imported');
+  if (!ig && !imported) return;
+  try { history.replaceState(null, '', location.pathname + location.hash); } catch(e) {}
+  if (ig) { const m = IG_RETURN[ig] || IG_RETURN.failed; toast(m[0], m[1], 6000); }
+  if (imported === 'none') toast('No product was found on that page. Paste its link here instead.', 'error', 6000);
+  else if (/^\d+$/.test(imported || '')) { toast('Product added — it is in Review', 'success', 5000); showDetail(parseInt(imported)); }
+}
+
 function _startPageFromHash() {
   const h = (location.hash || '').replace(/^#/, '');
   if (!h) return ['home', null];
@@ -390,6 +408,7 @@ async function bootApp() {
   try { autopilotData = await api('/autopilot'); } catch(e) {}
   const [p, t] = _startPageFromHash();
   navigate(p, t);
+  _handleReturnFlags();
   if (!window._statsTimer) window._statsTimer = setInterval(() => { if (currentPage !== 'login') refreshStats(); }, 20000);
   return true;
 }

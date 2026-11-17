@@ -177,7 +177,18 @@
 "data_dir": "./data",
 "embedded_db": false,
 "production": false
-}
+},
+"instagram_oauth": {
+"ready": true,
+"connected": true,
+"username": "demo.shop",
+"expires_at": "2027-01-15T10:00:00+00:00",
+"needs_reconnect": false,
+"missing_permissions": [],
+"redirect_uri": "https://dropos.example/api/instagram/oauth/callback",
+"https": true
+},
+"instagram_app_id": "1234567890123456"
 },
 "/api/autopilot": {
 "enabled": true,

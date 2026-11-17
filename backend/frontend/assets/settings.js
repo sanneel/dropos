@@ -33,10 +33,10 @@ function setupPanel(s) {
   const items = [
     { ok: !!s.gemini_key_set, title: 'AI scoring (Gemini)', desc: s.gemini_key_set ? `Products are scored by ${escHtml(s.gemini_model || 'gemini-2.5-flash-lite')}.` : 'Without it nothing is judged — every product lands in Review unscored. Free key at aistudio.google.com.', tab: 'connections' },
     { ok: !!(s.cssbuy_username && s.cssbuy_password_set), title: 'Product source (CSSBuy)', desc: s.cssbuy_username ? `Logged in as ${escHtml(s.cssbuy_username)} · source: ${escHtml(s.cssbuy_source || '1688')}.` : 'Your CSSBuy login lets DropOS scrape 1688 / Taobao.', tab: 'connections' },
-    { ok: !!s.instagram_connected, title: 'Instagram', desc: s.instagram_connected ? ({
+    { ok: !!s.instagram_connected, title: 'Instagram', desc: s.instagram_oauth?.connected ? `Connected as @${escHtml(s.instagram_oauth.username || '')} through Instagram's own login — the connection renews itself.` : s.instagram_connected ? ({
         browser: `Posting through the browser${s.ig_browser_state?.username ? ' as @' + escHtml(s.ig_browser_state.username) : ''} — no login event, so no checkpoint.`,
         private: `Connected by direct login${s.ig_private_state?.username ? ' as @' + escHtml(s.ig_private_state.username) : ''} — posts, reads comments & DMs.`,
-      }[s.instagram_mode] || `Official API — posting to ${escHtml(s.instagram_user_id || '')}.`) : 'Easiest: direct login with your Instagram username & password — no Meta developer account. Until then posts are simulated.', tab: 'connections' },
+      }[s.instagram_mode] || `Official API — posting to ${escHtml(s.instagram_user_id || '')}.`) : 'One button: you approve on Instagram\'s own page, and no password or token is given to DropOS. Until then posts are simulated.', tab: 'connections' },
     { ok: !!s.image_storage_set, soft: true, title: 'Image storage (Supabase)', desc: s.image_storage_set ? 'Photos are re-hosted on a public URL Instagram can always fetch.' : 'Optional but recommended: supplier CDN links usually work, Supabase Storage (free) always works. Set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY in .env.', tab: 'connections' },
     { ok: !!s.clipdrop_key_set, soft: true, title: 'Photo cleaning (Clipdrop)', desc: s.clipdrop_key_set ? 'Chinese text / watermarks are removed automatically.' : 'Optional: cleans Chinese text from photos so they can be posted. 100 free images / month.', tab: 'connections' },
     { ok: !!(s.anthropic_key_set || s.openai_key_set), soft: true, title: 'Content writer (Claude / OpenAI)', desc: (s.anthropic_key_set || s.openai_key_set) ? `Captions are rewritten by ${escHtml(s.content_provider === 'auto' ? (s.anthropic_key_set ? 'Claude' : 'OpenAI') : s.content_provider || 'auto')} right before posting.` : 'Optional: a second model writes stronger Georgian captions (hook → desire → CTA) at post time, generates keywords and powers the Assistant.', tab: 'connections' },
@@ -116,7 +116,12 @@ function connectionsPanel(s) {
       </div>
 
       <div class="card">
-        <div class="card-hd"><h3>Instagram</h3>${statusChip(s.instagram_connected, s.instagram_mode === 'private' ? 'Direct login' : 'Official API', 'Simulated')}</div>
+        <div class="card-hd"><h3>Instagram</h3>${statusChip(s.instagram_connected, s.instagram_oauth?.connected ? 'Connected' : s.instagram_mode === 'private' ? 'Direct login' : 'Official API', 'Simulated')}</div>
+        ${igConnectBox(s)}
+        <div class="hint ${s.image_storage_set ? 'ok' : 'warn'}" style="margin-top:6px">${s.image_storage_set
+          ? 'Image storage (Supabase) configured — photos are re-hosted on a public URL Instagram can always fetch.'
+          : 'Image storage not configured: Instagram downloads photos straight from the supplier CDN, which usually works. For reliability add <code>SUPABASE_URL</code> + <code>SUPABASE_SERVICE_ROLE_KEY</code> to <code>.env</code> and restart.'}</div>
+        <details class="adv" ${!s.instagram_oauth?.connected && s.instagram_connected ? 'open' : ''}><summary>Other connection methods</summary>
         ${fieldRow('Connection method', `<select id="s-ig-backend" onchange="document.getElementById('ig-private-box').style.display=this.value==='graph'?'none':'block';document.getElementById('ig-graph-box').style.display=this.value==='private'?'none':'block'">
             <option value="auto"    ${(s.instagram_backend||'auto')==='auto'    ? 'selected':''}>Auto — browser when on, else direct login, else official API</option>
             <option value="browser" ${s.instagram_backend==='browser' ? 'selected':''}>Browser — posts through instagram.com (no login event)</option>
@@ -198,11 +203,7 @@ function connectionsPanel(s) {
         ${fieldRow('Business account ID', `<div class="row"><input type="text" id="s-ig-user-id" value="${escHtml(s.instagram_user_id || '')}" placeholder="17841400000000000" style="flex:1"/><button class="btn btn-sm" onclick="detectIgAccount()">Auto-detect</button></div><div id="ig-detect-result" class="help">Paste the token, save, then Auto-detect fills the ID.</div>`)}
         ${fieldRow('Instagram username <span class="muted">(display only)</span>', `<input type="text" id="s-instagram" value="${escHtml(s.instagram_username || '')}" placeholder="@yourstore"/>`)}
         ${fieldRow('Public app URL <span class="muted">(optional)</span>', `<input type="text" id="s-public-url" value="${escHtml(s.public_base_url || '')}" placeholder="https://dropos.example.com"/>`, 'Only if this server is reachable from the internet (hosting or tunnel). Needed for the webhook (auto-reply / inbox) and used as an image proxy.')}
-        ${fieldRow('Meta app secret <span class="muted">(optional)</span>', secretInput('s-ig-app-secret', s.instagram_app_secret_set, 'App Dashboard → Settings → Basic'), 'Verifies webhook signatures.')}
         </div>
-        <div class="hint ${s.image_storage_set ? 'ok' : 'warn'}" style="margin-top:6px">${s.image_storage_set
-          ? 'Image storage (Supabase) configured — photos are re-hosted on a public URL Instagram can always fetch.'
-          : 'Image storage not configured: Instagram downloads photos straight from the supplier CDN, which usually works. For reliability add <code>SUPABASE_URL</code> + <code>SUPABASE_SERVICE_ROLE_KEY</code> to <code>.env</code> and restart.'}</div>
         <details class="adv"><summary>How to get the token (one time)</summary>
           <ol class="steps">
             <li>developers.facebook.com → your app → add product <b>Instagram Graph API</b></li>
@@ -211,8 +212,59 @@ function connectionsPanel(s) {
             <li>Paste it above, Save, click Auto-detect</li>
           </ol>
         </details>
+        </details>
       </div>
     </div>`;
+}
+
+// The easy path: one button, Instagram's own approval page, no password or token.
+function igConnectBox(s) {
+  const o = s.instagram_oauth || {};
+  const appSetup = (open) => `
+    <details class="adv" ${open ? 'open' : ''}><summary>App setup — one time, by the DropOS owner</summary>
+      <div class="help" style="margin-bottom:8px">Create a Meta app, add the <b>Instagram</b> product and choose <b>API setup with Instagram login</b>. Paste its two values here and register the address below as the redirect URL. After that, connecting is one button and nobody pastes a token again.</div>
+      ${fieldRow('Instagram app ID', `<input type="text" id="s-ig-app-id" value="${escHtml(s.instagram_app_id || '')}" placeholder="1234567890123456" class="mono" autocomplete="off"/>`)}
+      ${fieldRow('Instagram app secret', secretInput('s-ig-app-secret', s.instagram_app_secret_set, 'from the same screen'), 'Also verifies the comment and message notifications Instagram sends.')}
+      ${fieldRow('Redirect URL to register in the Meta app', `<input type="text" readonly value="${escHtml(o.redirect_uri || '')}" class="mono" onclick="this.select()"/>`, o.https ? '' : 'Instagram only accepts an <b>https</b> address. Put DropOS behind HTTPS (hosting or a tunnel) and set <i>Public app URL</i> below under Other connection methods → Official API.')}
+    </details>`;
+  if (o.connected) return `
+    <div class="hint ok" style="margin-bottom:12px">
+      <b>Connected as @${escHtml(o.username || '')}</b> through Instagram's own login. The connection renews itself${o.expires_at ? ` (valid until ${escHtml(fmtDate(o.expires_at))}, then renewed)` : ''} — nothing is needed from you.
+      ${(o.missing_permissions || []).length ? `<div class="warn-txt" style="margin-top:6px">Some permissions were not granted, so posting or replies may not work. Reconnect and leave every box ticked.</div>` : ''}
+      <div class="row" style="margin-top:8px">
+        <button class="btn btn-sm" onclick="igConnect(this)">Reconnect</button>
+        <button class="btn btn-sm btn-danger-ghost" onclick="igDisconnect()">Disconnect</button>
+      </div>
+    </div>${appSetup(false)}`;
+  if (!o.ready) return `
+    <div class="hint info" style="margin-bottom:12px"><b>One-click connect is almost ready.</b> It needs a one-time setup by whoever runs DropOS (below). Shop owners never see this step: for them it is one button.</div>
+    ${appSetup(true)}`;
+  return `
+    <div class="card-sm" style="margin-bottom:12px">
+      ${o.needs_reconnect ? `<div class="warn-txt" style="margin-bottom:8px">Instagram access was removed or has expired. One press reconnects it.</div>` : ''}
+      <button class="btn btn-primary" style="width:100%;padding:11px 14px;font-size:14px" onclick="igConnect(this)">Connect Instagram</button>
+      <div class="help" style="margin-top:8px">You log in on Instagram's own page and press Allow — DropOS never sees your password. The account has to be a professional one (Business or Creator): a free switch in Instagram → Settings → Account type and tools.</div>
+    </div>${appSetup(false)}`;
+}
+
+async function igConnect(btn) {
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Opening Instagram…'; }
+  try {
+    // keep an app ID / secret typed a moment ago
+    const id = document.getElementById('s-ig-app-id')?.value?.trim();
+    const secret = document.getElementById('s-ig-app-secret')?.value?.trim();
+    const body = {}; if (id) body.instagram_app_id = id; if (secret) body.instagram_app_secret = secret;
+    if (Object.keys(body).length) await api('/settings', 'PATCH', body);
+    const r = await api('/instagram/oauth/start', 'POST', {});
+    if (!r.url) { toast('This is the presentation demo — in the real app Instagram\'s approval page opens here.', 'info', 5000); return; }
+    window.location.href = r.url;
+  } catch(e) {
+  } finally { if (btn) { btn.disabled = false; btn.textContent = label; } }
+}
+async function igDisconnect() {
+  if (!confirm('Disconnect Instagram? Posting goes back to simulated until you connect again.')) return;
+  try { await api('/instagram/oauth/disconnect', 'POST', {}); toast('Instagram disconnected', 'info'); refreshStats(); renderSettings(currentTab); } catch(e) {}
 }
 
 // ── Curation ─────────────────────────────────────────────────────────────────
@@ -361,7 +413,7 @@ async function saveSettings() {
   const data = {};
   // text / numeric (only when the input exists)
   const txt = { 's-store-name': 'store_name', 's-audience': 'target_audience', 's-niche': 'niche', 's-examples': 'example_products',
-    's-instagram': 'instagram_username', 's-ig-user-id': 'instagram_user_id', 's-public-url': 'public_base_url',
+    's-instagram': 'instagram_username', 's-ig-user-id': 'instagram_user_id', 's-public-url': 'public_base_url', 's-ig-app-id': 'instagram_app_id',
     's-cssbuy-user': 'cssbuy_username', 's-cssbuy-source': 'cssbuy_source', 's-sheets-id': 'google_sheets_id',
     's-post-tz': 'post_timezone', 's-webhook-token': 'instagram_webhook_token', 's-gemini-model': 'gemini_model',
     's-content-provider': 'content_provider', 's-anthropic-model': 'anthropic_model', 's-openai-model': 'openai_model',

@@ -41,7 +41,11 @@ def _graph(settings: dict = None) -> str:
     version = str(get_config("META_GRAPH_VERSION", (settings or {}).get("meta_graph_version", "v23.0")) or "v23.0").strip()
     if not version.startswith("v"):
         version = f"v{version}"
-    return f"https://graph.facebook.com/{version}"
+    # Tokens from the one-click connect (instagram_oauth.py, Instagram Login)
+    # belong to graph.instagram.com; a pasted Page token to graph.facebook.com.
+    # The paths used below are the same on both.
+    host = "graph.instagram.com" if str((settings or {}).get("instagram_api_host") or "") == "instagram" else "graph.facebook.com"
+    return f"https://{host}/{version}"
 
 
 def backend_mode(settings: dict) -> str:
